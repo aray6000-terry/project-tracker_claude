@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>弱電專案進度追蹤</title>
+<meta name="description" content="依施工 8 個時間結點追蹤弱電監控專案進度、查驗關卡與表單">
+<style>
+:root{
+  --bg:#f5f4ef;--surface:#ffffff;--surface-2:#efede6;--ink:#1d2433;--ink-2:#5a6474;--line:#dedad0;
+  --accent:#1f5fa8;--accent-soft:#e3edf8;--ok:#2e7d4f;--ok-soft:#e3f2e8;--warn:#b5651d;--warn-soft:#fbeedd;
+  --bad:#b3261e;--bad-soft:#fbe4e2;--idle:#8a93a2;--on-accent:#ffffff;--shadow:0 1px 2px rgba(20,30,50,.06),0 4px 16px rgba(20,30,50,.05);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#14181f;--surface:#1c222c;--surface-2:#242b37;--ink:#e8ebf0;--ink-2:#a3adbd;--line:#323b49;
+    --accent:#6fa8ef;--accent-soft:#1f3150;--ok:#5fc48a;--ok-soft:#1d3528;--warn:#e8a25c;--warn-soft:#3a2c1b;
+    --bad:#f08a80;--bad-soft:#3d2321;--idle:#7b8596;--on-accent:#0f1622;--shadow:none;color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#14181f;--surface:#1c222c;--surface-2:#242b37;--ink:#e8ebf0;--ink-2:#a3adbd;--line:#323b49;
+  --accent:#6fa8ef;--accent-soft:#1f3150;--ok:#5fc48a;--ok-soft:#1d3528;--warn:#e8a25c;--warn-soft:#3a2c1b;
+  --bad:#f08a80;--bad-soft:#3d2321;--idle:#7b8596;--on-accent:#0f1622;--shadow:none;color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:"PingFang TC","Microsoft JhengHei","Noto Sans TC","Heiti TC",system-ui,sans-serif;font-size:15px;line-height:1.55;-webkit-text-size-adjust:100%}
+button,input,select,textarea{font:inherit;color:inherit}
+a{color:var(--accent)}
+.wrap{max-width:1180px;margin:0 auto;padding:0 16px 64px}
+header.top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:20px 0 12px;flex-wrap:wrap}
+.brand h1{font-size:22px;margin:0;letter-spacing:.5px}
+.brand p{margin:2px 0 0;color:var(--ink-2);font-size:13px}
+.tools{display:flex;gap:8px;flex-wrap:wrap}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:8px 14px;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.danger{color:var(--bad)}
+.btn.small{padding:4px 10px;font-size:13px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:8px 0 20px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
+.stat .n{font-size:28px;font-weight:700;line-height:1.1}
+.stat .l{color:var(--ink-2);font-size:13px}
+.stat.bad .n{color:var(--bad)}
+.filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}
+.seg button{border:0;background:transparent;padding:7px 12px;cursor:pointer}
+.seg button.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.search{flex:1;min-width:160px;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:var(--shadow);cursor:pointer;display:flex;flex-direction:column;gap:10px}
+.card:hover{border-color:var(--accent)}
+.card h3{margin:0;font-size:17px}
+.meta{color:var(--ink-2);font-size:13px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.bar{height:8px;background:var(--surface-2);border-radius:99px;overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--accent);border-radius:99px}
+.bar.ok>i{background:var(--ok)}
+.badge{display:inline-block;font-size:12px;padding:2px 9px;border-radius:99px;font-weight:600;white-space:nowrap}
+.b-idle{background:var(--surface-2);color:var(--ink-2)}
+.b-run{background:var(--accent-soft);color:var(--accent)}
+.b-ok{background:var(--ok-soft);color:var(--ok)}
+.b-bad{background:var(--bad-soft);color:var(--bad)}
+.b-warn{background:var(--warn-soft);color:var(--warn)}
+.dots{display:flex;gap:4px}
+.dots span{flex:1;height:6px;border-radius:3px;background:var(--surface-2)}
+.dots .s-run{background:var(--accent)}.dots .s-ok{background:var(--ok)}.dots .s-bad{background:var(--bad)}
+.empty{text-align:center;color:var(--ink-2);padding:48px 16px;border:1px dashed var(--line);border-radius:12px;background:var(--surface)}
+/* detail */
+.back{margin:4px 0 12px}
+.detail-head{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;box-shadow:var(--shadow);margin-bottom:16px}
+.detail-head h2{margin:0 0 6px;font-size:21px}
+.info{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0}
+.info div{background:var(--surface-2);border-radius:8px;padding:8px 10px}
+.info b{display:block;font-size:12px;color:var(--ink-2);font-weight:500}
+.steps{display:flex;gap:6px;overflow-x:auto;padding:4px 0 8px;margin:6px 0 2px}
+.step{flex:1 0 108px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--surface);cursor:pointer;text-align:left}
+.step .k{font-size:12px;color:var(--ink-2)}
+.step .t{font-size:13px;font-weight:600;line-height:1.3;margin:2px 0 4px}
+.step.s-ok{border-color:var(--ok);background:var(--ok-soft)}
+.step.s-run{border-color:var(--accent);background:var(--accent-soft)}
+.step.s-bad{border-color:var(--bad);background:var(--bad-soft)}
+.node{background:var(--surface);border:1px solid var(--line);border-radius:12px;margin-bottom:12px;box-shadow:var(--shadow);overflow:hidden}
+.node>summary{list-style:none;cursor:pointer;padding:14px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.node>summary::-webkit-details-marker{display:none}
+.node .num{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:13px;background:var(--surface-2);color:var(--ink-2);flex:none}
+.node.s-ok .num{background:var(--ok);color:var(--on-accent)}.node.s-run .num{background:var(--accent);color:var(--on-accent)}.node.s-bad .num{background:var(--bad);color:var(--on-accent)}
+.node .title{font-weight:700;flex:1;min-width:140px}
+.node .pct{font-size:13px;color:var(--ink-2);min-width:64px;text-align:right}
+.node-body{padding:0 16px 16px;border-top:1px solid var(--line)}
+.dates{display:flex;gap:16px;flex-wrap:wrap;margin:14px 0 8px}
+.dates label{font-size:13px;color:var(--ink-2);display:flex;flex-direction:column;gap:4px}
+.dates input{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 8px}
+.groups{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:6px}
+.group h4{margin:8px 0 6px;font-size:13px;color:var(--ink-2);font-weight:600;letter-spacing:.5px}
+.chk{display:flex;gap:8px;align-items:flex-start;padding:6px 8px;border-radius:6px;cursor:pointer}
+.chk:hover{background:var(--surface-2)}
+.chk input{margin-top:4px;width:16px;height:16px;flex:none;accent-color:var(--accent)}
+.chk.done span{color:var(--ink-2);text-decoration:line-through}
+textarea.note{width:100%;min-height:64px;margin-top:10px;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:8px 10px;resize:vertical}
+/* modal */
+dialog{border:1px solid var(--line);border-radius:14px;padding:0;background:var(--surface);color:var(--ink);width:min(560px,calc(100vw - 32px));box-shadow:0 20px 60px rgba(0,0,0,.25)}
+dialog::backdrop{background:rgba(10,15,25,.45)}
+dialog form{padding:20px}
+dialog h3{margin:0 0 14px}
+.fgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.fgrid label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--ink-2)}
+.fgrid .full{grid-column:1/-1}
+.fgrid input,.fgrid textarea{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:8px 10px;color:var(--ink)}
+.factions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.hint{font-size:12px;color:var(--ink-2);margin-top:6px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:99px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9}
+.toast.on{opacity:1}
+footer{margin-top:32px;color:var(--ink-2);font-size:12px;text-align:center}
+@media (max-width:760px){
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .info{grid-template-columns:repeat(2,1fr)}
+  .groups{grid-template-columns:1fr}
+  .fgrid{grid-template-columns:1fr}
+  .brand h1{font-size:19px}
+}
+@media print{
+  .tools,.filters,.back,.btn,footer{display:none!important}
+  body{background:#fff}
+  .node{break-inside:avoid}
+  details.node:not([open])>.node-body{display:block}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <h1>弱電專案進度追蹤</h1>
+      <p>依 8 個施工時間結點追蹤完成事項、查驗關卡與產出表單</p>
+    </div>
+    <div class="tools">
+      <button class="btn primary" id="btnNew" type="button">＋ 新增專案</button>
+      <button class="btn" id="btnExport" type="button">匯出資料</button>
+      <button class="btn" id="btnImport" type="button">匯入資料</button>
+      <button class="btn" id="btnTheme" type="button">深淺色</button>
+      <input type="file" id="fileImport" accept="application/json,.json" hidden>
+    </div>
+  </header>
+  <main id="app"></main>
+  <footer>資料儲存在本瀏覽器；換電腦或與同事共用時，請用「匯出資料／匯入資料」。依《專案工程師養成計畫》施工時間結點（補齊版）建立。</footer>
+</div>
+
+<dialog id="dlg">
+  <form id="frm" method="dialog">
+    <h3 id="dlgTitle">新增專案</h3>
+    <div class="fgrid">
+      <label class="full">專案名稱 *<input name="name" required maxlength="80" placeholder="例：○○建設 ○○案 弱電工程"></label>
+      <label>業主／營造<input name="client" maxlength="60"></label>
+      <label>案場地點<input name="site" maxlength="60"></label>
+      <label>負責工程師<input name="engineer" maxlength="30"></label>
+      <label>帶案師父<input name="mentor" maxlength="30"></label>
+      <label>合約金額（選填）<input name="amount" maxlength="30" placeholder="例：NT$ 3,200,000"></label>
+      <label>預計驗屋交屋日<input name="handover" type="date"></label>
+      <label class="full">備註<textarea name="note" rows="2" maxlength="500"></textarea></label>
+    </div>
+    <p class="hint">建立後可在專案頁為每個結點設定預計日期；填入交屋日時，系統會依常見工序自動帶入今天以後各結點的建議日期（已過去的結點請自行填寫），可再修改。</p>
+    <div class="factions">
+      <button class="btn" value="cancel" type="submit" formnovalidate>取消</button>
+      <button class="btn primary" value="ok" type="submit">儲存</button>
+    </div>
+  </form>
+</dialog>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function(){
+"use strict";
+var KEY = "wv-project-tracker-v1";
+var NODES = [
+  {name:"簽約成交",
+   task:["請購線材","進場時間前 1 個月到貨"],
+   gate:["送審核可後才請購","主機、客製機櫃等長交期設備另抓交期"],
+   form:["請購單","交期表"]},
+  {name:"開工前",
+   task:["開工前會議（業主、營造、水電、小包）","確認配管圖與介面分工","小包合約、保險與勞安文件"],
+   gate:["配管管徑與數量足夠","110V 電源施作單位已確認"],
+   form:["開工會議紀錄","介面分工表"]},
+  {name:"上樑前",
+   task:["完成各項設備水平佈線","上樑時間結點請購各項設備","消防檢查時間結點時到貨"],
+   gate:["封板、灌漿前拍照查驗","強弱電分管","管內不超過約 40%","預留拉線"],
+   form:["查驗照片","施工日誌"]},
+  {name:"上樑～消防檢查",
+   task:["完成各項設備垂直佈線","各項設備清盒及 PIN 線結線"],
+   gate:["穿線後測線（通斷、絕緣）","線材兩端標示","依結線表顏色結線"],
+   form:["線路測試紀錄"]},
+  {name:"消防檢查～使照申請",
+   task:["各項設備安裝","各監控箱設備安裝及結線（須標示）","櫃台設計再次確認並規劃幹線路徑"],
+   gate:["與消防廠商實測消防連動（門禁釋放、柵欄開啟）","箱體標示與配線圖一致"],
+   form:["消防連動測試紀錄"]},
+  {name:"櫃台機櫃完工～驗屋",
+   task:["設備擺放定位","幹線結線（須標示）","系統設定及測試"],
+   gate:["單機 → 系統 → 整合三階段測試","全系統時間對時","機櫃整線"],
+   form:["系統測試報告","IP 位址表"]},
+  {name:"驗屋交屋",
+   task:["各項系統初步檢查及驗收","竣工圖","設備操作手冊","保固書","設備出廠證明"],
+   gate:["驗收單簽認並確認保固起算日","操作教育訓練","帳號密碼與備品移交"],
+   form:["驗收單","教育訓練簽到表","移交清冊"]},
+  {name:"交屋後",
+   task:["缺失改善","結算與尾款請款","首次保養與案件歸檔"],
+   gate:["缺失依管制表逐項結案","保固到期日列入提醒"],
+   form:["結算書","保養紀錄表"]}
+];
+/* 依交屋日倒推的建議天數（交屋日為 0），可依實際案場修改 */
+var OFFSETS = [-540,-480,-360,-240,-120,-45,0,60];
+var GROUPS = [["task","完成事項"],["gate","查驗關卡"],["form","產出表單"]];
+
+var state = load();
+var view = {filter:"all", q:"", pid:null};
+
+function load(){
+  try{ var raw = localStorage.getItem(KEY); if(raw){ var s = JSON.parse(raw); if(s && Array.isArray(s.projects)) return s; } }catch(e){}
+  return {v:1, projects:[]};
+}
+function save(){
+  state.updated = new Date().toISOString();
+  try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){ toast("無法儲存到瀏覽器，請記得匯出備份"); }
+}
+function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];}); }
+function today(){ var d=new Date(); return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()); }
+function pad(n){ return n<10?"0"+n:""+n; }
+function addDays(iso,n){ var d=new Date(iso+"T00:00:00"); d.setDate(d.getDate()+n); return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()); }
+function fmt(iso){ return iso ? iso.replace(/-/g,"/") : "未設定"; }
+function toast(msg){ var t=document.getElementById("toast"); t.textContent=msg; t.classList.add("on"); clearTimeout(toast._t); toast._t=setTimeout(function(){t.classList.remove("on");},2200); }
+
+function newNodes(handover){
+  return NODES.map(function(n,i){
+    var t = handover ? addDays(handover, OFFSETS[i]) : "";
+    if(t && t < today()) t = "";  /* 已過去的建議日期不自動帶入，請自行填寫實際日期 */
+    return {target: t, done:"", note:"", checks:{}};
+  });
+}
+function itemsOf(i){ var n=NODES[i], out=[]; GROUPS.forEach(function(g){ n[g[0]].forEach(function(_,j){ out.push(g[0]+j); }); }); return out; }
+function nodeStat(p,i){
+  var node=p.nodes[i], ids=itemsOf(i), c=0;
+  ids.forEach(function(id){ if(node.checks[id]) c++; });
+  var total=ids.length, pct=Math.round(c/total*100), st;
+  if(c===total) st="ok";
+  else if(node.target && node.target < today()) st="bad";
+  else if(c>0) st="run";
+  else st="idle";
+  return {c:c,total:total,pct:pct,st:st};
+}
+function projStat(p){
+  var c=0,t=0,over=0,okn=0,next=null;
+  p.nodes.forEach(function(_,i){ var s=nodeStat(p,i); c+=s.c; t+=s.total; if(s.st==="bad") over++; if(s.st==="ok") okn++; else if(next===null) next=i; });
+  var pct=t?Math.round(c/t*100):0, status;
+  if(p.closed || okn===NODES.length) status="closed";
+  else if(over>0) status="late";
+  else if(c>0) status="run";
+  else status="idle";
+  return {pct:pct,over:over,okn:okn,next:next,status:status};
+}
+var ST_LABEL = {idle:["未開始","b-idle"],run:["進行中","b-run"],ok:["完成","b-ok"],bad:["逾期","b-bad"]};
+var PST_LABEL = {idle:["未開始","b-idle"],run:["進行中","b-run"],late:["有逾期結點","b-bad"],closed:["已結案","b-ok"]};
+
+/* ---------- list ---------- */
+function renderList(){
+  var app=document.getElementById("app");
+  var ps=state.projects.map(function(p){ return {p:p,s:projStat(p)}; });
+  var act=ps.filter(function(x){return x.s.status!=="closed";});
+  var overNodes=ps.reduce(function(a,x){return a+x.s.over;},0);
+  var avg=act.length?Math.round(act.reduce(function(a,x){return a+x.s.pct;},0)/act.length):0;
+  var q=view.q.trim().toLowerCase();
+  var list=ps.filter(function(x){
+    if(view.filter==="active" && x.s.status==="closed") return false;
+    if(view.filter==="late" && x.s.status!=="late") return false;
+    if(view.filter==="closed" && x.s.status!=="closed") return false;
+    if(q){ var hay=[x.p.name,x.p.client,x.p.site,x.p.engineer,x.p.mentor].join(" ").toLowerCase(); if(hay.indexOf(q)<0) return false; }
+    return true;
+  });
+  var h='';
+  h+='<section class="stats">'
+    +stat(state.projects.length,"專案總數")
+    +stat(act.length,"進行中專案")
+    +stat(overNodes,"逾期結點", overNodes>0?"bad":"")
+    +stat(avg+"%","進行中平均進度")
+    +'</section>';
+  h+='<div class="filters"><div class="seg" role="group" aria-label="篩選">'
+    +seg("all","全部")+seg("active","進行中")+seg("late","有逾期")+seg("closed","已結案")
+    +'</div><input class="search" id="q" type="search" placeholder="搜尋專案、業主、工程師…" value="'+esc(view.q)+'"></div>';
+  if(!state.projects.length){
+    h+='<div class="empty"><p style="font-size:16px;margin:0 0 6px">還沒有任何專案</p><p style="margin:0 0 14px">按「新增專案」建立第一個案件，或先載入範例看看。</p><button class="btn" id="btnDemo" type="button">載入範例專案</button></div>';
+  }else if(!list.length){
+    h+='<div class="empty">沒有符合條件的專案</div>';
+  }else{
+    h+='<section class="grid">';
+    list.forEach(function(x){
+      var p=x.p,s=x.s,lb=PST_LABEL[s.status];
+      var nx = s.next===null ? "全部結點已完成" : "下一結點："+NODES[s.next].name+"（"+fmt(p.nodes[s.next].target)+"）";
+      h+='<article class="card" tabindex="0" data-open="'+p.id+'">'
+        +'<div class="row"><h3>'+esc(p.name)+'</h3><span class="badge '+lb[1]+'">'+lb[0]+'</span></div>'
+        +'<div class="meta">'+esc(p.client||"—")+(p.site?'｜'+esc(p.site):'')+'</div>'
+        +'<div class="meta">工程師：'+esc(p.engineer||"—")+'　師父：'+esc(p.mentor||"—")+'</div>'
+        +'<div class="dots" aria-hidden="true">'+p.nodes.map(function(_,i){return '<span class="s-'+nodeStat(p,i).st+'"></span>';}).join("")+'</div>'
+        +'<div class="row"><div class="bar'+(s.pct===100?' ok':'')+'" style="flex:1" role="progressbar" aria-valuenow="'+s.pct+'" aria-valuemin="0" aria-valuemax="100"><i style="width:'+s.pct+'%"></i></div><b style="min-width:44px;text-align:right">'+s.pct+'%</b></div>'
+        +'<div class="meta">'+esc(nx)+(s.over?'　<span style="color:var(--bad)">逾期 '+s.over+' 個結點</span>':'')+'</div>'
+        +'</article>';
+    });
+    h+='</section>';
+  }
+  app.innerHTML=h;
+  bindList();
+}
+function stat(n,l,cls){ return '<div class="stat '+(cls||"")+'"><div class="n">'+n+'</div><div class="l">'+l+'</div></div>'; }
+function seg(k,l){ return '<button type="button" data-f="'+k+'" class="'+(view.filter===k?"on":"")+'">'+l+'</button>'; }
+function bindList(){
+  document.querySelectorAll("[data-f]").forEach(function(b){ b.onclick=function(){ view.filter=b.dataset.f; renderList(); }; });
+  var q=document.getElementById("q");
+  if(q){ q.oninput=function(){ view.q=q.value; var pos=q.selectionStart; renderList(); var q2=document.getElementById("q"); q2.focus(); try{q2.setSelectionRange(pos,pos);}catch(e){} }; }
+  document.querySelectorAll("[data-open]").forEach(function(c){
+    c.onclick=function(){ go(c.dataset.open); };
+    c.onkeydown=function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); go(c.dataset.open); } };
+  });
+  var d=document.getElementById("btnDemo"); if(d) d.onclick=loadDemo;
+}
+
+/* ---------- detail ---------- */
+function renderDetail(p){
+  var s=projStat(p), lb=PST_LABEL[s.status];
+  var h='<div class="back"><button class="btn small" type="button" id="btnBack">← 返回專案列表</button></div>';
+  h+='<section class="detail-head"><div class="row" style="flex-wrap:wrap"><h2>'+esc(p.name)+'</h2><span class="badge '+lb[1]+'">'+lb[0]+'</span></div>'
+    +'<div class="info">'
+    +info("業主／營造",p.client)+info("案場地點",p.site)+info("負責工程師",p.engineer)+info("帶案師父",p.mentor)
+    +info("合約金額",p.amount)+info("預計驗屋交屋",fmt(p.handover))+info("建立日期",fmt((p.created||"").slice(0,10)))+info("完成結點",s.okn+" / "+NODES.length)
+    +'</div>'
+    +(p.note?'<p class="meta" style="margin:0 0 10px">備註：'+esc(p.note)+'</p>':'')
+    +'<div class="row"><div class="bar'+(s.pct===100?' ok':'')+'" style="flex:1"><i style="width:'+s.pct+'%"></i></div><b style="min-width:52px;text-align:right">'+s.pct+'%</b></div>'
+    +'<div class="steps">'+p.nodes.map(function(n,i){ var ns=nodeStat(p,i); return '<button type="button" class="step s-'+ns.st+'" data-jump="'+i+'"><div class="k">結點 '+(i+1)+'・'+ST_LABEL[ns.st][0]+'</div><div class="t">'+esc(NODES[i].name)+'</div><div class="k">'+fmt(n.target)+'</div></button>'; }).join("")+'</div>'
+    +'<div class="tools" style="margin-top:10px"><button class="btn small" type="button" id="btnEdit">編輯專案資料</button>'
+    +'<button class="btn small" type="button" id="btnPrint">列印／存 PDF</button>'
+    +'<button class="btn small" type="button" id="btnClose">'+(p.closed?"重新開啟專案":"標記為已結案")+'</button>'
+    +'<button class="btn small danger" type="button" id="btnDel">刪除專案</button></div>'
+    +'</section>';
+  p.nodes.forEach(function(n,i){
+    var ns=nodeStat(p,i), lab=ST_LABEL[ns.st];
+    var open = (s.next===i) ? " open" : "";
+    h+='<details class="node s-'+ns.st+'" id="node-'+i+'"'+open+'><summary>'
+      +'<span class="num">'+(i+1)+'</span><span class="title">'+esc(NODES[i].name)+'</span>'
+      +'<span class="badge '+lab[1]+'">'+lab[0]+'</span>'
+      +'<span class="meta">預計 '+fmt(n.target)+(n.done?'｜完成 '+fmt(n.done):'')+'</span>'
+      +'<span class="pct">'+ns.c+' / '+ns.total+'</span></summary>'
+      +'<div class="node-body"><div class="dates">'
+      +'<label>預計日期<input type="date" data-n="'+i+'" data-field="target" value="'+esc(n.target)+'"></label>'
+      +'<label>實際完成日<input type="date" data-n="'+i+'" data-field="done" value="'+esc(n.done)+'"></label>'
+      +'</div><div class="groups">';
+    GROUPS.forEach(function(g){
+      h+='<div class="group"><h4>'+g[1]+'</h4>';
+      NODES[i][g[0]].forEach(function(txt,j){
+        var id=g[0]+j, on=!!n.checks[id];
+        h+='<label class="chk'+(on?' done':'')+'"><input type="checkbox" data-n="'+i+'" data-id="'+id+'"'+(on?' checked':'')+'><span>'+esc(txt)+'</span></label>';
+      });
+      h+='</div>';
+    });
+    h+='</div><textarea class="note" data-n="'+i+'" placeholder="此結點的備註、問題或待辦（例：缺失編號、協調單號）">'+esc(n.note)+'</textarea></div></details>';
+  });
+  document.getElementById("app").innerHTML=h;
+  bindDetail(p);
+}
+function info(k,v){ return '<div><b>'+k+'</b>'+esc(v||"—")+'</div>'; }
+function bindDetail(p){
+  document.getElementById("btnBack").onclick=function(){ go(null); };
+  document.getElementById("btnEdit").onclick=function(){ openForm(p); };
+  document.getElementById("btnPrint").onclick=function(){ document.querySelectorAll("details.node").forEach(function(d){d.open=true;}); window.print(); };
+  document.getElementById("btnClose").onclick=function(){ p.closed=!p.closed; save(); renderDetail(p); toast(p.closed?"已標記為結案":"已重新開啟"); };
+  document.getElementById("btnDel").onclick=function(){
+    var name=prompt("確定要刪除？此動作無法復原。\n請輸入專案名稱以確認：");
+    if(name===null) return;
+    if(name.trim()!==p.name.trim()){ toast("名稱不符，未刪除"); return; }
+    state.projects=state.projects.filter(function(x){return x.id!==p.id;}); save(); go(null); toast("已刪除專案");
+  };
+  document.querySelectorAll("[data-jump]").forEach(function(b){ b.onclick=function(){ var d=document.getElementById("node-"+b.dataset.jump); d.open=true; d.scrollIntoView({behavior:"smooth",block:"start"}); }; });
+  document.querySelectorAll('input[type=checkbox][data-id]').forEach(function(cb){
+    cb.onchange=function(){
+      var i=+cb.dataset.n, node=p.nodes[i];
+      if(cb.checked) node.checks[cb.dataset.id]=true; else delete node.checks[cb.dataset.id];
+      var ns=nodeStat(p,i);
+      if(ns.st==="ok" && !node.done) node.done=today();
+      if(ns.st!=="ok" && node.done && cb.checked===false) node.done="";
+      save(); var y=window.scrollY; renderDetail(p); document.getElementById("node-"+i).open=true; window.scrollTo(0,y);
+    };
+  });
+  document.querySelectorAll('input[type=date][data-n]').forEach(function(inp){
+    inp.onchange=function(){ var i=+inp.dataset.n; p.nodes[i][inp.dataset.field]=inp.value; save(); var y=window.scrollY; renderDetail(p); document.getElementById("node-"+i).open=true; window.scrollTo(0,y); };
+  });
+  document.querySelectorAll("textarea.note").forEach(function(t){
+    t.oninput=function(){ p.nodes[+t.dataset.n].note=t.value; clearTimeout(t._t); t._t=setTimeout(save,400); };
+  });
+}
+
+/* ---------- form ---------- */
+var editing=null;
+function openForm(p){
+  editing=p||null;
+  var f=document.getElementById("frm");
+  document.getElementById("dlgTitle").textContent=p?"編輯專案資料":"新增專案";
+  ["name","client","site","engineer","mentor","amount","handover","note"].forEach(function(k){ f.elements[k].value=p?(p[k]||""):""; });
+  document.getElementById("dlg").showModal();
+}
+document.getElementById("frm").addEventListener("submit",function(e){
+  var dlg=document.getElementById("dlg");
+  if(e.submitter && e.submitter.value==="cancel"){ return; }
+  var f=e.target, data={};
+  ["name","client","site","engineer","mentor","amount","handover","note"].forEach(function(k){ data[k]=f.elements[k].value.trim(); });
+  if(!data.name){ e.preventDefault(); return; }
+  if(editing){
+    var oldH=editing.handover;
+    Object.keys(data).forEach(function(k){ editing[k]=data[k]; });
+    if(data.handover && data.handover!==oldH){
+      var blanks=editing.nodes.filter(function(n){return !n.target;}).length;
+      if(blanks===editing.nodes.length || confirm("交屋日已變更，要依新交屋日重新帶入各結點的建議日期嗎？\n（已手動填寫的日期會被覆蓋）")){
+        editing.nodes.forEach(function(n,i){ var t=addDays(data.handover,OFFSETS[i]); if(t>=today()) n.target=t; });
+      }
+    }
+    save(); renderDetail(editing); toast("已更新專案資料");
+  }else{
+    var p={id:uid(),created:new Date().toISOString(),closed:false,nodes:newNodes(data.handover)};
+    Object.keys(data).forEach(function(k){ p[k]=data[k]; });
+    state.projects.unshift(p); save(); go(p.id); toast("已建立專案");
+  }
+  dlg.close();
+});
+
+/* ---------- import / export ---------- */
+document.getElementById("btnNew").onclick=function(){ openForm(null); };
+document.getElementById("btnExport").onclick=function(){
+  var blob=new Blob([JSON.stringify(state,null,2)],{type:"application/json"});
+  var a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download="專案進度備份_"+today()+".json"; document.body.appendChild(a); a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href); a.remove();},500);
+  toast("已匯出資料檔");
+};
+document.getElementById("btnImport").onclick=function(){ document.getElementById("fileImport").click(); };
+document.getElementById("fileImport").onchange=function(e){
+  var file=e.target.files[0]; if(!file) return;
+  var r=new FileReader();
+  r.onload=function(){
+    try{
+      var s=JSON.parse(r.result);
+      if(!s || !Array.isArray(s.projects)) throw new Error("格式不符");
+      s.projects.forEach(function(p){ if(!p.id||!Array.isArray(p.nodes)||p.nodes.length!==NODES.length) throw new Error("格式不符"); p.nodes.forEach(function(n){ n.checks=n.checks||{}; }); });
+      var mode=confirm("按「確定」：以檔案取代目前所有資料\n按「取消」：合併（同一專案以檔案版本為準）");
+      if(mode){ state=s; }
+      else{
+        var map={}; state.projects.forEach(function(p){map[p.id]=p;});
+        s.projects.forEach(function(p){ map[p.id]=p; });
+        state.projects=Object.keys(map).map(function(k){return map[k];});
+      }
+      save(); go(null); toast("已匯入 "+s.projects.length+" 個專案");
+    }catch(err){ toast("匯入失敗：檔案格式不符"); }
+    e.target.value="";
+  };
+  r.readAsText(file);
+};
+
+/* ---------- theme ---------- */
+var THEME_KEY="wv-project-tracker-theme";
+function applyTheme(t){ if(t) document.documentElement.setAttribute("data-theme",t); else document.documentElement.removeAttribute("data-theme"); }
+try{ applyTheme(localStorage.getItem(THEME_KEY)); }catch(e){}
+document.getElementById("btnTheme").onclick=function(){
+  var cur=document.documentElement.getAttribute("data-theme");
+  var dark=cur?cur==="dark":window.matchMedia("(prefers-color-scheme: dark)").matches;
+  var next=dark?"light":"dark"; applyTheme(next);
+  try{ localStorage.setItem(THEME_KEY,next); }catch(e){}
+};
+
+/* ---------- demo ---------- */
+function loadDemo(){
+  var h=addDays(today(),150);
+  var p={id:uid(),created:new Date().toISOString(),closed:false,name:"範例：幸福花園社區 弱電監控工程",client:"○○建設",site:"新北市",engineer:"王小明",mentor:"陳師傅",amount:"",handover:h,note:"範例資料，可直接刪除",nodes:newNodes(h)};
+  p.nodes.forEach(function(n,i){ n.target=addDays(h,OFFSETS[i]); });
+  [0,1,2].forEach(function(i){ itemsOf(i).forEach(function(id){ p.nodes[i].checks[id]=true; }); p.nodes[i].done=addDays(p.nodes[i].target,3); });
+  ["task0","gate0","task1"].forEach(function(id){ p.nodes[3].checks[id]=true; });
+  p.nodes[3].target=addDays(today(),-5);
+  p.nodes[3].note="3F 東側弱電箱 PIN 線尚未結線，已開協調單 #12";
+  state.projects.unshift(p); save(); renderList(); toast("已載入範例專案");
+}
+
+/* ---------- routing ---------- */
+function go(pid){ view.pid=pid; location.hash = pid ? "p="+pid : ""; route(); window.scrollTo(0,0); }
+function route(){
+  var m=location.hash.match(/p=([\w]+)/);
+  var p = m ? state.projects.filter(function(x){return x.id===m[1];})[0] : null;
+  if(p) renderDetail(p); else renderList();
+}
+window.addEventListener("hashchange",route);
+window.addEventListener("storage",function(e){ if(e.key===KEY){ state=load(); route(); } });
+route();
+})();
+</script>
+</body>
+</html>
