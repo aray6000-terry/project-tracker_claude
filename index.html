@@ -128,6 +128,7 @@ th,td{border-bottom:1px solid var(--line);padding:8px 6px;text-align:left;vertic
 th{font-size:12px;color:var(--ink-2);font-weight:600;white-space:nowrap}
 td input[type=text],td input[type=email],td select{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 8px;width:100%;min-width:90px}
 td.c{text-align:center}
+#newUserRow td.newhead{display:none}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
 /* modal */
 dialog{border:1px solid var(--line);border-radius:14px;padding:0;background:var(--surface);color:var(--ink);width:min(560px,calc(100vw - 32px));box-shadow:0 20px 60px rgba(0,0,0,.25)}
@@ -151,6 +152,37 @@ dialog h3{margin:0 0 14px}
 .loading{color:var(--ink-2);text-align:center;padding:48px 0}
 footer{margin-top:32px;color:var(--ink-2);font-size:12px;text-align:center}
 @media (max-width:760px){
+  /* 手機：輸入框 16px 避免 iPhone 點擊時自動放大；按鈕與勾選加大方便手指點選 */
+  input,select,textarea{font-size:16px!important}
+  .btn{min-height:40px}
+  .btn.small{min-height:36px;padding:6px 12px}
+  .chk{padding:10px 8px}
+  .chk input{width:20px;height:20px;margin-top:2px}
+  td input[type=checkbox]{width:22px;height:22px}
+  header.top{padding:14px 0 8px}
+  .brand p{display:none}
+  .back{position:sticky;top:0;z-index:5;background:var(--bg);padding:8px 0;margin:0 0 8px}
+  .login{min-height:auto;padding-top:8px}
+  .login-box{padding:24px 16px}
+  .node>summary{gap:8px 10px;padding:12px 14px}
+  .node .title{min-width:0}
+  .node>summary .meta{flex-basis:100%;order:5;padding-left:38px}
+  .node .pct{order:4;min-width:0}
+  .info{gap:8px}
+  .dates{gap:10px}
+  .dates label{flex:1;min-width:130px}
+  .dates input{width:100%}
+  /* 管理表格改成卡片式，不必左右滑 */
+  table.cards thead{display:none}
+  table.cards,table.cards tbody{display:block}
+  table.cards tr{display:block;border:1px solid var(--line);border-radius:10px;padding:6px 12px;margin-bottom:10px;background:var(--surface)}
+  table.cards td{display:flex;justify-content:space-between;align-items:center;gap:12px;border:0;padding:6px 0;text-align:right;overflow-wrap:anywhere}
+  table.cards td::before{content:attr(data-label);color:var(--ink-2);font-size:13px;flex:none;text-align:left}
+  table.cards td input[type=text],table.cards td input[type=email],table.cards td select{flex:1;max-width:220px}
+  table.cards td.act{justify-content:flex-end}
+  table.cards td.act::before,table.cards td.newhead::before{content:none}
+  #newUserRow td.newhead{display:block;font-weight:700;text-align:left}
+  table.log td{font-size:13px}
   .stats{grid-template-columns:repeat(2,1fr)}
   .info{grid-template-columns:repeat(2,1fr)}
   .groups{grid-template-columns:1fr}

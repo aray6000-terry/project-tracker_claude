@@ -156,7 +156,7 @@ function showLogin(msg, isError, autoPrompt){
   $("app").innerHTML=h;
   if(!configured()) return;
   waitGsi(function(){
-    google.accounts.id.renderButton($("gsiBtn"),{type:"standard",theme:isDark()?"filled_black":"outline",size:"large",text:"signin_with",shape:"pill",locale:"zh-TW",width:260});
+    google.accounts.id.renderButton($("gsiBtn"),{type:"standard",theme:isDark()?"filled_black":"outline",size:"large",text:"signin_with",shape:"pill",locale:"zh-TW",width:Math.min(260,$("gsiBtn").clientWidth||260)});
     if(!msg || autoPrompt) google.accounts.id.prompt();
   });
 }
@@ -499,27 +499,27 @@ function renderAdmin(){
     var users=r[0].users, fixed=r[0].fixedAdmins||[], logs=r[1].rows;
     var h='<div class="back"><button class="btn small" type="button" id="btnBack">← 返回專案列表</button></div>';
     h+='<section class="panel"><h3>使用者與權限</h3><p class="meta">只有名單中「啟用」的帳號可以登入。工程師只看得到自己負責或被分享的專案；勾選「可建立專案」才能新增專案。</p>'
-      +'<div class="tblwrap"><table><thead><tr><th>Google 帳號</th><th>姓名</th><th>角色</th><th>可建立專案</th><th>啟用</th><th>備註</th><th></th></tr></thead><tbody>';
+      +'<div class="tblwrap"><table class="cards"><thead><tr><th>Google 帳號</th><th>姓名</th><th>角色</th><th>可建立專案</th><th>啟用</th><th>備註</th><th></th></tr></thead><tbody>';
     users.forEach(function(u,i){
       var locked=fixed.indexOf(u.email)>=0;
-      h+='<tr data-u="'+i+'"><td class="mono">'+esc(u.email)+(locked?'<br><span class="meta">（系統管理員）</span>':'')+'</td>'
-        +'<td><input type="text" maxlength="30" data-k="name" value="'+esc(u.name)+'"></td>'
-        +'<td><select data-k="role"'+(locked?' disabled':'')+'><option value="engineer"'+(u.role!=="admin"?" selected":"")+'>工程師</option><option value="admin"'+(u.role==="admin"?" selected":"")+'>管理員</option></select></td>'
-        +'<td class="c"><input type="checkbox" data-k="canCreate"'+(u.canCreate?" checked":"")+(locked?' disabled':'')+'></td>'
-        +'<td class="c"><input type="checkbox" data-k="enabled"'+(u.enabled?" checked":"")+(locked?' disabled':'')+'></td>'
-        +'<td><input type="text" maxlength="100" data-k="memo" value="'+esc(u.memo)+'"></td>'
-        +'<td><button class="btn small" type="button" data-save="'+i+'">儲存</button></td></tr>';
+      h+='<tr data-u="'+i+'"><td class="mono" data-label="帳號">'+esc(u.email)+(locked?'<br><span class="meta">（系統管理員）</span>':'')+'</td>'
+        +'<td data-label="姓名"><input type="text" maxlength="30" data-k="name" value="'+esc(u.name)+'"></td>'
+        +'<td data-label="角色"><select data-k="role"'+(locked?' disabled':'')+'><option value="engineer"'+(u.role!=="admin"?" selected":"")+'>工程師</option><option value="admin"'+(u.role==="admin"?" selected":"")+'>管理員</option></select></td>'
+        +'<td class="c" data-label="可建立專案"><input type="checkbox" data-k="canCreate"'+(u.canCreate?" checked":"")+(locked?' disabled':'')+'></td>'
+        +'<td class="c" data-label="啟用"><input type="checkbox" data-k="enabled"'+(u.enabled?" checked":"")+(locked?' disabled':'')+'></td>'
+        +'<td data-label="備註"><input type="text" maxlength="100" data-k="memo" value="'+esc(u.memo)+'"></td>'
+        +'<td class="act"><button class="btn small" type="button" data-save="'+i+'">儲存</button></td></tr>';
     });
-    h+='<tr id="newUserRow"><td><input type="email" maxlength="254" id="nuEmail" placeholder="新同事的 Google 帳號"></td>'
-      +'<td><input type="text" maxlength="30" id="nuName" placeholder="姓名"></td>'
-      +'<td><select id="nuRole"><option value="engineer">工程師</option><option value="admin">管理員</option></select></td>'
-      +'<td class="c"><input type="checkbox" id="nuCreate"></td><td class="c"><input type="checkbox" id="nuEnabled" checked></td>'
-      +'<td><input type="text" maxlength="100" id="nuMemo" placeholder="例：工務部"></td>'
-      +'<td><button class="btn small primary" type="button" id="btnAddUser">新增</button></td></tr>';
+    h+='<tr id="newUserRow"><td class="newhead">新增使用者</td><td data-label="帳號"><input type="email" maxlength="254" id="nuEmail" placeholder="新同事的 Google 帳號"></td>'
+      +'<td data-label="姓名"><input type="text" maxlength="30" id="nuName" placeholder="姓名"></td>'
+      +'<td data-label="角色"><select id="nuRole"><option value="engineer">工程師</option><option value="admin">管理員</option></select></td>'
+      +'<td class="c" data-label="可建立專案"><input type="checkbox" id="nuCreate"></td><td class="c" data-label="啟用"><input type="checkbox" id="nuEnabled" checked></td>'
+      +'<td data-label="備註"><input type="text" maxlength="100" id="nuMemo" placeholder="例：工務部"></td>'
+      +'<td class="act"><button class="btn small primary" type="button" id="btnAddUser">新增</button></td></tr>';
     h+='</tbody></table></div><p class="hint">停用帳號後，對方立即無法登入或讀取任何專案（已分享的設定保留，重新啟用即恢復）。</p></section>';
     h+='<section class="panel"><div class="row"><h3>操作紀錄（最近 200 筆）</h3><button class="btn small" type="button" id="btnAuditReload">重新整理</button></div>'
-      +'<div class="tblwrap"><table><thead><tr><th>時間</th><th>帳號</th><th>動作</th><th>專案</th><th>內容</th><th>結果</th></tr></thead><tbody>'
-      +(logs.length?logs.map(function(r){ return '<tr><td style="white-space:nowrap">'+fmtTime(r[0])+'</td><td class="mono">'+esc(r[1])+'</td><td>'+esc(r[2])+'</td><td class="mono">'+esc(r[3])+'</td><td>'+esc(r[4])+'</td><td>'+esc(r[5])+'</td></tr>'; }).join(""):'<tr><td colspan="6" class="meta">尚無紀錄</td></tr>')
+      +'<div class="tblwrap"><table class="cards log"><thead><tr><th>時間</th><th>帳號</th><th>動作</th><th>專案</th><th>內容</th><th>結果</th></tr></thead><tbody>'
+      +(logs.length?logs.map(function(r){ return '<tr><td style="white-space:nowrap" data-label="時間">'+fmtTime(r[0])+'</td><td class="mono" data-label="帳號">'+esc(r[1])+'</td><td data-label="動作">'+esc(r[2])+'</td><td class="mono" data-label="專案">'+esc(r[3]||"—")+'</td><td data-label="內容">'+esc(r[4]||"—")+'</td><td data-label="結果">'+esc(r[5])+'</td></tr>'; }).join(""):'<tr><td colspan="6" class="meta">尚無紀錄</td></tr>')
       +'</tbody></table></div></section>';
     $("app").innerHTML=h;
     $("btnBack").onclick=function(){ go(""); };
