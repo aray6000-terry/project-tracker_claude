@@ -1,6 +1,6 @@
-/* 部署設定：填入 Google OAuth 用戶端 ID 與 Apps Script 網頁應用程式網址（兩者都不是機密資訊） */
+/* 部署設定：Google OAuth 用戶端 ID 與 Apps Script 網頁應用程式網址（兩者都不是機密資訊） */
 window.APP_CONFIG = {
-  CLIENT_ID: "請填入OAuth用戶端ID.apps.googleusercontent.com",
-  API_URL: "https://script.google.com/macros/s/請填入部署ID/exec",
+  CLIENT_ID: "252501394297-elpeg01gsms1lurbnfld1mgqqs7hk467.apps.googleusercontent.com",
+  API_URL: "https://script.google.com/macros/s/AKfycbyxPTgrN5uDiSR19yKEh1qik0LwcZPmtsVQJKGCqClijOcWymZLHqUF2u9C4Yi2G-BK/exec",
   IDLE_MINUTES: 30   /* 閒置多久自動登出 */
 };
