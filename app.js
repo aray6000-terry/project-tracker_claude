@@ -55,7 +55,7 @@ function sysName(p,k){ return k==="other" ? "其它"+(p&&p.otherName?"："+p.oth
 var BRAND_HINTS = {
   access:["SOYAL","TSM","漢軍","卓茂"],
   cctv:["SAMPO","HS","AVTECH","LI-LIN","VIVOTECH"],
-  intercom:["Aiphone","Commax","Kocom","2N","Fermax","Hikvision 海康威視"],
+  intercom:["VIA","SAMPO","NOBEL","winhome","KCA","PANASONIC","AIPHONE","TONNET","WAFLOCK"],
   bms:["研華","CAMTI","FATEK","Siemens"],
   parking:["Hikvision 海康威視","Dahua 大華","ZKTeco"],
   visitor:["ZKTeco","Hikvision 海康威視","SOYAL 茂旭"],
