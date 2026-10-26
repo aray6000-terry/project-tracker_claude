@@ -39,6 +39,20 @@ var NODES = [
 var OFFSETS = [-540,-480,-360,-240,-120,-45,0,60];
 var GROUPS = [["task","完成事項"],["gate","查驗關卡"],["form","產出表單"]];
 var FIELDS = ["name","client","site","engineer","mentor","amount","handover","note"];
+/* 專案建置系統（順序需與後端 Code.gs 的 SYSTEM_KEYS 一致） */
+var SYSTEMS = [
+  {k:"access",n:"門禁"},{k:"cctv",n:"攝影"},{k:"intercom",n:"對講"},{k:"bms",n:"中央監控"},
+  {k:"parking",n:"停管"},{k:"visitor",n:"訪客系統"},
+  {k:"energy",n:"能源管理系統",sub:[["meter","電表"],["water","水表"],["solar","太陽能"]]},
+  {k:"air",n:"空氣品質"},{k:"ib2016",n:"智慧建築2016"},{k:"ib2024",n:"智慧建築2024"},{k:"media",n:"多媒體"},
+  {k:"proto",n:"通訊協定",sub:[["hvac","空調"],["elevator","電梯"],["lighting","照明"],["fire","消防"],["meter","電表"],["water","水表"],["air","空氣品質"]]},
+  {k:"other",n:"其它"}
+];
+var SYS_KEYS=[], SYS_NAME={};
+SYSTEMS.forEach(function(s){ if(s.sub) s.sub.forEach(function(x){ var k=s.k+"."+x[0]; SYS_KEYS.push(k); SYS_NAME[k]=s.n.replace("系統","")+"－"+x[1]; }); else { SYS_KEYS.push(s.k); SYS_NAME[s.k]=s.n; } });
+function sysName(p,k){ return k==="other" ? "其它"+(p&&p.otherName?"："+p.otherName:"") : (SYS_NAME[k]||k); }
+function sysList(p){ return ((p&&p.systems)||[]).filter(function(k){ return SYS_KEYS.indexOf(k)>=0; }); }
+function sysP(n,k){ var v=n&&n.sys&&n.sys[k]; return v&&typeof v.p==="number"?v.p:0; }
 var LEGACY_KEY = "wv-project-tracker-v1";
 var ROLE_LABEL = {admin:["管理員","b-warn"],owner:["負責人","b-run"],editor:["可編輯","b-ok"],viewer:["僅檢視","b-idle"]};
 var ST_LABEL = {idle:["未開始","b-idle"],run:["進行中","b-run"],ok:["完成","b-ok"],bad:["逾期","b-bad"]};
@@ -66,18 +80,21 @@ function canEdit(){ return cur && cur.myRole!=="viewer"; }
 
 /* ---------- 結點統計 ---------- */
 function itemsOf(i){ var n=NODES[i], out=[]; GROUPS.forEach(function(g){ n[g[0]].forEach(function(_,j){ out.push(g[0]+j); }); }); return out; }
-function stat(i,checked,target){
-  var ids=itemsOf(i), c=0;
+/* 結點完成度 = 勾選項目 + 各系統進度；全部勾完且各系統 100% 才算完成 */
+function stat(i,checked,target,ps){
+  var ids=itemsOf(i), c=0; ps=ps||[];
   ids.forEach(function(id){ if(checked(id)) c++; });
-  var total=ids.length, st;
-  if(c===total) st="ok"; else if(target && target<today()) st="bad"; else if(c>0) st="run"; else st="idle";
-  return {c:c,total:total,pct:Math.round(c/total*100),st:st};
+  var sumP=ps.reduce(function(a,b){return a+b;},0), sysDone=ps.filter(function(v){return v>=100;}).length;
+  var done=c+sumP/100, tot=ids.length+ps.length, st;
+  if(c===ids.length && sysDone===ps.length) st="ok"; else if(target && target<today()) st="bad"; else if(c>0||sumP>0) st="run"; else st="idle";
+  return {c:c,total:ids.length,done:done,tot:tot,pct:Math.round(done/tot*100),st:st,sysN:ps.length,sysDone:sysDone};
 }
-function nodeStat(p,i){ var n=p.nodes[i]; return stat(i,function(id){return !!n.checks[id];},n.target); }
-function sumNodeStat(sm,i){ var n=(sm.nodes||[])[i]||{}; var k=n.k||[]; return stat(i,function(id){return k.indexOf(id)>=0;},n.t); }
+function nodeStat(p,i){ var n=p.nodes[i]; return stat(i,function(id){return !!n.checks[id];},n.target,sysList(p).map(function(k){return sysP(n,k);})); }
+function sumNodeStat(sm,i){ var n=(sm.nodes||[])[i]||{}; var k=n.k||[]; return stat(i,function(id){return k.indexOf(id)>=0;},n.t,n.s||[]); }
+function needFill(p,i){ var n=p.nodes[i]; return sysList(p).filter(function(k){ return sysP(n,k)<100 && !(n.sys&&n.sys[k]&&n.sys[k].miss); }).length; }
 function projStatBy(nodeFn,closed){
   var c=0,t=0,over=0,okn=0,next=null;
-  for(var i=0;i<NODES.length;i++){ var s=nodeFn(i); c+=s.c; t+=s.total; if(s.st==="bad") over++; if(s.st==="ok") okn++; else if(next===null) next=i; }
+  for(var i=0;i<NODES.length;i++){ var s=nodeFn(i); c+=s.done; t+=s.tot; if(s.st==="bad") over++; if(s.st==="ok") okn++; else if(next===null) next=i; }
   var status = (closed||okn===NODES.length)?"closed":over>0?"late":c>0?"run":"idle";
   return {pct:t?Math.round(c/t*100):0,over:over,okn:okn,next:next,status:status};
 }
@@ -87,7 +104,7 @@ function newNodes(handover){
   return NODES.map(function(n,i){
     var t = handover ? addDays(handover, OFFSETS[i]) : "";
     if(t && t < today()) t = "";
-    return {target:t, done:"", note:"", checks:{}};
+    return {target:t, done:"", note:"", checks:{}, sys:{}};
   });
 }
 
@@ -302,6 +319,7 @@ function renderList(){
         +'<div class="row"><h3>'+esc(sm.name)+'</h3><span class="badge '+lb[1]+'">'+lb[0]+'</span></div>'
         +'<div class="meta">'+esc(sm.client||"—")+(sm.site?'｜'+esc(sm.site):'')+'</div>'
         +'<div class="meta">工程師：'+esc(sm.engineer||"—")+'　師父：'+esc(sm.mentor||"—")+'</div>'
+        +(sysList(sm).length?'<div class="meta">系統：'+esc(sysList(sm).map(function(k){return sysName(sm,k);}).join("、"))+'</div>':'')
         +'<div class="dots" aria-hidden="true">'+NODES.map(function(_,i){return '<span class="s-'+sumNodeStat(sm,i).st+'"></span>';}).join("")+'</div>'
         +'<div class="row"><div class="bar'+(s.pct===100?' ok':'')+'" style="flex:1" role="progressbar" aria-valuenow="'+s.pct+'" aria-valuemin="0" aria-valuemax="100"><i style="width:'+s.pct+'%"></i></div><b style="min-width:44px;text-align:right">'+s.pct+'%</b></div>'
         +'<div class="meta">'+esc(nx)+(s.over?'　<span style="color:var(--bad)">逾期 '+s.over+' 個結點</span>':'')+'</div>'
@@ -338,6 +356,7 @@ function renderDetail(keepNode){
     +info("合約金額",p.amount)+info("預計驗屋交屋",fmt(p.handover))+info("負責帳號",userName(cur.owner))+info("完成結點",s.okn+" / "+NODES.length)
     +'</div>'
     +(p.note?'<p class="meta" style="margin:0 0 10px">備註：'+esc(p.note)+'</p>':'')
+    +sysMatrix(p)
     +'<p class="meta" style="margin:0 0 10px">最後更新：'+fmtTime(cur.updated)+'（'+esc(userName(cur.updatedBy||""))+'）</p>'
     +'<div class="row"><div class="bar'+(s.pct===100?' ok':'')+'" style="flex:1"><i style="width:'+s.pct+'%"></i></div><b style="min-width:52px;text-align:right">'+s.pct+'%</b></div>'
     +'<div class="steps">'+p.nodes.map(function(n,i){ var ns=nodeStat(p,i); return '<button type="button" class="step s-'+ns.st+'" data-jump="'+i+'"><div class="k">結點 '+(i+1)+'・'+ST_LABEL[ns.st][0]+'</div><div class="t">'+esc(NODES[i].name)+'</div><div class="k">'+fmt(n.target)+'</div></button>'; }).join("")+'</div>'
@@ -358,11 +377,12 @@ function renderDetail(keepNode){
       +'<span class="num">'+(i+1)+'</span><span class="title">'+esc(NODES[i].name)+'</span>'
       +'<span class="badge '+lab[1]+'">'+lab[0]+'</span>'
       +'<span class="meta">預計 '+fmt(n.target)+(n.done?'｜完成 '+fmt(n.done):'')+'</span>'
-      +'<span class="pct">'+ns.c+' / '+ns.total+'</span></summary>'
+      +(needFill(p,i)&&!ro?'<span class="badge b-warn">待填 '+needFill(p,i)+'</span>':'')
+      +'<span class="pct">'+ns.pct+'%</span></summary>'
       +'<div class="node-body"><div class="dates">'
       +'<label>預計日期<input type="date" data-n="'+i+'" data-field="target" value="'+esc(n.target)+'"'+dis+'></label>'
       +'<label>實際完成日<input type="date" data-n="'+i+'" data-field="done" value="'+esc(n.done)+'"'+dis+'></label>'
-      +'</div><div class="groups">';
+      +'</div>'+sysRows(p,i,ro)+'<div class="groups">';
     GROUPS.forEach(function(g){
       h+='<div class="group"><h4>'+g[1]+'</h4>';
       NODES[i][g[0]].forEach(function(txt,j){
@@ -379,6 +399,40 @@ function renderDetail(keepNode){
   bindDetail();
 }
 function info(k,v){ return '<div><b>'+k+'</b>'+esc(v||"—")+'</div>'; }
+/* 各系統 × 各結點進度總覽 */
+function sysMatrix(p){
+  var ks=sysList(p);
+  if(!ks.length) return '<p class="meta" style="margin:0 0 10px">建置系統：尚未選擇（可在「編輯專案資料」勾選）</p>';
+  var h='<details class="mxwrap"><summary>各系統進度總覽（'+ks.length+' 項系統）</summary><div class="tblwrap"><table class="mx"><thead><tr><th>系統</th>'
+    +NODES.map(function(_,i){return '<th title="'+esc(NODES[i].name)+'">'+(i+1)+'</th>';}).join("")+'</tr></thead><tbody>';
+  ks.forEach(function(k){
+    h+='<tr><td>'+esc(sysName(p,k))+'</td>'+p.nodes.map(function(n,i){
+      var v=sysP(n,k), miss=n.sys&&n.sys[k]&&n.sys[k].miss;
+      var cls=v>=100?'ok':v>0?'run':'';
+      return '<td class="c '+cls+'" title="'+esc(NODES[i].name+(miss?"｜缺："+miss:""))+'">'+v+'%'+(miss?'<sup>!</sup>':'')+'</td>';
+    }).join("")+'</tr>';
+  });
+  return h+'</tbody></table></div><p class="hint">欄位 1–8 為結點；<sup>!</sup> 表示有填寫缺的項目，滑鼠移上去可看內容。</p></details>';
+}
+var PCTS=[0,10,20,30,40,50,60,70,80,90,100];
+function sysRows(p,i,ro){
+  var ks=sysList(p); if(!ks.length) return '';
+  var n=p.nodes[i], dis=ro?" disabled":"";
+  var h='<div class="sysbox"><h4>各系統進度（勾選勾完且各系統達 100%，此結點才算完成）</h4>';
+  ks.forEach(function(k){
+    var v=sysP(n,k), miss=(n.sys&&n.sys[k]&&n.sys[k].miss)||"", need=v<100&&!miss;
+    h+='<div class="sysrow'+(v>=100?' ok':need?' need':'')+'"><span class="sn">'+esc(sysName(p,k))+'</span>'
+      +'<select data-n="'+i+'" data-sys="'+k+'" aria-label="'+esc(sysName(p,k))+' 目前進度"'+dis+'>'
+      +PCTS.map(function(x){return '<option value="'+x+'"'+(x===v?' selected':'')+'>'+(x===100?'100% 完成':x+'%')+'</option>';}).join("")+'</select>'
+      +'<input type="text" maxlength="300" data-n="'+i+'" data-miss="'+k+'" value="'+esc(miss)+'" placeholder="'+(v>=100?'已完成':'缺的項目（例：主機未到、缺 3 支攝影機）')+'"'+(ro?' readonly':'')+'></div>';
+  });
+  return h+'</div>';
+}
+function afterNodeChange(p,i,unset){
+  var node=p.nodes[i], ns=nodeStat(p,i);
+  if(ns.st==="ok" && !node.done) node.done=today();
+  if(ns.st!=="ok" && node.done && unset) node.done="";
+}
 function rerender(i){ var y=window.scrollY; renderDetail(i); window.scrollTo(0,y); }
 function bindDetail(){
   var p=cur.project;
@@ -400,10 +454,24 @@ function bindDetail(){
     cb.onchange=function(){
       var i=+cb.dataset.n, node=p.nodes[i];
       if(cb.checked) node.checks[cb.dataset.id]=true; else delete node.checks[cb.dataset.id];
-      var ns=nodeStat(p,i);
-      if(ns.st==="ok" && !node.done) node.done=today();
-      if(ns.st!=="ok" && node.done && !cb.checked) node.done="";
+      afterNodeChange(p,i,!cb.checked);
       queueSave(); rerender(i);
+    };
+  });
+  document.querySelectorAll('select[data-sys]').forEach(function(sel){
+    sel.onchange=function(){
+      var i=+sel.dataset.n, k=sel.dataset.sys, node=p.nodes[i], old=sysP(node,k), v=+sel.value;
+      node.sys=node.sys||{}; node.sys[k]=node.sys[k]||{p:0,miss:""}; node.sys[k].p=v;
+      afterNodeChange(p,i,v<old);
+      queueSave(); rerender(i);
+    };
+  });
+  document.querySelectorAll('input[data-miss]').forEach(function(inp){
+    inp.oninput=function(){
+      var i=+inp.dataset.n, k=inp.dataset.miss, node=p.nodes[i];
+      node.sys=node.sys||{}; node.sys[k]=node.sys[k]||{p:0,miss:""}; node.sys[k].miss=inp.value;
+      inp.parentNode.classList.toggle("need", sysP(node,k)<100 && !inp.value.trim());
+      queueSave(1200);
     };
   });
   document.querySelectorAll('input[type=date][data-n]').forEach(function(inp){
@@ -460,6 +528,9 @@ function openForm(existing){
   var f=$("frm"), p=existing?cur.project:null;
   $("dlgTitle").textContent=existing?"編輯專案資料":"新增專案";
   FIELDS.forEach(function(k){ f.elements[k].value=p?(p[k]||""):""; });
+  var chosen=sysList(p);
+  document.querySelectorAll('#sysPick input[type=checkbox]').forEach(function(cb){ cb.checked=chosen.indexOf(cb.value)>=0; });
+  f.elements.otherName.value=(p&&p.otherName)||"";
   var isAdmin=session.me.role==="admin" && !existing;
   $("ownerWrap").hidden=!isAdmin;
   if(isAdmin){
@@ -467,14 +538,33 @@ function openForm(existing){
   }
   $("dlg").showModal();
 }
+(function buildSysPick(){
+  var h='';
+  SYSTEMS.forEach(function(s){
+    if(s.sub){
+      h+='<div class="sysgrp"><b>'+esc(s.n)+'</b>'+s.sub.map(function(x){ return '<label class="pick"><input type="checkbox" value="'+s.k+'.'+x[0]+'">'+esc(x[1])+'</label>'; }).join("")+'</div>';
+    }else if(s.k==="other"){
+      h+='<div class="sysgrp"><label class="pick"><input type="checkbox" value="other">其它</label><input name="otherName" maxlength="30" placeholder="其它系統名稱（例：緊急求救）"></div>';
+    }else{
+      h+='<label class="pick"><input type="checkbox" value="'+s.k+'">'+esc(s.n)+'</label>';
+    }
+  });
+  $("sysPick").innerHTML=h;
+})();
 $("frm").addEventListener("submit",function(e){
   if(e.submitter && e.submitter.value==="cancel") return;
   var f=e.target, d={};
   FIELDS.forEach(function(k){ d[k]=f.elements[k].value.trim(); });
   if(!d.name){ e.preventDefault(); return; }
+  var picked=SYS_KEYS.filter(function(k){ var cb=document.querySelector('#sysPick input[value="'+k+'"]'); return cb&&cb.checked; });
+  var otherName=f.elements.otherName.value.trim().slice(0,30);
   if(editingExisting){
     var p=cur.project, oldH=p.handover;
+    var dropped=sysList(p).filter(function(k){ return picked.indexOf(k)<0 && p.nodes.some(function(n){ var v=n.sys&&n.sys[k]; return v&&(v.p>0||v.miss); }); });
+    if(dropped.length && !confirm("取消勾選的系統已填過進度："+dropped.map(function(k){return sysName(p,k);}).join("、")+"\n確定要移除？這些系統的進度與缺項會一併刪除。")){ e.preventDefault(); return; }
     FIELDS.forEach(function(k){ p[k]=d[k]; });
+    p.systems=picked; p.otherName=otherName;
+    p.nodes.forEach(function(n){ var s={}; picked.forEach(function(k){ if(n.sys&&n.sys[k]) s[k]=n.sys[k]; }); n.sys=s; });
     if(d.handover && d.handover!==oldH){
       var blanks=p.nodes.filter(function(n){return !n.target;}).length;
       if(blanks===p.nodes.length || confirm("交屋日已變更，要依新交屋日重新帶入各結點的建議日期嗎？\n（已手動填寫的日期會被覆蓋）")){
@@ -483,7 +573,7 @@ $("frm").addEventListener("submit",function(e){
     }
     queueSave(); renderDetail(); toast("已更新專案資料");
   }else{
-    var proj={closed:false,nodes:newNodes(d.handover)};
+    var proj={closed:false,nodes:newNodes(d.handover),systems:picked,otherName:otherName};
     FIELDS.forEach(function(k){ proj[k]=d[k]; });
     var payload={project:proj};
     if(session.me.role==="admin") payload.owner=f.elements.owner.value;
@@ -619,7 +709,8 @@ function importProjects(list,fromLocal){
     }
     var src=list[i++], proj={closed:!!src.closed,nodes:[]};
     FIELDS.forEach(function(k){ proj[k]=src[k]==null?"":String(src[k]); });
-    proj.nodes=src.nodes.map(function(n){ var c={}; Object.keys((n&&n.checks)||{}).forEach(function(k){ if(n.checks[k]===true && /^(task|gate|form)\d{1,2}$/.test(k)) c[k]=true; }); return {target:(n&&n.target)||"",done:(n&&n.done)||"",note:String((n&&n.note)||""),checks:c}; });
+    proj.nodes=src.nodes.map(function(n){ var c={}; Object.keys((n&&n.checks)||{}).forEach(function(k){ if(n.checks[k]===true && /^(task|gate|form)\d{1,2}$/.test(k)) c[k]=true; }); return {target:(n&&n.target)||"",done:(n&&n.done)||"",note:String((n&&n.note)||""),checks:c,sys:{}}; });
+    proj.systems=[]; proj.otherName="";
     toast("匯入中… "+i+" / "+list.length);
     api("create",{project:proj}).then(function(){ ok++; next(); }).catch(function(e){ bad++; if(e.code==="AUTH") return; next(); });
   })();
