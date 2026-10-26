@@ -133,6 +133,38 @@ function decodeJwt(tok){
 function configured(){
   return CFG.CLIENT_ID && CFG.API_URL && CFG.CLIENT_ID.indexOf("請填入")<0 && CFG.API_URL.indexOf("請填入")<0 && /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(CFG.API_URL);
 }
+/* ---------- 手機：整頁跳轉登入（避免彈出視窗在手機或 App 內建瀏覽器變空白） ---------- */
+var UA=navigator.userAgent||"";
+var IS_MOBILE=/Android|iPhone|iPad|iPod|Mobile/i.test(UA) || (/Macintosh/.test(UA) && navigator.maxTouchPoints>1);
+var IN_APP=/\bLine\/|FBAN|FBAV|Instagram|MicroMessenger|KAKAOTALK/i.test(UA);
+var REDIRECT_URI=CFG.REDIRECT_URI || (location.origin+location.pathname.replace(/index\.html$/,""));
+var AUTH_KEY="wv-tracker-auth";
+function rand(){ var a=new Uint8Array(16); crypto.getRandomValues(a); return Array.prototype.map.call(a,function(b){return ("0"+b.toString(16)).slice(-2);}).join(""); }
+function startRedirectLogin(){
+  if((saver.dirty||saver.busy) && !confirm("還有修改尚未儲存，重新登入會遺失，確定要繼續嗎？")) return;
+  var st={state:rand(), nonce:rand(), back:location.hash.indexOf("id_token")>=0?"":location.hash};
+  try{ sessionStorage.setItem(AUTH_KEY, JSON.stringify(st)); }catch(e){ toast("瀏覽器封鎖了暫存空間，請關閉無痕模式後再試"); return; }
+  location.href="https://accounts.google.com/o/oauth2/v2/auth?"+[
+    "client_id="+encodeURIComponent(CFG.CLIENT_ID),
+    "redirect_uri="+encodeURIComponent(REDIRECT_URI),
+    "response_type=id_token",
+    "scope="+encodeURIComponent("openid email profile"),
+    "nonce="+st.nonce, "state="+st.state, "prompt=select_account"
+  ].join("&");
+}
+/* 從 Google 跳轉回來：網址 # 後面帶著登入憑證，驗證 state 與 nonce 後立即從網址清除 */
+function takeRedirectResult(){
+  var h=location.hash.replace(/^#/,"");
+  if(!/(^|&)(id_token|error)=/.test(h)) return null;
+  var q={}; h.split("&").forEach(function(kv){ var i=kv.indexOf("="); if(i>0) q[decodeURIComponent(kv.slice(0,i))]=decodeURIComponent(kv.slice(i+1).replace(/\+/g," ")); });
+  var st=null; try{ st=JSON.parse(sessionStorage.getItem(AUTH_KEY)||"null"); sessionStorage.removeItem(AUTH_KEY); }catch(e){}
+  history.replaceState(null,"",location.pathname+location.search+((st&&st.back)||""));
+  if(q.error) return {error: q.error==="access_denied"?"已取消登入。":"登入失敗（"+q.error+"），請再試一次。"};
+  var p=decodeJwt(q.id_token||"");
+  if(!st || !p || q.state!==st.state || p.nonce!==st.nonce) return {error:"登入驗證失敗，請重新登入。"};
+  return {credential:q.id_token};
+}
+
 var gsiReady=false;
 function initGsi(){
   if(gsiReady || !(window.google && google.accounts && google.accounts.id)) return gsiReady;
@@ -149,12 +181,17 @@ function showLogin(msg, isError, autoPrompt){
     +'<p>使用公司開通的 Google 帳號登入，登入後只會看到您負責或被分享的專案。</p>';
   if(msg) h+='<div class="notice" style="'+(isError?'':'background:var(--accent-soft);color:var(--accent)')+'">'+esc(msg)+'</div>';
   if(!configured()) h+='<div class="notice">系統尚未設定：請管理員在 config.js 填入 CLIENT_ID 與 API_URL。</div>';
-  h+='<div id="gsiBtn"></div>'
-    +'<ul class="sec"><li>本系統不會取得您的 Google 密碼，也不會存取您的信箱或雲端硬碟。</li>'
+  if(IN_APP) h+='<div class="notice">您正在 App 內建的瀏覽器中，Google 可能不允許在這裡登入。請按右上角「⋯」選「用瀏覽器開啟」（Safari 或 Chrome）。</div>';
+  h+= IS_MOBILE
+    ? '<button class="btn primary" id="btnRedirectLogin" type="button" style="width:100%;max-width:280px;min-height:46px;font-size:16px">使用 Google 帳號登入</button>'
+    : '<div id="gsiBtn"></div><p class="hint" style="text-align:center"><a href="#" id="lnkRedirectLogin">按了沒反應？改用整頁登入</a></p>';
+  h+='<ul class="sec"><li>本系統不會取得您的 Google 密碼，也不會存取您的信箱或雲端硬碟。</li>'
     +'<li>帳號需由管理員開通；閒置 '+(CFG.IDLE_MINUTES||30)+' 分鐘會自動登出。</li>'
     +'<li>公用電腦使用後請按「登出」。</li></ul></div></section>';
   $("app").innerHTML=h;
   if(!configured()) return;
+  if(IS_MOBILE){ $("btnRedirectLogin").onclick=startRedirectLogin; return; }
+  $("lnkRedirectLogin").onclick=function(e){ e.preventDefault(); startRedirectLogin(); };
   waitGsi(function(){
     google.accounts.id.renderButton($("gsiBtn"),{type:"standard",theme:isDark()?"filled_black":"outline",size:"large",text:"signin_with",shape:"pill",locale:"zh-TW",width:Math.min(260,$("gsiBtn").clientWidth||260)});
     if(!msg || autoPrompt) google.accounts.id.prompt();
@@ -172,7 +209,7 @@ function onCredential(resp){
   session.token=tok; session.exp=p.exp; lastActive=Date.now();
   clearTimeout(session.refresh);
   /* 憑證約 1 小時到期，到期前 5 分鐘嘗試以 Google 一鍵登入無聲更新 */
-  session.refresh=setTimeout(function(){ if(session.token && window.google && google.accounts) google.accounts.id.prompt(); }, Math.max(60000,(p.exp*1000-Date.now())-300000));
+  if(!IS_MOBILE) session.refresh=setTimeout(function(){ if(session.token && gsiReady) google.accounts.id.prompt(); }, Math.max(60000,(p.exp*1000-Date.now())-300000));
   if(session.me && session.me.email===String(p.email||"").toLowerCase()){
     if(saver.dirty) flushSave();   /* 同一人更新憑證：不重新載入畫面 */
     return;
@@ -612,5 +649,13 @@ function route(){
   loadList();
 }
 window.addEventListener("hashchange",route);
-showLogin();
+(function start(){
+  /* LINE 內建瀏覽器：自動改用手機預設瀏覽器開啟 */
+  if(/\bLine\//i.test(UA) && !/[?&]openExternalBrowser=1/.test(location.search)){
+    location.replace(location.pathname+(location.search?location.search+"&":"?")+"openExternalBrowser=1"+location.hash); return;
+  }
+  var r=takeRedirectResult();
+  if(r && r.credential){ $("app").innerHTML='<div class="loading">登入中…</div>'; onCredential({credential:r.credential}); return; }
+  showLogin(r && r.error, !!(r && r.error));
+})();
 })();
