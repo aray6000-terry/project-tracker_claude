@@ -183,7 +183,7 @@ function showLogin(msg, isError, autoPrompt){
   if(!configured()) h+='<div class="notice">系統尚未設定：請管理員在 config.js 填入 CLIENT_ID 與 API_URL。</div>';
   if(IN_APP) h+='<div class="notice">您正在 App 內建的瀏覽器中，Google 可能不允許在這裡登入。請按右上角「⋯」選「用瀏覽器開啟」（Safari 或 Chrome）。</div>';
   h+= IS_MOBILE
-    ? '<button class="btn primary" id="btnRedirectLogin" type="button" style="width:100%;max-width:280px;min-height:46px;font-size:16px">使用 Google 帳號登入</button>'
+    ? '<button class="btn primary" id="btnRedirectLogin" type="button" style="width:100%;max-width:280px;min-height:46px;font-size:16px">使用 Google 帳號登入</button>'+'<p class="hint" style="text-align:center;margin-top:10px">若按了停在 Google 空白頁：這是 App 內建瀏覽器不支援 Google 登入。請改用 Safari 或 Chrome 直接開啟本網址（可「加入主畫面」，之後從桌面圖示開）。</p>'
     : '<div id="gsiBtn"></div><p class="hint" style="text-align:center"><a href="#" id="lnkRedirectLogin">按了沒反應？改用整頁登入</a></p>';
   h+='<ul class="sec"><li>本系統不會取得您的 Google 密碼，也不會存取您的信箱或雲端硬碟。</li>'
     +'<li>帳號需由管理員開通；閒置 '+(CFG.IDLE_MINUTES||30)+' 分鐘會自動登出。</li>'
