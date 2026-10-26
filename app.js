@@ -54,7 +54,7 @@ function sysName(p,k){ return k==="other" ? "其它"+(p&&p.otherName?"："+p.oth
 /* 廠牌：常見品牌建議清單（可直接輸入其他品牌）；其他專案用過的品牌也會加入建議 */
 var BRAND_HINTS = {
   access:["SOYAL","TSM","漢軍","卓茂"],
-  cctv:["SAMPO","HS","AVTECH","LI-LIN","VIVOTECH"],
+  cctv:["SAMPO","HS","AVTECH","LI-LIN","VIVOTEK"],
   intercom:["VIA","SAMPO","NOBEL","winhome","KCA","PANASONIC","AIPHONE","TONNET","WAFLOCK"],
   bms:["研華","CAMTI","FATEK","Siemens"],
   parking:["Hikvision 海康威視","Dahua 大華","ZKTeco"],
