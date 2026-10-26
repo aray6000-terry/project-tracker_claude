@@ -53,10 +53,10 @@ SYSTEMS.forEach(function(s){ if(s.sub) s.sub.forEach(function(x){ var k=s.k+"."+
 function sysName(p,k){ return k==="other" ? "其它"+(p&&p.otherName?"："+p.otherName:"") : (SYS_NAME[k]||k); }
 /* 廠牌：常見品牌建議清單（可直接輸入其他品牌）；其他專案用過的品牌也會加入建議 */
 var BRAND_HINTS = {
-  access:["SOYAL 茂旭","Suprema","ZKTeco","HID","Honeywell","Hikvision 海康威視"],
-  cctv:["Hikvision 海康威視","Dahua 大華","VIVOTEK 晶睿","Axis","Hanwha","ACTi","Uniview 宇視","Bosch"],
+  access:["SOYAL","TSM","漢軍","卓茂"],
+  cctv:["SAMPO","HS","AVTECH","LI-LIN","VIVOTECH"],
   intercom:["Aiphone","Commax","Kocom","2N","Fermax","Hikvision 海康威視"],
-  bms:["Advantech 研華 WebAccess","Siemens","Honeywell","Johnson Controls","Schneider","Delta 台達"],
+  bms:["研華","CAMTI","FATECK"],
   parking:["Hikvision 海康威視","Dahua 大華","ZKTeco"],
   visitor:["ZKTeco","Hikvision 海康威視","SOYAL 茂旭"],
   "energy.meter":["士林電機","中興電工","Delta 台達","Schneider","Siemens"],
