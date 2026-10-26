@@ -56,7 +56,7 @@ var BRAND_HINTS = {
   access:["SOYAL","TSM","漢軍","卓茂"],
   cctv:["SAMPO","HS","AVTECH","LI-LIN","VIVOTECH"],
   intercom:["Aiphone","Commax","Kocom","2N","Fermax","Hikvision 海康威視"],
-  bms:["研華","CAMTI","FATECK"],
+  bms:["研華","CAMTI","FATEK","Siemens"],
   parking:["Hikvision 海康威視","Dahua 大華","ZKTeco"],
   visitor:["ZKTeco","Hikvision 海康威視","SOYAL 茂旭"],
   "energy.meter":["士林電機","中興電工","Delta 台達","Schneider","Siemens"],
