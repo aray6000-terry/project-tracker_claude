@@ -51,6 +51,38 @@ var SYSTEMS = [
 var SYS_KEYS=[], SYS_NAME={};
 SYSTEMS.forEach(function(s){ if(s.sub) s.sub.forEach(function(x){ var k=s.k+"."+x[0]; SYS_KEYS.push(k); SYS_NAME[k]=s.n.replace("系統","")+"－"+x[1]; }); else { SYS_KEYS.push(s.k); SYS_NAME[s.k]=s.n; } });
 function sysName(p,k){ return k==="other" ? "其它"+(p&&p.otherName?"："+p.otherName:"") : (SYS_NAME[k]||k); }
+/* 廠牌：常見品牌建議清單（可直接輸入其他品牌）；其他專案用過的品牌也會加入建議 */
+var BRAND_HINTS = {
+  access:["SOYAL 茂旭","Suprema","ZKTeco","HID","Honeywell","Hikvision 海康威視"],
+  cctv:["Hikvision 海康威視","Dahua 大華","VIVOTEK 晶睿","Axis","Hanwha","ACTi","Uniview 宇視","Bosch"],
+  intercom:["Aiphone","Commax","Kocom","2N","Fermax","Hikvision 海康威視"],
+  bms:["Advantech 研華 WebAccess","Siemens","Honeywell","Johnson Controls","Schneider","Delta 台達"],
+  parking:["Hikvision 海康威視","Dahua 大華","ZKTeco"],
+  visitor:["ZKTeco","Hikvision 海康威視","SOYAL 茂旭"],
+  "energy.meter":["士林電機","中興電工","Delta 台達","Schneider","Siemens"],
+  "energy.water":[],
+  "energy.solar":["URE 聯合再生","TSEC 元晶","Motech 茂迪","Delta 台達","SMA","Huawei 華為"],
+  air:["Honeywell","Advantech 研華","Siemens"],
+  ib2016:[], ib2024:[],
+  media:["Bose","Yamaha","TOA","Epson","Sony"],
+  "proto.hvac":["Daikin 大金","Hitachi 日立","Mitsubishi 三菱","Panasonic","TECO 東元","Carrier 開利","York 約克"],
+  "proto.elevator":["永大","崇友","Mitsubishi 三菱","Otis","Hitachi 日立","Schindler","KONE","Fujitec"],
+  "proto.lighting":["Philips","Panasonic","東亞照明","Lutron"],
+  "proto.fire":["Nohmi 能美","Hochiki","Honeywell","Siemens","宏力"],
+  "proto.meter":["士林電機","中興電工","Delta 台達","Schneider","Siemens"],
+  "proto.water":[],
+  "proto.air":["Honeywell","Advantech 研華","Siemens"],
+  other:[]
+};
+function brandOf(p,k){ return (p&&p.brands&&p.brands[k])||""; }
+function sysLabel(p,k){ var b=brandOf(p,k); return sysName(p,k)+(b?"（"+b+"）":""); }
+function brandOptions(k){
+  var seen={}, out=[];
+  (BRAND_HINTS[k]||[]).concat(data.projects.map(function(x){ return x.summary&&x.summary.brands&&x.summary.brands[k]; }))
+    .forEach(function(b){ if(b && !seen[b]){ seen[b]=1; out.push(b); } });
+  if(cur&&cur.project){ var b=brandOf(cur.project,k); if(b&&!seen[b]) out.push(b); }
+  return out;
+}
 function sysList(p){ return ((p&&p.systems)||[]).filter(function(k){ return SYS_KEYS.indexOf(k)>=0; }); }
 function sysP(n,k){ var v=n&&n.sys&&n.sys[k]; return v&&typeof v.p==="number"?v.p:0; }
 var LEGACY_KEY = "wv-project-tracker-v1";
@@ -319,7 +351,7 @@ function renderList(){
         +'<div class="row"><h3>'+esc(sm.name)+'</h3><span class="badge '+lb[1]+'">'+lb[0]+'</span></div>'
         +'<div class="meta">'+esc(sm.client||"—")+(sm.site?'｜'+esc(sm.site):'')+'</div>'
         +'<div class="meta">工程師：'+esc(sm.engineer||"—")+'　師父：'+esc(sm.mentor||"—")+'</div>'
-        +(sysList(sm).length?'<div class="meta">系統：'+esc(sysList(sm).map(function(k){return sysName(sm,k);}).join("、"))+'</div>':'')
+        +(sysList(sm).length?'<div class="meta">系統：'+esc(sysList(sm).map(function(k){return sysLabel(sm,k);}).join("、"))+'</div>':'')
         +'<div class="dots" aria-hidden="true">'+NODES.map(function(_,i){return '<span class="s-'+sumNodeStat(sm,i).st+'"></span>';}).join("")+'</div>'
         +'<div class="row"><div class="bar'+(s.pct===100?' ok':'')+'" style="flex:1" role="progressbar" aria-valuenow="'+s.pct+'" aria-valuemin="0" aria-valuemax="100"><i style="width:'+s.pct+'%"></i></div><b style="min-width:44px;text-align:right">'+s.pct+'%</b></div>'
         +'<div class="meta">'+esc(nx)+(s.over?'　<span style="color:var(--bad)">逾期 '+s.over+' 個結點</span>':'')+'</div>'
@@ -406,7 +438,7 @@ function sysMatrix(p){
   var h='<details class="mxwrap"><summary>各系統進度總覽（'+ks.length+' 項系統）</summary><div class="tblwrap"><table class="mx"><thead><tr><th>系統</th>'
     +NODES.map(function(_,i){return '<th title="'+esc(NODES[i].name)+'">'+(i+1)+'</th>';}).join("")+'</tr></thead><tbody>';
   ks.forEach(function(k){
-    h+='<tr><td>'+esc(sysName(p,k))+'</td>'+p.nodes.map(function(n,i){
+    h+='<tr><td>'+esc(sysLabel(p,k))+'</td>'+p.nodes.map(function(n,i){
       var v=sysP(n,k), miss=n.sys&&n.sys[k]&&n.sys[k].miss;
       var cls=v>=100?'ok':v>0?'run':'';
       return '<td class="c '+cls+'" title="'+esc(NODES[i].name+(miss?"｜缺："+miss:""))+'">'+v+'%'+(miss?'<sup>!</sup>':'')+'</td>';
@@ -421,7 +453,7 @@ function sysRows(p,i,ro){
   var h='<div class="sysbox"><h4>各系統進度（勾選勾完且各系統達 100%，此結點才算完成）</h4>';
   ks.forEach(function(k){
     var v=sysP(n,k), miss=(n.sys&&n.sys[k]&&n.sys[k].miss)||"", need=v<100&&!miss;
-    h+='<div class="sysrow'+(v>=100?' ok':need?' need':'')+'"><span class="sn">'+esc(sysName(p,k))+'</span>'
+    h+='<div class="sysrow'+(v>=100?' ok':need?' need':'')+'"><span class="sn">'+esc(sysLabel(p,k))+'</span>'
       +'<select data-n="'+i+'" data-sys="'+k+'" aria-label="'+esc(sysName(p,k))+' 目前進度"'+dis+'>'
       +PCTS.map(function(x){return '<option value="'+x+'"'+(x===v?' selected':'')+'>'+(x===100?'100% 完成':x+'%')+'</option>';}).join("")+'</select>'
       +'<input type="text" maxlength="300" data-n="'+i+'" data-miss="'+k+'" value="'+esc(miss)+'" placeholder="'+(v>=100?'已完成':'缺的項目（例：主機未到、缺 3 支攝影機）')+'"'+(ro?' readonly':'')+'></div>';
@@ -531,6 +563,7 @@ function openForm(existing){
   var chosen=sysList(p);
   document.querySelectorAll('#sysPick input[type=checkbox]').forEach(function(cb){ cb.checked=chosen.indexOf(cb.value)>=0; });
   f.elements.otherName.value=(p&&p.otherName)||"";
+  renderBrandRows((p&&p.brands)||{});
   var isAdmin=session.me.role==="admin" && !existing;
   $("ownerWrap").hidden=!isAdmin;
   if(isAdmin){
@@ -550,7 +583,20 @@ function openForm(existing){
     }
   });
   $("sysPick").innerHTML=h;
+  document.querySelectorAll('#sysPick input').forEach(function(el){ el.addEventListener(el.type==="checkbox"?"change":"input",function(){ renderBrandRows(currentBrandValues()); }); });
 })();
+function currentBrandValues(){ var o={}; document.querySelectorAll('#brandRows input[data-brand]').forEach(function(i){ o[i.dataset.brand]=i.value; }); return o; }
+function renderBrandRows(vals){
+  var picked=SYS_KEYS.filter(function(k){ var cb=document.querySelector('#sysPick input[value="'+k+'"]'); return cb&&cb.checked; });
+  var otherName=($("frm").elements.otherName.value||"").trim();
+  if(!picked.length){ $("brandRows").innerHTML='<p class="hint" style="margin:0">勾選上方系統後，可在這裡填寫各系統廠牌。</p>'; return; }
+  $("brandRows").innerHTML=picked.map(function(k,i){
+    var opts=brandOptions(k);
+    return '<label class="brandrow"><span>'+esc(sysName({otherName:otherName},k))+'</span>'
+      +'<input data-brand="'+k+'" maxlength="40" list="bl'+i+'" value="'+esc(vals[k]||"")+'" placeholder="選擇或輸入廠牌">'
+      +'<datalist id="bl'+i+'">'+opts.map(function(b){return '<option value="'+esc(b)+'">';}).join("")+'</datalist></label>';
+  }).join("");
+}
 $("frm").addEventListener("submit",function(e){
   if(e.submitter && e.submitter.value==="cancel") return;
   var f=e.target, d={};
@@ -558,12 +604,14 @@ $("frm").addEventListener("submit",function(e){
   if(!d.name){ e.preventDefault(); return; }
   var picked=SYS_KEYS.filter(function(k){ var cb=document.querySelector('#sysPick input[value="'+k+'"]'); return cb&&cb.checked; });
   var otherName=f.elements.otherName.value.trim().slice(0,30);
+  var bv=currentBrandValues(), brands={};
+  picked.forEach(function(k){ var b=(bv[k]||"").trim().slice(0,40); if(b) brands[k]=b; });
   if(editingExisting){
     var p=cur.project, oldH=p.handover;
     var dropped=sysList(p).filter(function(k){ return picked.indexOf(k)<0 && p.nodes.some(function(n){ var v=n.sys&&n.sys[k]; return v&&(v.p>0||v.miss); }); });
     if(dropped.length && !confirm("取消勾選的系統已填過進度："+dropped.map(function(k){return sysName(p,k);}).join("、")+"\n確定要移除？這些系統的進度與缺項會一併刪除。")){ e.preventDefault(); return; }
     FIELDS.forEach(function(k){ p[k]=d[k]; });
-    p.systems=picked; p.otherName=otherName;
+    p.systems=picked; p.otherName=otherName; p.brands=brands;
     p.nodes.forEach(function(n){ var s={}; picked.forEach(function(k){ if(n.sys&&n.sys[k]) s[k]=n.sys[k]; }); n.sys=s; });
     if(d.handover && d.handover!==oldH){
       var blanks=p.nodes.filter(function(n){return !n.target;}).length;
@@ -573,7 +621,7 @@ $("frm").addEventListener("submit",function(e){
     }
     queueSave(); renderDetail(); toast("已更新專案資料");
   }else{
-    var proj={closed:false,nodes:newNodes(d.handover),systems:picked,otherName:otherName};
+    var proj={closed:false,nodes:newNodes(d.handover),systems:picked,otherName:otherName,brands:brands};
     FIELDS.forEach(function(k){ proj[k]=d[k]; });
     var payload={project:proj};
     if(session.me.role==="admin") payload.owner=f.elements.owner.value;
@@ -710,7 +758,7 @@ function importProjects(list,fromLocal){
     var src=list[i++], proj={closed:!!src.closed,nodes:[]};
     FIELDS.forEach(function(k){ proj[k]=src[k]==null?"":String(src[k]); });
     proj.nodes=src.nodes.map(function(n){ var c={}; Object.keys((n&&n.checks)||{}).forEach(function(k){ if(n.checks[k]===true && /^(task|gate|form)\d{1,2}$/.test(k)) c[k]=true; }); return {target:(n&&n.target)||"",done:(n&&n.done)||"",note:String((n&&n.note)||""),checks:c,sys:{}}; });
-    proj.systems=[]; proj.otherName="";
+    proj.systems=[]; proj.otherName=""; proj.brands={};
     toast("匯入中… "+i+" / "+list.length);
     api("create",{project:proj}).then(function(){ ok++; next(); }).catch(function(e){ bad++; if(e.code==="AUTH") return; next(); });
   })();

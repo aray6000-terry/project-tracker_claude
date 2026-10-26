@@ -149,6 +149,10 @@ dialog{max-height:calc(100vh - 32px);overflow:auto}
 .sysgrp{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px;padding-top:6px;border-top:1px dashed var(--line)}
 .sysgrp b{font-size:13px;color:var(--ink-2);font-weight:600;min-width:84px}
 .sysgrp input[name=otherName]{flex:1;min-width:160px;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:6px 10px;color:var(--ink)}
+.brandhead{margin:10px 0 6px;padding-top:8px;border-top:1px solid var(--line);font-size:13px;color:var(--ink-2);font-weight:600}
+#brandRows{display:grid;grid-template-columns:1fr;gap:6px}
+.fgrid .brandrow,.brandrow{display:grid;grid-template-columns:150px 1fr;align-items:center;gap:8px;font-size:14px;color:var(--ink)}
+.brandrow input{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:6px 10px;color:var(--ink);min-width:0}
 .sysbox{margin:6px 0 4px;padding:10px 12px;background:var(--surface-2);border-radius:10px}
 .sysbox h4{margin:0 0 8px;font-size:13px;color:var(--ink-2);font-weight:600}
 .sysrow{display:grid;grid-template-columns:150px 110px 1fr;gap:8px;align-items:center;padding:4px 0}
@@ -198,6 +202,7 @@ footer{margin-top:32px;color:var(--ink-2);font-size:12px;text-align:center}
   .dates input{width:100%}
   /* 管理表格改成卡片式，不必左右滑 */
   .sysrow{grid-template-columns:1fr 120px}
+  #brandRows{grid-template-columns:1fr}
   .sysrow input{grid-column:1/-1}
   table.cards thead{display:none}
   table.cards,table.cards tbody{display:block}
@@ -256,7 +261,7 @@ footer{margin-top:32px;color:var(--ink-2);font-size:12px;text-align:center}
       <label>帶案師父<input name="mentor" maxlength="30"></label>
       <label>合約金額（選填）<input name="amount" maxlength="30" placeholder="例：NT$ 3,200,000"></label>
       <label>預計驗屋交屋日<input name="handover" type="date"></label>
-      <fieldset class="full syspick"><legend>本案建置系統（可複選；勾選的系統在每個結點都要填目前進度與缺的項目）</legend><div id="sysPick"></div></fieldset>
+      <fieldset class="full syspick"><legend>本案建置系統（可複選；勾選的系統在每個結點都要填目前進度與缺的項目）</legend><div id="sysPick"></div><div class="brandhead">各系統廠牌（可從清單選擇，或直接輸入）</div><div id="brandRows"></div></fieldset>
       <label class="full" id="ownerWrap" hidden>負責帳號（登入後可看到此專案）<select name="owner" id="ownerSel"></select></label>
       <label class="full">備註<textarea name="note" rows="2" maxlength="500"></textarea></label>
     </div>
