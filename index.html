@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style; frame-src https://accounts.google.com/gsi/; connect-src 'self' https://script.google.com https://script.googleusercontent.com https://accounts.google.com/gsi/; img-src 'self' data: https://*.googleusercontent.com; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style; frame-src https://accounts.google.com/gsi/; connect-src 'self' https://script.google.com https://script.googleusercontent.com https://accounts.google.com/gsi/; img-src 'self' data: blob: https://*.googleusercontent.com; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <meta name="robots" content="noindex, nofollow">
 <title>弱電專案進度追蹤</title>
@@ -167,6 +167,55 @@ table.mx th,table.mx td{padding:6px 4px;white-space:nowrap}
 table.mx td.ok{color:var(--ok);font-weight:600}
 table.mx td.run{color:var(--accent)}
 table.mx sup{color:var(--warn);font-weight:700}
+.mainnav{display:flex;gap:4px;flex-wrap:wrap;margin:0 0 14px;border-bottom:1px solid var(--line)}
+.mainnav a{padding:8px 14px;text-decoration:none;color:var(--ink-2);border-bottom:3px solid transparent;font-weight:600}
+.mainnav a.on{color:var(--accent);border-bottom-color:var(--accent)}
+.ptabs{display:flex;gap:6px;overflow-x:auto;margin:0 0 14px;padding-bottom:2px}
+.ptabs button{flex:none;border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:6px 14px;cursor:pointer;font-size:14px}
+.ptabs button.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
+.tipbox{margin:4px 0 8px;padding:8px 12px;border-left:4px solid var(--warn);background:var(--warn-soft);border-radius:6px;font-size:14px}
+.tipbox b{margin-right:8px;color:var(--warn)}
+table.perm th,table.perm td{font-size:13px;white-space:nowrap}
+table.perm td.yes{color:var(--ok);font-weight:700}
+.kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;margin:0 0 16px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow)}
+.kpi .n{font-size:24px;font-weight:700}.kpi .l{font-size:13px;color:var(--ink-2)}.kpi.bad .n{color:var(--bad)}.kpi.warn .n{color:var(--warn)}
+.list{list-style:none;margin:0;padding:0}
+.list li{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.list li .main{flex:1;min-width:200px}
+.list li .main b{display:block}
+.thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}
+.thumbs figure{margin:0;background:var(--surface-2);border-radius:8px;overflow:hidden;cursor:pointer}
+.thumbs img{width:100%;height:110px;object-fit:cover;display:block}
+.thumbs figcaption{font-size:12px;padding:4px 6px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.uprow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+.uprow select,.uprow input[type=text],.fld{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 10px;color:var(--ink)}
+.items td input{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 8px;width:100%;min-width:60px}
+.status{display:inline-block;font-size:12px;padding:2px 9px;border-radius:99px;font-weight:600}
+.st-submitted,.st-billed,.st-open{background:var(--accent-soft);color:var(--accent)}
+.st-confirmed,.st-invoiced,.st-doing,.st-done{background:var(--warn-soft);color:var(--warn)}
+.st-shipped,.st-paid,.st-closed{background:var(--ok-soft);color:var(--ok)}
+.st-rejected,.st-cancelled,.st-overdue{background:var(--bad-soft);color:var(--bad)}
+.st-pending{background:var(--surface-2);color:var(--ink-2)}
+.pipeline{display:flex;gap:4px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--ink-2)}
+.pipeline span.on{color:var(--accent);font-weight:700}
+.panel .status{white-space:nowrap}table.qty td,table.qty th{text-align:right;white-space:nowrap}table.qty td:nth-child(-n+2),table.qty th:nth-child(-n+2){text-align:left}table.iot td:nth-child(3),table.iot td:nth-child(4),table.iot th:nth-child(3),table.iot th:nth-child(4){text-align:left}table.qty tr.grp td{border-top:2px solid var(--line)}
+.netwrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.netsvg{display:block;min-width:900px;width:100%;height:auto;font-family:inherit}
+.netsvg .t-h{font-size:15px;font-weight:700;fill:var(--ink)}.netsvg .t-s{font-size:11px;fill:var(--ink-2)}.netsvg .t-f{font-size:13px;font-weight:700;fill:var(--ink)}.netsvg .t-b{font-size:12px;fill:var(--ink)}
+.netsvg .band{fill:var(--accent-soft);opacity:.35}
+.netsvg .bx-acc{fill:var(--surface);stroke:var(--accent);stroke-width:1.5}.netsvg .bx-cam{fill:var(--surface);stroke:var(--warn);stroke-width:1.5}
+.netsvg .bx-dist{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.5}.netsvg .bx-core{fill:var(--accent);stroke:var(--accent)}
+.netsvg .bx-core+text,.netsvg .bx-core+text+text{fill:#fff}
+.netsvg .ln-f{fill:none;stroke:var(--ink-2);stroke-width:1;opacity:.6}.netsvg .ln-c{fill:none;stroke:var(--accent);stroke-width:2}
+.legend{display:flex;gap:6px 14px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--ink-2);margin:8px 0}.legend .lg{display:inline-block;width:14px;height:10px;border-radius:3px;border:1.5px solid var(--accent);margin-right:-8px}
+.legend .lg.cam{border-color:var(--warn)}.legend .lg.dist{background:var(--accent-soft)}.legend .lg.core{background:var(--accent)}
+tr.muted td{color:var(--ink-2);opacity:.7}
+.lightbox{position:fixed;inset:0;background:rgba(0,0,0,.85);display:grid;place-items:center;z-index:20;padding:16px}
+.lightbox img{max-width:100%;max-height:85vh;border-radius:8px}
+.lightbox p{color:#fff;text-align:center;margin:8px 0 0}
+.sign{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:24px}
+.sign div{border-top:1px solid var(--ink);padding-top:6px;text-align:center;font-size:14px}
 .factions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-wrap:wrap}
 .hint{font-size:12px;color:var(--ink-2);margin-top:6px}
 .mlist{list-style:none;margin:8px 0 0;padding:0}
@@ -203,6 +252,9 @@ footer{margin-top:32px;color:var(--ink-2);font-size:12px;text-align:center}
   /* 管理表格改成卡片式，不必左右滑 */
   .sysrow{grid-template-columns:1fr 120px}
   #brandRows{grid-template-columns:1fr}
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .sign{grid-template-columns:1fr}
+  .mainnav a{padding:8px 10px}
   .sysrow input{grid-column:1/-1}
   table.cards thead{display:none}
   table.cards,table.cards tbody{display:block}
@@ -246,6 +298,7 @@ footer{margin-top:32px;color:var(--ink-2);font-size:12px;text-align:center}
     </div>
     <div class="tools" id="toolsGuest"><button class="btn" id="btnTheme2" type="button">深淺色</button></div>
   </header>
+  <nav id="nav" class="mainnav" hidden></nav>
   <main id="app"><div class="loading">載入中…</div></main>
   <footer>資料存放於公司 Google Drive，需以已開通的 Google 帳號登入。依《專案工程師養成計畫》施工時間結點（補齊版）建立。</footer>
 </div>
@@ -261,6 +314,10 @@ footer{margin-top:32px;color:var(--ink-2);font-size:12px;text-align:center}
       <label>帶案師父<input name="mentor" maxlength="30"></label>
       <label>合約金額（選填）<input name="amount" maxlength="30" placeholder="例：NT$ 3,200,000"></label>
       <label>預計驗屋交屋日<input name="handover" type="date"></label>
+      <label>業務負責人<select name="salesRep" id="salesRepSel"></select></label>
+      <label>合約編號<input name="contractNo" maxlength="40"></label>
+      <label>合約總價（未稅，元）<input name="contractAmount" inputmode="numeric" maxlength="15" placeholder="例：3200000"></label>
+      <label class="full">合約付款條件<textarea name="payCondition" rows="2" maxlength="500" placeholder="例：訂金 30%、完工 60%、保固 10%（各期請款在「請款」頁設定）"></textarea></label>
       <fieldset class="full syspick"><legend>本案建置系統（可複選；勾選的系統在每個結點都要填目前進度與缺的項目）</legend><div id="sysPick"></div><div class="brandhead">各系統廠牌（可從清單選擇，或直接輸入）</div><div id="brandRows"></div></fieldset>
       <label class="full" id="ownerWrap" hidden>負責帳號（登入後可看到此專案）<select name="owner" id="ownerSel"></select></label>
       <label class="full">備註<textarea name="note" rows="2" maxlength="500"></textarea></label>
@@ -292,6 +349,13 @@ footer{margin-top:32px;color:var(--ink-2);font-size:12px;text-align:center}
 
 <script src="config.js"></script>
 <script src="app.js"></script>
+<script src="ops.js"></script>
+<script src="xlsx-lite.js"></script>
+<script src="quote-core.js"></script>
+<script src="analysis.js"></script>
+<script src="io-core.js"></script>
+<script src="design-core.js"></script>
+<script src="design.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </body>
 </html>

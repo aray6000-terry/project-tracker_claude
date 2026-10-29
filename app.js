@@ -38,7 +38,20 @@ var NODES = [
 /* 依交屋日倒推的建議天數（交屋日為 0），可依實際案場修改 */
 var OFFSETS = [-540,-480,-360,-240,-120,-45,0,60];
 var GROUPS = [["task","完成事項"],["gate","查驗關卡"],["form","產出表單"]];
-var FIELDS = ["name","client","site","engineer","mentor","amount","handover","note"];
+var FIELDS = ["name","client","site","engineer","mentor","amount","handover","note","salesRep","contractNo","contractAmount","payCondition"];
+var ROLES = [["admin","最高管理權限"],["ceo","CEO"],["sales","業務"],["sales_mgr","業務主管"],["eng","工務"],["eng_mgr","工務主管"],["purchase","採購"],["account","會計"],["warehouse","倉管"]];
+var ROLE_NAME = {}; ROLES.forEach(function(r){ ROLE_NAME[r[0]]=r[1]; });
+/* 各結點施工注意事項（依《專案工程師養成計畫》整理） */
+var NODE_TIPS = [
+  "送審核可後才請購；主機、客製機櫃等長交期設備另抓交期，線材進場前 1 個月到貨。",
+  "開工會議確認配管圖、管徑與數量、110V 電源由誰施作，介面分工表請業主與營造簽認。",
+  "封板、灌漿前逐管拍照查驗；強弱電分管，管內佔用不超過約 40%，每管預留拉線。",
+  "穿線後立即測線（通斷、絕緣），兩端標示並依結線表顏色結線，記錄於線路測試表。",
+  "與消防廠商實測連動（門禁釋放、柵欄開啟）；箱體標示需與配線圖一致。",
+  "依單機 → 系統 → 整合三階段測試；全系統對時、機櫃整線、IP 位址表定版。",
+  "驗收單簽認並確認保固起算日；完成操作教育訓練、帳號密碼與備品移交。",
+  "缺失依管制表逐項結案；結算請款、首次保養並歸檔，保固到期日列入提醒。"
+];
 /* 專案建置系統（順序需與後端 Code.gs 的 SYSTEM_KEYS 一致） */
 var SYSTEMS = [
   {k:"access",n:"門禁"},{k:"cctv",n:"攝影"},{k:"intercom",n:"對講"},{k:"bms",n:"中央監控"},
@@ -86,7 +99,7 @@ function brandOptions(k){
 function sysList(p){ return ((p&&p.systems)||[]).filter(function(k){ return SYS_KEYS.indexOf(k)>=0; }); }
 function sysP(n,k){ var v=n&&n.sys&&n.sys[k]; return v&&typeof v.p==="number"?v.p:0; }
 var LEGACY_KEY = "wv-project-tracker-v1";
-var ROLE_LABEL = {admin:["管理員","b-warn"],owner:["負責人","b-run"],editor:["可編輯","b-ok"],viewer:["僅檢視","b-idle"]};
+var ROLE_LABEL = {admin:["管理員","b-warn"],manager:["主管","b-warn"],owner:["負責人","b-run"],editor:["可編輯","b-ok"],viewer:["僅檢視","b-idle"]};
 var ST_LABEL = {idle:["未開始","b-idle"],run:["進行中","b-run"],ok:["完成","b-ok"],bad:["逾期","b-bad"]};
 var PST_LABEL = {idle:["未開始","b-idle"],run:["進行中","b-run"],late:["有逾期結點","b-bad"],closed:["已結案","b-ok"]};
 
@@ -267,9 +280,10 @@ function onCredential(resp){
     session.me=me;
     $("tools").hidden=false; $("toolsGuest").hidden=true;
     $("userName").textContent=me.name||me.email; $("userName").title=me.email;
-    var rl=ROLE_LABEL[me.role==="admin"?"admin":"editor"];
-    $("roleTag").innerHTML=me.role==="admin"?'<span class="badge '+rl[1]+'">管理員</span>':'';
-    $("btnNew").hidden=!me.canCreate; $("btnImport").hidden=!me.canCreate; $("btnAdmin").hidden=me.role!=="admin";
+    me.caps=me.caps||{projects:true,createProject:me.canCreate,manageUsers:me.role==="admin"};
+    $("roleTag").innerHTML='<span class="badge '+(me.role==="admin"||me.role==="ceo"?"b-warn":"b-run")+'">'+esc(me.roleName||ROLE_NAME[me.role]||"")+'</span>';
+    $("btnNew").hidden=!me.caps.createProject; $("btnImport").hidden=!me.caps.createProject; $("btnAdmin").hidden=true;
+    renderNav();
     if(saver.dirty && saver.target){ cur=saver.target; flushSave(); }
     route();
   }).catch(function(e){
@@ -375,6 +389,7 @@ function seg(k,v,l){ return '<button type="button" data-seg="'+k+'" data-v="'+v+
 /* ---------- 專案頁 ---------- */
 function openProject(id){
   if(cur && cur.id===id){ renderDetail(); return; }
+  if(!data.users.length) api("list").then(function(d){ data.projects=d.projects||[]; data.users=d.users||[]; }).catch(function(){});
   $("app").innerHTML='<div class="loading">讀取專案中…</div>';
   api("get",{id:id}).then(function(v){ cur=v; renderDetail(); }).catch(function(e){ fail(e); if(e.code==="NOT_FOUND") go(""); });
 }
@@ -385,7 +400,8 @@ function renderDetail(keepNode){
   h+='<section class="detail-head"><div class="row" style="flex-wrap:wrap"><h2>'+esc(p.name)+'</h2><span><span class="badge '+lb[1]+'">'+lb[0]+'</span> <span class="badge '+rl[1]+'">'+rl[0]+'</span></span></div>'
     +'<div class="info">'
     +info("業主／營造",p.client)+info("案場地點",p.site)+info("負責工程師",p.engineer)+info("帶案師父",p.mentor)
-    +info("合約金額",p.amount)+info("預計驗屋交屋",fmt(p.handover))+info("負責帳號",userName(cur.owner))+info("完成結點",s.okn+" / "+NODES.length)
+    +info("業務負責人",p.salesRep?userName(p.salesRep):"")+info("合約編號",p.contractNo)
+    +info("合約金額",p.contractAmount?("NT$ "+Number(p.contractAmount).toLocaleString()):p.amount)+info("預計驗屋交屋",fmt(p.handover))+info("負責帳號",userName(cur.owner))+info("完成結點",s.okn+" / "+NODES.length)
     +'</div>'
     +(p.note?'<p class="meta" style="margin:0 0 10px">備註：'+esc(p.note)+'</p>':'')
     +sysMatrix(p)
@@ -400,6 +416,13 @@ function renderDetail(keepNode){
     +(ro?'':'<button class="btn small" type="button" id="btnClose">'+(p.closed?"重新開啟專案":"標記為已結案")+'</button>')
     +(cur.myRole==="admin"?'<button class="btn small danger" type="button" id="btnDel">刪除專案</button>':'')
     +'</div></section>';
+  h+=projectTabs();
+  if(view.tab && view.tab!=="progress"){
+    $("app").innerHTML=h+'<div id="ptab"><div class="loading">讀取中…</div></div>';
+    showSaveState(); bindDetail();
+    if(window.TR && TR.views.projectTab) TR.views.projectTab(view.tab, $("ptab"));
+    return;
+  }
   h+='<div class="'+(ro?'ro':'')+'">';
   p.nodes.forEach(function(n,i){
     var ns=nodeStat(p,i), lab=ST_LABEL[ns.st];
@@ -414,7 +437,7 @@ function renderDetail(keepNode){
       +'<div class="node-body"><div class="dates">'
       +'<label>預計日期<input type="date" data-n="'+i+'" data-field="target" value="'+esc(n.target)+'"'+dis+'></label>'
       +'<label>實際完成日<input type="date" data-n="'+i+'" data-field="done" value="'+esc(n.done)+'"'+dis+'></label>'
-      +'</div>'+sysRows(p,i,ro)+'<div class="groups">';
+      +'</div><div class="tipbox"><b>注意事項</b>'+esc(NODE_TIPS[i]||"")+'</div>'+sysRows(p,i,ro)+'<div class="groups">';
     GROUPS.forEach(function(g){
       h+='<div class="group"><h4>'+g[1]+'</h4>';
       NODES[i][g[0]].forEach(function(txt,j){
@@ -431,6 +454,26 @@ function renderDetail(keepNode){
   bindDetail();
 }
 function info(k,v){ return '<div><b>'+k+'</b>'+esc(v||"—")+'</div>'; }
+var PTABS=[["progress","施工進度"],["files","圖面檔案"],["qty","數量・報價"],["design","設計・編表"],["site","現場照片・問題"],["reqs","領料"],["bills","請款"],["brands","廠牌確認表"],["log","變更紀錄"]];
+function projectTabs(){
+  var caps=session.me.caps||{};
+  return '<nav class="ptabs" aria-label="專案功能">'+PTABS.filter(function(t){
+    if(t[0]==="bills") return caps.billView;
+    if(t[0]==="reqs") return caps.reqCreate||caps.reqViewAll||caps.reqConfirm||caps.reqShip||true;
+    return true;
+  }).map(function(t){ return '<button type="button" data-ptab="'+t[0]+'" class="'+((view.tab||"progress")===t[0]?"on":"")+'">'+t[1]+'</button>'; }).join("")+'</nav>';
+}
+function renderNav(){
+  var caps=session.me.caps||{}, items=[["home","首頁"]];
+  if(caps.projects) items.push(["projects","專案"]);
+  if(caps.reqCreate||caps.reqConfirm||caps.reqShip||caps.reqViewAll) items.push(["reqs","領料"]);
+  if(caps.billView) items.push(["bills","請款"]);
+  if(caps.manageUsers) items.push(["admin","權限管理"]);
+  var curH=(location.hash.replace(/^#/,"")||"home").split("/")[0];
+  if(/^p=/.test(curH)) curH="projects";
+  $("nav").innerHTML=items.map(function(it){ return '<a href="#'+it[0]+'" class="'+(curH===it[0]?"on":"")+'">'+it[1]+'</a>'; }).join("");
+  $("nav").hidden=false;
+}
 /* 各系統 × 各結點進度總覽 */
 function sysMatrix(p){
   var ks=sysList(p);
@@ -468,7 +511,8 @@ function afterNodeChange(p,i,unset){
 function rerender(i){ var y=window.scrollY; renderDetail(i); window.scrollTo(0,y); }
 function bindDetail(){
   var p=cur.project;
-  $("btnBack").onclick=function(){ go(""); };
+  $("btnBack").onclick=function(){ go("projects"); };
+  document.querySelectorAll("[data-ptab]").forEach(function(b){ b.onclick=function(){ go("p="+cur.id+(b.dataset.ptab==="progress"?"":"/"+b.dataset.ptab)); }; });
   $("btnPrint").onclick=function(){ document.querySelectorAll("details.node").forEach(function(d){d.open=true;}); window.print(); };
   $("btnReload").onclick=function(){ if(saver.dirty){ toast("還有修改正在儲存，請稍候"); return; } var id=cur.id; cur=null; openProject(id); };
   document.querySelectorAll("[data-jump]").forEach(function(b){ b.onclick=function(){ var d=$("node-"+b.dataset.jump); d.open=true; d.scrollIntoView({behavior:"smooth",block:"start"}); }; });
@@ -559,12 +603,13 @@ function openForm(existing){
   editingExisting=!!existing;
   var f=$("frm"), p=existing?cur.project:null;
   $("dlgTitle").textContent=existing?"編輯專案資料":"新增專案";
-  FIELDS.forEach(function(k){ f.elements[k].value=p?(p[k]||""):""; });
+  $("salesRepSel").innerHTML='<option value="">（未指定）</option>'+data.users.map(function(u){ return '<option value="'+esc(u.email)+'">'+esc(u.name?u.name+"（"+u.email+"）":u.email)+'</option>'; }).join("");
+  FIELDS.forEach(function(k){ f.elements[k].value=p?(p[k]||""):(k==="salesRep"&&session.me.role==="sales"?session.me.email:""); });
   var chosen=sysList(p);
   document.querySelectorAll('#sysPick input[type=checkbox]').forEach(function(cb){ cb.checked=chosen.indexOf(cb.value)>=0; });
   f.elements.otherName.value=(p&&p.otherName)||"";
   renderBrandRows((p&&p.brands)||{});
-  var isAdmin=session.me.role==="admin" && !existing;
+  var isAdmin=!!(session.me.caps&&session.me.caps.assignOwner) && !existing;
   $("ownerWrap").hidden=!isAdmin;
   if(isAdmin){
     $("ownerSel").innerHTML=data.users.map(function(u){ return '<option value="'+esc(u.email)+'"'+(u.email===session.me.email?' selected':'')+'>'+esc(u.name?u.name+"（"+u.email+"）":u.email)+'</option>'; }).join("");
@@ -624,7 +669,7 @@ $("frm").addEventListener("submit",function(e){
     var proj={closed:false,nodes:newNodes(d.handover),systems:picked,otherName:otherName,brands:brands};
     FIELDS.forEach(function(k){ proj[k]=d[k]; });
     var payload={project:proj};
-    if(session.me.role==="admin") payload.owner=f.elements.owner.value;
+    if(session.me.caps&&session.me.caps.assignOwner) payload.owner=f.elements.owner.value;
     toast("建立中…");
     api("create",payload).then(function(v){ cur=v; toast("已建立專案，資料夾已建立於雲端"); go("p="+v.id); }).catch(fail);
   }
@@ -668,18 +713,18 @@ $("btnSetOwner").onclick=function(){
 
 /* ---------- 權限管理（管理員） ---------- */
 function renderAdmin(){
-  if(session.me.role!=="admin"){ go(""); return; }
+  if(!(session.me.caps&&session.me.caps.manageUsers)){ go(""); return; }
   $("app").innerHTML='<div class="loading">讀取中…</div>';
   Promise.all([api("adminUsers"),api("adminAudit",{limit:200})]).then(function(r){
     var users=r[0].users, fixed=r[0].fixedAdmins||[], logs=r[1].rows;
-    var h='<div class="back"><button class="btn small" type="button" id="btnBack">← 返回專案列表</button></div>';
-    h+='<section class="panel"><h3>使用者與權限</h3><p class="meta">只有名單中「啟用」的帳號可以登入。工程師只看得到自己負責或被分享的專案；勾選「可建立專案」才能新增專案。</p>'
+    var h=permMatrix();
+    h+='<section class="panel"><h3>使用者與權限</h3><p class="meta">只有名單中「啟用」的帳號可以登入。角色決定看得到哪些頁面與資料（見上方權限表）；工務另勾「可建立專案」才能自行開案。</p>'
       +'<div class="tblwrap"><table class="cards"><thead><tr><th>Google 帳號</th><th>姓名</th><th>角色</th><th>可建立專案</th><th>啟用</th><th>備註</th><th></th></tr></thead><tbody>';
     users.forEach(function(u,i){
       var locked=fixed.indexOf(u.email)>=0;
       h+='<tr data-u="'+i+'"><td class="mono" data-label="帳號">'+esc(u.email)+(locked?'<br><span class="meta">（系統管理員）</span>':'')+'</td>'
         +'<td data-label="姓名"><input type="text" maxlength="30" data-k="name" value="'+esc(u.name)+'"></td>'
-        +'<td data-label="角色"><select data-k="role"'+(locked?' disabled':'')+'><option value="engineer"'+(u.role!=="admin"?" selected":"")+'>工程師</option><option value="admin"'+(u.role==="admin"?" selected":"")+'>管理員</option></select></td>'
+        +'<td data-label="角色"><select data-k="role"'+(locked?' disabled':'')+'>'+roleOptions(u.role)+'</select></td>'
         +'<td class="c" data-label="可建立專案"><input type="checkbox" data-k="canCreate"'+(u.canCreate?" checked":"")+(locked?' disabled':'')+'></td>'
         +'<td class="c" data-label="啟用"><input type="checkbox" data-k="enabled"'+(u.enabled?" checked":"")+(locked?' disabled':'')+'></td>'
         +'<td data-label="備註"><input type="text" maxlength="100" data-k="memo" value="'+esc(u.memo)+'"></td>'
@@ -687,7 +732,7 @@ function renderAdmin(){
     });
     h+='<tr id="newUserRow"><td class="newhead">新增使用者</td><td data-label="帳號"><input type="email" maxlength="254" id="nuEmail" placeholder="新同事的 Google 帳號"></td>'
       +'<td data-label="姓名"><input type="text" maxlength="30" id="nuName" placeholder="姓名"></td>'
-      +'<td data-label="角色"><select id="nuRole"><option value="engineer">工程師</option><option value="admin">管理員</option></select></td>'
+      +'<td data-label="角色"><select id="nuRole">'+roleOptions("eng")+'</select></td>'
       +'<td class="c" data-label="可建立專案"><input type="checkbox" id="nuCreate"></td><td class="c" data-label="啟用"><input type="checkbox" id="nuEnabled" checked></td>'
       +'<td data-label="備註"><input type="text" maxlength="100" id="nuMemo" placeholder="例：工務部"></td>'
       +'<td class="act"><button class="btn small primary" type="button" id="btnAddUser">新增</button></td></tr>';
@@ -697,7 +742,6 @@ function renderAdmin(){
       +(logs.length?logs.map(function(r){ return '<tr><td style="white-space:nowrap" data-label="時間">'+fmtTime(r[0])+'</td><td class="mono" data-label="帳號">'+esc(r[1])+'</td><td data-label="動作">'+esc(r[2])+'</td><td class="mono" data-label="專案">'+esc(r[3]||"—")+'</td><td data-label="內容">'+esc(r[4]||"—")+'</td><td data-label="結果">'+esc(r[5])+'</td></tr>'; }).join(""):'<tr><td colspan="6" class="meta">尚無紀錄</td></tr>')
       +'</tbody></table></div></section>';
     $("app").innerHTML=h;
-    $("btnBack").onclick=function(){ go(""); };
     $("btnAuditReload").onclick=renderAdmin;
     document.querySelectorAll("[data-save]").forEach(function(b){
       b.onclick=function(){
@@ -714,8 +758,35 @@ function renderAdmin(){
     };
   }).catch(function(e){ fail(e); });
 }
+function roleOptions(sel){ return ROLES.map(function(r){ return '<option value="'+r[0]+'"'+(r[0]===sel?" selected":"")+'>'+r[1]+'</option>'; }).join(""); }
+/* 權限可視化：各角色可看、可做的事 */
+var PERM_ROWS=[
+  ["看得到的專案",{admin:"全部",ceo:"全部（唯讀）",sales:"自己負責／被指派",sales_mgr:"全部",eng:"自己負責／被分享",eng_mgr:"全部",purchase:"—",account:"全部（唯讀）",warehouse:"—"}],
+  ["建立專案",{admin:"✓",sales_mgr:"✓",eng_mgr:"✓",sales:"需勾選",eng:"需勾選"}],
+  ["指派負責人",{admin:"✓",sales_mgr:"✓",eng_mgr:"✓"}],
+  ["施工進度、照片、問題回報",{admin:"✓",sales_mgr:"✓",eng_mgr:"✓",eng:"✓",sales:"✓",ceo:"看",account:"看"}],
+  ["領料：申請",{admin:"✓",eng:"✓",eng_mgr:"✓"}],
+  ["領料：採購確認",{admin:"✓",purchase:"✓"}],
+  ["領料：倉管出貨",{admin:"✓",warehouse:"✓"}],
+  ["請款：設定付款條件",{admin:"✓",sales:"✓",sales_mgr:"✓"}],
+  ["請款：回報完工／送出請款",{admin:"✓",eng:"✓",eng_mgr:"✓",sales:"✓",sales_mgr:"✓"}],
+  ["請款：開立發票／登錄收款",{admin:"✓",account:"✓"}],
+  ["看請款金額",{admin:"✓",ceo:"✓",sales:"✓",sales_mgr:"✓",eng_mgr:"✓",account:"✓",eng:"只看狀態"}],
+  ["圖面設備數量分析（DXF）",{admin:"✓",sales_mgr:"✓",eng_mgr:"✓",eng:"✓",sales:"✓",ceo:"看",account:"看"}],
+  ["IO／IP 編表、網路架構、線材（設計・編表）",{admin:"✓",sales_mgr:"✓",eng_mgr:"✓",eng:"✓",sales:"✓",ceo:"看",account:"看"}],
+  ["估價單成本審查、看毛利",{admin:"✓",ceo:"✓",sales:"✓",sales_mgr:"✓",eng:"只看數量比對",eng_mgr:"只看數量比對"}],
+  ["設定公司標準估價範本",{admin:"✓",sales_mgr:"✓"}],
+  ["看設備採購價（成本）",{admin:"✓",ceo:"✓",sales_mgr:"✓",eng_mgr:"✓",purchase:"✓",account:"✓"}],
+  ["管理使用者與權限",{admin:"✓"}]
+];
+function permMatrix(){
+  return '<section class="panel"><h3>角色權限一覽</h3><p class="meta">每個操作在伺服器端都會再檢查一次權限，網頁上看不到的按鈕也無法透過其他方式執行。</p><div class="tblwrap"><table class="perm"><thead><tr><th>功能</th>'
+    +ROLES.map(function(r){return '<th>'+r[1]+'</th>';}).join("")+'</tr></thead><tbody>'
+    +PERM_ROWS.map(function(row){ return '<tr><td>'+row[0]+'</td>'+ROLES.map(function(r){ var v=row[1][r[0]]||""; return '<td class="c'+(v==="✓"?" yes":"")+'">'+esc(v||"—")+'</td>'; }).join("")+'</tr>'; }).join("")
+    +'</tbody></table></div></section>';
+}
 function saveUser(u){
-  if(u.role==="admin" && !confirm("確定要將 "+u.email+" 設為管理員？管理員可以看到並修改所有專案、管理使用者。")) return;
+  if(u.role==="admin" && !confirm("確定要將 "+u.email+" 設為最高管理權限？可以看到並修改所有專案、管理使用者。")) return;
   api("adminSaveUser",u).then(function(){ toast("已儲存 "+u.email); data.users=[]; renderAdmin(); }).catch(fail);
 }
 
@@ -779,15 +850,24 @@ $("btnLogout").onclick=logout;
 function go(h){ if(location.hash.replace(/^#/,"")===h) route(); else location.hash=h; window.scrollTo(0,0); }
 function route(){
   if(!session.me) return;
+  renderNav();
   var h=location.hash.replace(/^#/,"");
-  var m=h.match(/^p=([a-f0-9]{12})$/);
-  if(m){ openProject(m[1]); return; }
+  var m=h.match(/^p=([a-f0-9]{12})(?:\/(\w+))?$/);
+  if(m){ view.tab=m[2]||"progress"; openProject(m[1]); return; }
   if(saver.dirty) flushSave();
   cur=null;
   if(h==="admin"){ renderAdmin(); return; }
+  if(h==="projects"){ if(data.users.length) renderListFresh(); else loadList(); return; }
+  if((h==="reqs"||h==="bills") && window.TR){ TR.views[h](); return; }
+  if(window.TR && TR.views.home){ TR.views.home(); return; }
   loadList();
 }
+function renderListFresh(){ loadList(); }
 window.addEventListener("hashchange",route);
+window.TR={views:{}, api:api, esc:esc, toast:toast, fmt:fmt, fmtTime:fmtTime, fail:fail, userName:userName, userLabel:userLabel,
+  session:session, data:data, NODES:NODES, SYS_KEYS:SYS_KEYS, sysName:sysName, sysLabel:sysLabel, sysList:sysList, brandOf:brandOf,
+  go:go, today:today, getCur:function(){ return cur; }, canEdit:canEdit, ROLE_NAME:ROLE_NAME, sumStat:sumStat, PST_LABEL:PST_LABEL,
+  loadUsers:function(){ return data.users.length?Promise.resolve(data):api("list").then(function(d){ data.projects=d.projects||[]; data.users=d.users||[]; return data; }); }};
 (function start(){
   /* LINE 內建瀏覽器：自動改用手機預設瀏覽器開啟 */
   if(/\bLine\//i.test(UA) && !/[?&]openExternalBrowser=1/.test(location.search)){
