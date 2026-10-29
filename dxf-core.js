@@ -23,7 +23,7 @@ function cleanMtext(s) {
 function parse(text, onProgress) {
   var lines = text.split(/\r?\n/), n = lines.length;
   var sec = null, blk = null, cur = null, expectSec = false;
-  var blocks = {}, inserts = [], texts = [], oles = [];
+  var blocks = {}, inserts = [], texts = [], oles = [], segs = [];
   function flush() {
     if (!cur) return;
     var e = cur; cur = null;
@@ -36,6 +36,11 @@ function parse(text, onProgress) {
     if (sec !== "ENTITIES" || e.v["67"] === "1") return;     /* 只看模型空間 */
     if (e.t === "INSERT") inserts.push({ name: e.v["2"] || "", layer: e.v["8"] || "", x: +e.v["10"] || 0, y: +e.v["20"] || 0,
       sx: e.v["41"] ? +e.v["41"] : 1, sy: e.v["42"] ? +e.v["42"] : (e.v["41"] ? +e.v["41"] : 1), rot: +(e.v["50"] || 0) });
+    else if (e.t === "LINE") segs.push([e.v["8"] || "", +e.v["10"] || 0, +e.v["20"] || 0, +e.v["11"] || 0, +e.v["21"] || 0]);
+    else if (e.t === "LWPOLYLINE" && e.pts.length > 1) {
+      for (var k = 1; k < e.pts.length; k++) segs.push([e.v["8"] || "", e.pts[k - 1][0], e.pts[k - 1][1], e.pts[k][0], e.pts[k][1]]);
+      if ((+e.v["70"] || 0) & 1) segs.push([e.v["8"] || "", e.pts[e.pts.length - 1][0], e.pts[e.pts.length - 1][1], e.pts[0][0], e.pts[0][1]]);
+    }
     else if (e.t === "OLE2FRAME" && e.hex) oles.push({ x: +e.v["10"] || 0, y: +e.v["20"] || 0, type: e.v["3all"] || "", hex: e.hex });
     else if (e.t === "TEXT" || e.t === "MTEXT") {
       var s = e.t === "MTEXT" ? cleanMtext((e.v["3all"] || "") + (e.v["1"] || "")) : (e.v["1"] || "").trim();
@@ -61,13 +66,17 @@ function parse(text, onProgress) {
       else if (!(code in cur.v)) cur.v[code] = val;
       continue;
     }
+    if (cur.t === "LWPOLYLINE" && sec === "ENTITIES" && (code === "10" || code === "20")) {
+      if (code === "10") cur.pts.push([+val, 0]); else if (cur.pts.length) cur.pts[cur.pts.length - 1][1] = +val;
+      continue;
+    }
     if (code === "310" && cur.t === "OLE2FRAME") (cur.hex = cur.hex || []).push(val.trim());
     else if (code === "3") cur.v["3all"] = (cur.v["3all"] || "") + uni(val);
     else if (!(code in cur.v)) cur.v[code] = code === "1" || code === "2" ? uni(val) : val;
     if (onProgress && (i & 0x3ffff) === 0) onProgress(i / n);
   }
   flush();
-  return { blocks: blocks, inserts: inserts, texts: texts, oles: oles };
+  return { blocks: blocks, inserts: inserts, texts: texts, oles: oles, segs: segs };
 }
 
 /* ---------- 圖塊外框與中心 ---------- */
@@ -94,12 +103,14 @@ function makeBBox(blocks) {
     memo[name] = isFinite(x0) ? [x0, y0, x1, y1] : null;
     return memo[name];
   }
-  return function (ins) {
+  var center = function (ins) {
     var b = bb(ins.name, 0);
     if (!b) return [ins.x, ins.y];
     var cx = (b[0] + b[2]) / 2 * ins.sx, cy = (b[1] + b[3]) / 2 * ins.sy, a = ins.rot * Math.PI / 180;
     return [ins.x + cx * Math.cos(a) - cy * Math.sin(a), ins.y + cx * Math.sin(a) + cy * Math.cos(a)];
   };
+  center.box = function (ins) { var b = bb(ins.name, 0); if (!b) return null; return [ins.x + b[0] * ins.sx, ins.y + b[1] * ins.sy, ins.x + b[2] * ins.sx, ins.y + b[3] * ins.sy]; };
+  return center;
 }
 
 /* ---------- 樓層 ---------- */
@@ -233,6 +244,17 @@ function analyze(text, opt) {
     if (!t.table) warnings.push("平面圖「" + t.s + "」附近找不到數量表，該圖符號未納入核對");
   });
 
+  /* 圖框（大型圖塊）：同一張圖紙內的符號才歸給該圖紙上的平面圖 */
+  var frames = [];
+  d.inserts.forEach(function (s) {
+    if (s.rot) return;
+    var b = center.box(s); if (!b) return;
+    var w = b[2] - b[0], h = b[3] - b[1];
+    if (w > 0 && h > 0 && w / h > 1.2 && w / h < 1.6 && titles.some(function (t) { return t.x > b[0] && t.x < b[2] && t.y > b[1] && t.y < b[3] && w > t.h * 40; })) frames.push(b);
+  });
+  function frameOf(x, y) { for (var i = 0; i < frames.length; i++) { var b = frames[i]; if (x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]) return i; } return -1; }
+  titles.forEach(function (t) { t.frame = frameOf(t.x, t.y); });
+
   /* 4. 平面圖上的符號歸屬 */
   var sym = {};   /* tableKey -> block -> count */
   var notes = T.filter(function (t) { return t.s.length >= 8 && (/^\s*(\d+\s*[.、．]|註|※)/.test(t.s) || /\u3000\u3000|\s{3,}/.test(t.s)); });
@@ -244,13 +266,16 @@ function analyze(text, opt) {
   d.inserts.forEach(function (s) {
     if (s.table || !blockNames[s.name] || inNote(s)) return;
     var best = null, bs = Infinity;
+    var fr = frames.length ? frameOf(s.cx, s.cy) : -1;
     titles.forEach(function (t) {
+      if (fr >= 0 && t.frame >= 0 && t.frame !== fr) return;
       var dx = Math.abs(s.cx - t.x), dy = s.cy - t.y;
       if (dy < -t.h * 2 || dy > t.h * 60 || dx > t.h * 30) return;
       var sc = dx + 0.5 * Math.max(dy, 0);
       if (sc < bs) { bs = sc; best = t; }
     });
     if (!best || !best.table) return;
+    (best.devs = best.devs || []).push(s);
     var k = best.table.key; sym[k] = sym[k] || {}; sym[k][s.name] = (sym[k][s.name] || 0) + 1;
   });
 
@@ -274,11 +299,50 @@ function analyze(text, opt) {
   var floorList = Object.keys(floors).sort(function (a, b) { return floorRank(a) - floorRank(b); });
   var list = Object.keys(items).map(function (k) { return items[k]; }).sort(function (a, b) { return a.sys < b.sys ? -1 : a.sys > b.sys ? 1 : b.total - a.total; });
   if (!tables.length) warnings.push("圖面中找不到「數量表」。請確認平面圖有附「XF 監控設備數量表」。");
+  var plans = opt.noPlans ? [] : buildPlans(titles, d.segs, blockNames);
   return {
     tables: tables.map(function (t) { return { key: t.key, floors: t.floors, rows: t.rows.map(function (r) { return { name: r.name, qty: r.qty, raw: r.raw, block: r.block }; }) }; }),
-    floors: floorList, items: list, checks: checks, warnings: warnings, embedded: embedded,
+    floors: floorList, items: list, checks: checks, warnings: warnings, embedded: embedded, plans: plans,
+    unitM: guessUnit(plans),
     stats: { inserts: d.inserts.length, texts: T.length, blocks: Object.keys(d.blocks).length, titles: titles.map(function (t) { return t.s + "→" + (t.table ? t.table.key : "?"); }) }
   };
+}
+
+/* ---------- 平面圖（佈線圖用）：各層簡化線條與設備位置 ---------- */
+var SKIP_LAYER = /TEXT|TXET|DIM|標註|尺寸|HATCH|填充|圖框|傢配|家具|門窗編號|戶編|文字|中心線|軸線|AXIS|DEFPOINTS/i;
+function buildPlans(titles, segs, blockNames) {
+  var out = [];
+  titles.forEach(function (t) {
+    if (!t.table || !t.devs || !t.devs.length) return;
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    t.devs.forEach(function (s) { x0 = Math.min(x0, s.cx); x1 = Math.max(x1, s.cx); y0 = Math.min(y0, s.cy); y1 = Math.max(y1, s.cy); });
+    var mx = Math.max((x1 - x0) * 0.15, t.h * 3), my = Math.max((y1 - y0) * 0.15, t.h * 3);
+    x0 -= mx; x1 += mx; y0 -= my; y1 += my;
+    var q = Math.max(1, Math.round((x1 - x0) / 1500));   /* 座標取整單位，控制資料量 */
+    var inb = function (x, y) { return x >= x0 && x <= x1 && y >= y0 && y <= y1; };
+    var list = [];
+    for (var i = 0; i < segs.length; i++) {
+      var g = segs[i];
+      if (SKIP_LAYER.test(g[0]) || !inb(g[1], g[2]) || !inb(g[3], g[4])) continue;
+      var len = Math.abs(g[3] - g[1]) + Math.abs(g[4] - g[2]);
+      if (len < q * 4) continue;
+      list.push([len, g[1], g[2], g[3], g[4]]);
+    }
+    list.sort(function (a, b) { return b[0] - a[0]; });
+    list = list.slice(0, 2500);
+    var r = function (v) { return Math.round(v / q) * q; };
+    out.push({ title: t.s, table: t.table.key, floors: t.table.floors, box: [r(x0), r(y0), r(x1), r(y1)],
+      segs: list.map(function (g) { return [r(g[1]), r(g[2]), r(g[3]), r(g[4])]; }),
+      devs: t.devs.map(function (s) { return { n: Object.keys(blockNames[s.name] || {}).join("／"), x: r(s.cx), y: r(s.cy) }; }) });
+  });
+  return out;
+}
+/** 依平面寬度推測圖面單位（公尺／單位） */
+function guessUnit(plans) {
+  var ws = plans.map(function (p) { return p.box[2] - p.box[0]; }).sort(function (a, b) { return a - b; });
+  if (!ws.length) return 0.01;
+  var w = ws[Math.floor(ws.length / 2)];
+  return w > 20000 ? 0.001 : w > 200 ? 0.01 : 1;
 }
 
 var api = { decode: decode, parse: parse, analyze: analyze, floorsOf: floorsOf, floorRank: floorRank, sysOf: sysOf, SYS_RULES: SYS_RULES, cnNum: cnNum };

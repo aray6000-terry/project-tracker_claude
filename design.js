@@ -5,7 +5,7 @@ var T=window.TR; if(!T||!window.DESIGN) return;
 var esc=T.esc, api=T.api, toast=T.toast, fail=T.fail;
 var $=function(id){ return document.getElementById(id); };
 var st={pid:null, dr:null, params:{}, sub:"net", floor:null};
-var SUBS=[["net","網路架構"],["io","IO 模組表"],["ip","IP 編表"],["sw","交換器"],["cable","線材"],["wire","配線圖"],["rule","參數與點位規則"]];
+var SUBS=[["net","網路架構"],["io","IO 模組表"],["ip","IP 編表"],["sw","交換器"],["route","佈線圖"],["cable","線材"],["wire","配線系統圖"],["rule","參數與點位規則"]];
 var VNAME={}; DESIGN.VLANS.forEach(function(v){ VNAME[v[0]]=v[2]; });
 
 function csv(name, rows){
@@ -41,6 +41,7 @@ function body(P,cur){
   if(s==="sw") return swView(P);
   if(s==="cable") return cableView(P);
   if(s==="wire") return wireView(P);
+  if(s==="route") return routeView(P);
   return ruleView(P,cur);
 }
 
@@ -155,11 +156,39 @@ function swView(P){
 /* ---------- 線材 ---------- */
 function cableView(P){
   var tot={}; P.cables.forEach(function(c){ tot[c.type]=(tot[c.type]||0)+c.meters; });
+  var measured=P.cables.some(function(c){ return c.basis==="實測"; });
   return '<div class="row" style="flex-wrap:wrap"><h3>線材估算</h3><button class="btn small" id="csvCable" type="button">下載 Excel（CSV）</button></div>'
-    +'<p class="meta">以「每條線平均水平長度 '+P.params.avgRun+' m × 損耗預留 '+P.params.slack+'」與「樓高 '+P.params.floorHeight+' m」估算，實際長度請依現場或配線圖修正。</p>'
-    +'<div class="tblwrap"><table><thead><tr><th>線材</th><th>用途</th><th>條數</th><th>預估米數</th></tr></thead><tbody>'
-    +P.cables.map(function(c){ return '<tr><td>'+esc(c.type)+'</td><td>'+esc(c.use)+'</td><td>'+c.runs+'</td><td>'+c.meters.toLocaleString()+'</td></tr>'; }).join("")+'</tbody></table></div>'
-    +'<h4 style="margin:14px 0 6px">依線材合計</h4><div class="tblwrap"><table><tbody>'+Object.keys(tot).map(function(t){ return '<tr><td>'+esc(t)+'</td><td>'+tot[t].toLocaleString()+' m</td><td>約 '+Math.ceil(tot[t]/305)+' 箱（305 m／箱）</td></tr>'; }).join("")+'</tbody></table></div>';
+    +'<p class="meta">'+(measured?'各層設備配線依 DXF 平面圖座標實測（直角走線 × 損耗 '+P.params.slack+' ＋ 每條上下各預留 '+(P.params.drop||3)+' m），同層數多的平面（例如 6F~13F）已乘上樓層數；主幹光纖以樓高 '+P.params.floorHeight+' m 估算。':'以「每條線平均水平長度 '+P.params.avgRun+' m × 損耗預留 '+P.params.slack+'」與「樓高 '+P.params.floorHeight+' m」估算，實際長度請依現場或配線圖修正。')+'</p>'
+    +'<div class="tblwrap"><table><thead><tr><th>線材</th><th>用途</th><th>條數</th><th>米數</th><th>依據</th></tr></thead><tbody>'
+    +P.cables.map(function(c){ return '<tr><td>'+esc(c.type)+'</td><td>'+esc(c.use)+'</td><td>'+c.runs+'</td><td>'+c.meters.toLocaleString()+'</td><td>'+esc(c.basis||"估算")+'</td></tr>'; }).join("")+'</tbody></table></div>'
+    +'<h4 style="margin:14px 0 6px">依線材合計</h4><div class="tblwrap"><table><tbody>'+Object.keys(tot).map(function(t){ return '<tr><td>'+esc(t)+'</td><td>'+tot[t].toLocaleString()+' m</td><td>'+(/CAT|雙絞/.test(t)?'約 '+Math.ceil(tot[t]/305)+' 箱（305 m／箱）':/C |芯|線/.test(t)?'約 '+Math.ceil(tot[t]/200)+' 卷（200 m／卷）':'')+'</td></tr>'; }).join("")+'</tbody></table></div>';
+}
+
+/* ---------- 佈線圖（DXF 平面圖＋配線路徑） ---------- */
+var WCLASS={ip:["IP 設備（CAT.6）","w-ip"],cam:["攝影機（CAT.6 PoE）","w-cam"],di:["DI 點（2C 0.75）","w-di"],do:["DO 點（2C 1.25）","w-do"],unit:["住戶設備（至宅內配線箱）","w-unit"],door:["門禁鎖／按鈕（至讀卡機）","w-door"],lane:["車道設備（至車道主機）","w-lane"],audio:["廣播喇叭","w-audio"],bus:["RS-485 匯流排","w-bus"],other:["其他（依原廠）","w-other"]};
+function routeView(P){
+  var W=P.wiring, plans=W.plans;
+  if(!plans.length) return '<h3>佈線圖</h3><p class="meta">這份圖面分析沒有平面圖座標資料。請到「數量・報價」重新分析 DXF（新版分析會保存各層平面與設備位置）。</p>';
+  var idx=Math.min(st.plan||0,plans.length-1), pl=plans[idx], b=pl.box, w=b[2]-b[0], h=b[3]-b[1];
+  var sw=Math.max(w,h)/700;
+  var g='<svg class="netsvg plansvg" viewBox="'+b[0]+' '+(-b[3])+' '+w+' '+h+'" role="img" aria-label="'+esc(pl.title)+' 佈線圖" preserveAspectRatio="xMidYMid meet">';
+  var d=pl.segs.map(function(s){ return "M"+s[0]+" "+(-s[1])+"L"+s[2]+" "+(-s[3]); }).join("");
+  g+='<path d="'+d+'" class="pl-wall" stroke-width="'+sw+'"/>';
+  var show=st.wc||{};
+  pl.runs.forEach(function(r){ if(show[r.c]===false) return;
+    g+='<path d="M'+r.x+' '+(-r.y)+'L'+r.x+' '+(-r.ty)+'L'+r.tx+' '+(-r.ty)+'" class="pl-run '+WCLASS[r.c][1]+'" stroke-width="'+(sw*1.6)+'"><title>'+esc(r.n+"｜"+r.cable+"｜"+r.m+" m")+'</title></path>'; });
+  pl.runs.forEach(function(r){ if(show[r.c]===false) return; g+='<circle cx="'+r.x+'" cy="'+(-r.y)+'" r="'+(sw*4)+'" class="pl-dev '+WCLASS[r.c][1]+'"><title>'+esc(r.n+"（"+r.m+" m）")+'</title></circle>'; });
+  g+='<rect x="'+(pl.panel.x-sw*7)+'" y="'+(-pl.panel.y-sw*7)+'" width="'+(sw*14)+'" height="'+(sw*14)+'" class="pl-panel"><title>'+esc(pl.panel.n)+'</title></rect></svg>';
+  var cls={}; pl.runs.forEach(function(r){ cls[r.c]=(cls[r.c]||0)+1; });
+  var h2='<div class="row" style="flex-wrap:wrap"><h3>佈線圖</h3><div class="tools"><select id="routePlan">'+plans.map(function(p,i){ return '<option value="'+i+'"'+(i===idx?" selected":"")+'>'+esc(p.title+"（"+p.table+"）")+'</option>'; }).join("")+'</select><button class="btn small" id="csvRoute" type="button">下載配線清單（CSV）</button></div></div>'
+    +'<p class="meta">依 DXF 平面圖的設備位置，從樓層監控箱（藍色方塊）以直角走線連到各設備；門禁鎖與按鈕接到最近的讀卡機、車道設備接到車道主機、住戶設備接到最近的宅內配線箱。圖面單位推定為 1 單位＝'+(W.unitM*100)+' cm（可在參數調整）。'+(pl.panel.assumed?'<br><b style="color:var(--warn)">這張平面圖沒有標示監控箱，暫以設備中心為起點。</b>':'')+(pl.mult>1?'<br>這張平面代表 '+pl.floors.join("、")+' 共 '+pl.mult+' 層，合計已乘以 '+pl.mult+'。':'')+'</p>'
+    +'<div class="legend">'+Object.keys(cls).map(function(c){ return '<label style="display:inline-flex;gap:4px;align-items:center;cursor:pointer"><input type="checkbox" data-wc="'+c+'"'+(show[c]===false?"":" checked")+'><span class="lgw '+WCLASS[c][1]+'"></span>'+esc(WCLASS[c][0])+'（'+cls[c]+'）</label>'; }).join("")+'</div>'
+    +'<div class="netwrap">'+g+'</div>'
+    +'<h4 style="margin:14px 0 6px">本層線材</h4><div class="tblwrap"><table><thead><tr><th>線材</th><th>條數</th><th>米數</th>'+(pl.mult>1?'<th>× '+pl.mult+' 層條數</th><th>× '+pl.mult+' 層米數</th>':'')+'</tr></thead><tbody>'
+    +pl.totals.map(function(t){ return '<tr><td>'+esc(t.cable)+'</td><td>'+t.runs+'</td><td>'+t.m+'</td>'+(pl.mult>1?'<td>'+t.runsAll+'</td><td>'+t.mAll+'</td>':'')+'</tr>'; }).join("")+'</tbody></table></div>'
+    +'<details class="mxwrap"><summary>每條配線明細（'+pl.runs.length+'）</summary><div class="tblwrap"><table><thead><tr><th>#</th><th>設備</th><th>線材</th><th>長度（m）</th></tr></thead><tbody>'
+    +pl.runs.slice().sort(function(a,b){ return b.m-a.m; }).map(function(r,i){ return '<tr><td>'+(i+1)+'</td><td>'+esc(r.n)+'</td><td>'+esc(r.cable)+'</td><td>'+r.m+'</td></tr>'; }).join("")+'</tbody></table></div></details>';
+  return h2;
 }
 
 /* ---------- 配線圖（各樓層） ---------- */
@@ -206,7 +235,7 @@ function ruleView(P,cur){
   var dis=edit?"":" disabled";
   var h='<h3>參數</h3><div class="fgrid">'
     +fld("baseNet","IP 前兩段（例 10.10）",p.baseNet,"text")+fld("spare","IO／交換器預留比例（0.15＝15%）",p.spare,"number")+fld("growth","網段成長預留（0.3＝30%）",p.growth,"number")
-    +fld("floorHeight","樓高（m）",p.floorHeight,"number")+fld("avgRun","平均水平配線長度（m）",p.avgRun,"number")+fld("slack","損耗預留倍數",p.slack,"number")+fld("distGroup","每幾層一台匯聚交換器",p.distGroup,"number")
+    +fld("floorHeight","樓高（m）",p.floorHeight,"number")+fld("avgRun","平均水平配線長度（m）",p.avgRun,"number")+fld("slack","損耗預留倍數",p.slack,"number")+fld("distGroup","每幾層一台匯聚交換器",p.distGroup,"number")+fld("unitM","圖面 1 單位＝幾公尺（cm 圖為 0.01）",p.unitM||P.wiring.unitM,"number")+fld("drop","每條線上下預留（m）",p.drop||3,"number")
     +'<label>核心機房樓層<select id="p_coreFloor"'+dis+'>'+fl.map(function(f){ return '<option'+(f===p.coreFloor?" selected":"")+'>'+esc(f)+'</option>'; }).join("")+'</select></label>'
     +'<label>影像監視交換器<select id="p_separateCctv"'+dis+'><option value="true"'+(p.separateCctv?" selected":"")+'>獨立 PoE 交換器（建議）</option><option value="false"'+(!p.separateCctv?" selected":"")+'>與其他系統共用（分 VLAN）</option></select></label></div>';
   var items=(st.dr.items||[]).filter(function(it){ return it.total>0; });
@@ -251,10 +280,14 @@ function bind(P,cur,el){
   if($("csvIo")) $("csvIo").onclick=function(){ var rows=[["監控箱","模組","通道","點位編號","設備","說明"]]; P.io.panels.forEach(function(p){ p.rows.forEach(function(r){ rows.push([p.panel,r.module,r.ch,r.tag,r.name,r.note]); }); }); csv(name+"_IO模組點位表.csv",rows); };
   if($("csvIp")) $("csvIp").onclick=function(){ csv(name+"_IP編表.csv",[["VLAN","用途","IP","遮罩","閘道","設備名稱","樓層","設備"]].concat(P.ip.rows.map(function(r){ return [r.vlan,r.sys,r.ip,"/"+r.mask,r.gw,r.name,r.floor,r.device]; }))); };
   if($("csvSw")) $("csvSw").onclick=function(){ csv(name+"_交換器.csv",[["層級","樓層","編號","埠數","使用","PoE(W)","上連"]].concat(P.net.access.map(function(a){ var d=P.net.dist.filter(function(d){ return d.floors.indexOf(a.floor)>=0; })[0]; return ["接取",a.floor,a.id,a.ports,a.used,a.poe?a.poeW:"",d?d.id:""]; }),P.net.dist.map(function(d){ return ["匯聚",d.at,d.id,d.ports,d.downlinks,"",P.net.core.id]; }),[["核心",P.net.core.floor,P.net.core.id,P.net.core.ports,"","",""]])); };
-  if($("csvCable")) $("csvCable").onclick=function(){ csv(name+"_線材估算.csv",[["線材","用途","條數","預估米數"]].concat(P.cables.map(function(c){ return [c.type,c.use,c.runs,c.meters]; }))); };
+  if($("routePlan")) $("routePlan").onchange=function(){ st.plan=+this.value; re(); };
+  el.querySelectorAll("[data-wc]").forEach(function(c){ c.onchange=function(){ st.wc=st.wc||{}; st.wc[c.dataset.wc]=c.checked; re(); }; });
+  if($("csvRoute")) $("csvRoute").onclick=function(){ var rows=[["平面圖","代表樓層","設備","線材","長度(m)","起點X","起點Y","終點X","終點Y"]];
+    P.wiring.plans.forEach(function(p){ p.runs.forEach(function(r){ rows.push([p.title,p.floors.join(" "),r.n,r.cable,r.m,r.x,r.y,r.tx,r.ty]); }); }); csv(name+"_配線清單.csv",rows); };
+  if($("csvCable")) $("csvCable").onclick=function(){ csv(name+"_線材估算.csv",[["線材","用途","條數","米數","依據"]].concat(P.cables.map(function(c){ return [c.type,c.use,c.runs,c.meters,c.basis||"估算"]; }))); };
   if($("btnDsSave")) $("btnDsSave").onclick=function(){
     var np={ioQty:st.params.ioQty||{}, ioRules:{}, extraIo:xio().filter(function(x){ return String(x.name).trim()&&+x.n>0; }).map(function(x){ return {floor:x.floor,name:String(x.name).trim().slice(0,60),n:Math.min(200,+x.n)}; })};
-    ["baseNet","spare","growth","floorHeight","avgRun","slack","distGroup","coreFloor","separateCctv"].forEach(function(k){ var e=$("p_"+k); if(e) np[k]=e.value; });
+    ["baseNet","spare","growth","floorHeight","avgRun","slack","distGroup","coreFloor","separateCctv","unitM","drop"].forEach(function(k){ var e=$("p_"+k); if(e) np[k]=e.value; });
     if(!/^\d{1,3}\.\d{1,3}$/.test(np.baseNet)){ toast("IP 前兩段格式例：10.10"); return; }
     var items=(st.dr.items||[]).filter(function(it){ return it.total>0; });
     el.querySelectorAll("[data-io]").forEach(function(inp){ var it=items[+inp.dataset.io]; var r=np.ioRules[it.name]=np.ioRules[it.name]||{}; r[inp.dataset.k]=Math.max(0,Math.min(8,+inp.value||0)); });

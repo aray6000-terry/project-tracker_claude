@@ -224,6 +224,15 @@ function cables(dr, P, io, net) {
   return Object.keys(out).map(function (k) { var x = out[k]; x.meters = Math.ceil(x.meters / 10) * 10; return x; });
 }
 
+/* 有平面圖座標時，水平配線改用實測長度；主幹（光纖）仍用樓高估算 */
+function measuredCables(cb, wr) {
+  var keep = cb.filter(function (c) { return /光纖|主機至機房|通訊點/.test(c.use + c.type); }).map(function (c) { c.basis = "估算"; return c; });
+  var add = {};
+  wr.plans.forEach(function (p) { p.totals.forEach(function (t) {
+    var k = t.cable; add[k] = add[k] || { type: k, use: "各層設備配線（依平面圖實測）", runs: 0, meters: 0, basis: "實測" }; add[k].runs += t.runsAll; add[k].meters += t.mAll;
+  }); });
+  return Object.keys(add).map(function (k) { var x = add[k]; x.meters = Math.ceil(x.meters / 10) * 10; return x; }).concat(keep);
+}
 function commPlan(dr, P) {
   var out = {};
   (dr.items || []).forEach(function (it) {
@@ -236,16 +245,63 @@ function commPlan(dr, P) {
   (P.systems || []).forEach(function (k) { var n = COMM_SYS[k]; if (n && !out[n]) out[n] = { sys: n, devices: 0, items: [] }; });
   return Object.keys(out).map(function (k) { return out[k]; });
 }
+/* ---------- 5. 佈線圖：依平面座標計算每條配線（直角走線） ---------- */
+var BOX_RE = /配電箱|配線箱|接線盒|接線箱|出線口|預埋/;
+function cableClass(name, P) {
+  if (!name || BOX_RE.test(name)) return null;
+  var first = name.split("／")[0];
+  if (/電子門鎖|瓦斯偵測/.test(first)) return "unit";
+  if (/開門按鈕|陽極|電鎖|門磁/.test(first) && !/柵欄/.test(first)) return "door";
+  if (/紅綠燈|警示燈|閃光燈|感應線圈|車輛偵測|柵欄|出車注意/.test(first)) return "lane";
+  if (/語音播報|喇叭/.test(first)) return "audio";
+  if (/調光|情境控制|燈控/.test(first)) return "bus";
+  var ip = (P.ipRules && P.ipRules[first]) || ruleOf(IP_RULES, first);
+  if (ip) return ip.vlan === "cctv" && P.separateCctv ? "cam" : "ip";
+  var r = ioRuleOf(P, first);
+  if (r && (r.di || 0) + (r.do || 0)) return (r.do && !r.di) ? "do" : "di";
+  if (/求救|磁簧|押扣|偵測|感知|開關|水位|液位/.test(first)) return "di";
+  return "other";
+}
+var CABLE_OF = { ip: CABLE.ip, cam: CABLE.ip, di: CABLE.di, do: CABLE.do, unit: "2C 0.5mm²（至宅內配線箱）", door: "2C 1.25mm²（至門禁讀卡機／控制器）",
+  lane: "4C 1.25mm²（至車道控制主機）", audio: "喇叭線 2C 1.25mm²", bus: CABLE.proto, other: "依原廠規定" };
+var TARGET_OF = { unit: /宅內配線箱/, door: /讀卡機/, lane: /車道控制主機/ };
+function wiring(dr, P) {
+  var unitM = Number(P.unitM) > 0 ? Number(P.unitM) : (dr.unitM || 0.01), drop = Number(P.drop) > 0 ? Number(P.drop) : 3;
+  var plans = (dr.plans || []).map(function (pl) {
+    var devs = pl.devs, panels = devs.filter(function (d) { return /監控系統配電箱/.test(d.n); });
+    var cx = 0, cy = 0, cnt = 0;
+    devs.forEach(function (d) { if (cableClass(d.n, P)) { cx += d.x; cy += d.y; cnt++; } });
+    cx = cnt ? cx / cnt : (pl.box[0] + pl.box[2]) / 2; cy = cnt ? cy / cnt : (pl.box[1] + pl.box[3]) / 2;
+    var panel = panels.length ? panels.reduce(function (a, b) { return Math.hypot(a.x - cx, a.y - cy) <= Math.hypot(b.x - cx, b.y - cy) ? a : b; }) : { x: Math.round(cx), y: Math.round(cy), n: "（未標示監控箱，假設在中央）", assumed: true };
+    var runs = [];
+    devs.forEach(function (d) {
+      var c = cableClass(d.n, P); if (!c || d === panel) return;
+      var to = panel, tg = TARGET_OF[c] ? devs.filter(function (x) { return x !== d && TARGET_OF[c].test(x.n); }) : [];
+      if (tg.length) to = tg.reduce(function (a, b) { return Math.abs(a.x - d.x) + Math.abs(a.y - d.y) <= Math.abs(b.x - d.x) + Math.abs(b.y - d.y) ? a : b; });
+      var len = (Math.abs(d.x - to.x) + Math.abs(d.y - to.y)) * unitM * P.slack + drop;
+      runs.push({ n: d.n.split("／")[0], c: c, cable: CABLE_OF[c], x: d.x, y: d.y, tx: to.x, ty: to.y, m: Math.round(len * 10) / 10 });
+    });
+    var mult = (pl.floors || []).length || 1, tot = {};
+    runs.forEach(function (r) { var k = r.cable; tot[k] = tot[k] || { cable: k, runs: 0, m: 0 }; tot[k].runs += 1; tot[k].m += r.m; });
+    return { title: pl.title, table: pl.table, floors: pl.floors, mult: mult, box: pl.box, segs: pl.segs, panel: panel, runs: runs,
+      totals: Object.keys(tot).map(function (k) { var t = tot[k]; return { cable: k, runs: t.runs, m: Math.round(t.m), runsAll: t.runs * mult, mAll: Math.round(t.m * mult) }; }) };
+  });
+  return { unitM: unitM, plans: plans };
+}
+
 function plan(dr, params) {
   var P = {}; Object.keys(DEFAULTS).forEach(function (k) { P[k] = params && params[k] !== undefined && params[k] !== "" ? params[k] : DEFAULTS[k]; });
   ["spare", "growth", "floorHeight", "avgRun", "slack", "distGroup"].forEach(function (k) { P[k] = Number(P[k]); });
+  if (params) { P.unitM = params.unitM; P.drop = params.drop; }
   P.separateCctv = P.separateCctv === true || P.separateCctv === "true";
   if (params) { P.ioRules = params.ioRules; P.ipRules = params.ipRules; P.extraIo = params.extraIo || []; P.systems = params.systems || []; }
   var io = ioPlan(dr, P); io.comm = commPlan(dr, P);
   var net = network(dr, P, io), ip = ipPlan(dr, P, io, net), cb = cables(dr, P, io, net);
-  return { params: P, io: io, net: { core: net.core, dist: net.dist, access: net.access, server: net.server, floors: net.floors, byFloor: net.byFloor }, ip: ip, cables: cb };
+  var wr = wiring(dr, P);
+  if (wr.plans.length) cb = measuredCables(cb, wr);
+  return { params: P, io: io, net: { core: net.core, dist: net.dist, access: net.access, server: net.server, floors: net.floors, byFloor: net.byFloor }, ip: ip, cables: cb, wiring: wr };
 }
 
-var api = { plan: plan, DEFAULTS: DEFAULTS, IO_RULES: IO_RULES, COMM_RULES: COMM_RULES, ruleOf: ruleOf, IP_RULES: IP_RULES, VLANS: VLANS, CABLE: CABLE, floorRank: floorRank };
+var api = { wiring: wiring, cableClass: cableClass, plan: plan, DEFAULTS: DEFAULTS, IO_RULES: IO_RULES, COMM_RULES: COMM_RULES, ruleOf: ruleOf, IP_RULES: IP_RULES, VLANS: VLANS, CABLE: CABLE, floorRank: floorRank };
 if (typeof module === "object" && module.exports) module.exports = api; else root.DESIGN = api;
 })(typeof self !== "undefined" ? self : this);
