@@ -46,8 +46,8 @@ function render(cur,el){
       +(d.standard?'<br>標準範本：'+esc(d.standard.fileName||"")+'（'+esc(d.standard.project||"")+'，'+fmtTime(d.standard.savedAt)+'）':'<br><span style="color:var(--warn)">尚未設定公司標準估價範本，</span>由業務主管上傳一份估價單後按「設為標準範本」。')+'</p>';
     if(edit) h+='<div class="uprow"><input type="file" id="xlsFile" accept=".xlsx"><button class="btn primary small" id="btnXls" type="button">分析估價單</button></div>';
     if(st.qdraft) h+='<div class="tipbox"><b>這是剛分析的估價單，尚未儲存。</b> <button class="btn primary small" id="btnXlsSave" type="button">儲存</button> <button class="btn small" id="btnXlsCancel" type="button">放棄</button>'
-      +(["admin","sales_mgr"].indexOf(T.session.me.role)>=0?' <button class="btn small" id="btnStd" type="button">設為公司標準範本</button>':'')+'</div>';
-    else if(q) h+='<p class="meta">目前估價單：'+esc(q.fileName||"")+'｜'+esc(T.userName(q.savedBy||""))+' '+fmtTime(q.savedAt)+(["admin","sales_mgr"].indexOf(T.session.me.role)>=0?' <button class="btn small" id="btnStd" type="button">設為公司標準範本</button>':'')+'</p>';
+      +(["admin","ceo","sales_mgr"].indexOf(T.session.me.role)>=0?' <button class="btn small" id="btnStd" type="button">設為公司標準範本</button>':'')+'</div>';
+    else if(q) h+='<p class="meta">目前估價單：'+esc(q.fileName||"")+'｜'+esc(T.userName(q.savedBy||""))+' '+fmtTime(q.savedAt)+(["admin","ceo","sales_mgr"].indexOf(T.session.me.role)>=0?' <button class="btn small" id="btnStd" type="button">設為公司標準範本</button>':'')+'</p>';
     if(q&&!q.redacted) h+=quoteHtml(q);
   } else {
     h+='<p class="meta">估價單由業務上傳；這裡只顯示圖面與估價單的「數量」比對，不顯示金額。</p>';
@@ -118,7 +118,7 @@ function compareHtml(dr,q,edit){
 
 /* ---------- 設備型號對應與送審型錄 ---------- */
 var MST={chosen:["已確認","st-shipped"],auto:["自動配對","st-confirmed"],suggest:["請選擇","st-billed"],none:["資料庫沒有","st-rejected"],skip:["不送審","st-cancelled"]};
-function canEditDb(){ return ["admin","sales_mgr","purchase","eng_mgr"].indexOf(T.session.me.role)>=0; }
+function canEditDb(){ return ["admin","ceo","sales_mgr","purchase","eng_mgr"].indexOf(T.session.me.role)>=0; }
 function modelsHtml(q,edit){
   var h='<section class="panel" id="mdlPanel"><div class="row" style="flex-wrap:wrap"><h3>設備型號對應與送審型錄</h3>'+(st.db?'<div class="tools">'+(edit?'<button class="btn small" id="btnMdlSave" type="button">儲存型號</button><button class="btn small primary" id="btnSubmittal" type="button">產生送審資料</button>':'')+'<button class="btn small" id="btnSubPrint" type="button">列印送審清單</button></div>':'')+'</div>'
     +'<p class="meta">依估價項目的廠牌，從「設備單價資料庫」找出對應型號。廠牌相符且名稱接近的會自動配對，其餘請從建議中選擇；資料庫沒有的設備可直接新增到資料庫最後一列。確認後按「產生送審資料」，系統會在專案資料夾建立送審設備清單，並複製雲端硬碟上的型錄檔。</p>';

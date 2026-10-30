@@ -342,7 +342,7 @@ function renderList(){
   });
   list.sort(function(a,b){ return String(b.x.updated).localeCompare(String(a.x.updated)); });
   var h='<section class="stats">'
-    +statBox(data.projects.length, me.role==="admin"?"專案總數（全部）":"我可看的專案")
+    +statBox(data.projects.length, (me.role==="admin"||me.role==="ceo")?"專案總數（全部）":"我可看的專案")
     +statBox(act.length,"進行中專案")
     +statBox(overNodes,"逾期結點",overNodes>0?"bad":"")
     +statBox(avg+"%","進行中平均進度")+'</section>';
@@ -761,23 +761,23 @@ function renderAdmin(){
 function roleOptions(sel){ return ROLES.map(function(r){ return '<option value="'+r[0]+'"'+(r[0]===sel?" selected":"")+'>'+r[1]+'</option>'; }).join(""); }
 /* 權限可視化：各角色可看、可做的事 */
 var PERM_ROWS=[
-  ["看得到的專案",{admin:"全部",ceo:"全部（唯讀）",sales:"自己負責／被指派",sales_mgr:"全部",eng:"自己負責／被分享",eng_mgr:"全部",purchase:"—",account:"全部（唯讀）",warehouse:"—"}],
-  ["建立專案",{admin:"✓",sales_mgr:"✓",eng_mgr:"✓",sales:"需勾選",eng:"需勾選"}],
-  ["指派負責人",{admin:"✓",sales_mgr:"✓",eng_mgr:"✓"}],
-  ["施工進度、照片、問題回報",{admin:"✓",sales_mgr:"✓",eng_mgr:"✓",eng:"✓",sales:"✓",ceo:"看",account:"看"}],
-  ["領料：申請",{admin:"✓",eng:"✓",eng_mgr:"✓"}],
-  ["領料：採購確認",{admin:"✓",purchase:"✓"}],
-  ["領料：倉管出貨",{admin:"✓",warehouse:"✓"}],
-  ["請款：設定付款條件",{admin:"✓",sales:"✓",sales_mgr:"✓"}],
-  ["請款：回報完工／送出請款",{admin:"✓",eng:"✓",eng_mgr:"✓",sales:"✓",sales_mgr:"✓"}],
-  ["請款：開立發票／登錄收款",{admin:"✓",account:"✓"}],
+  ["看得到的專案",{admin:"全部",ceo:"全部",sales:"自己負責／被指派",sales_mgr:"全部",eng:"自己負責／被分享",eng_mgr:"全部",purchase:"—",account:"全部（唯讀）",warehouse:"—"}],
+  ["建立專案",{admin:"✓",ceo:"✓",sales_mgr:"✓",eng_mgr:"✓",sales:"需勾選",eng:"需勾選"}],
+  ["指派負責人",{admin:"✓",ceo:"✓",sales_mgr:"✓",eng_mgr:"✓"}],
+  ["施工進度、照片、問題回報",{admin:"✓",ceo:"✓",sales_mgr:"✓",eng_mgr:"✓",eng:"✓",sales:"✓",account:"看"}],
+  ["領料：申請",{admin:"✓",ceo:"✓",eng:"✓",eng_mgr:"✓"}],
+  ["領料：採購確認",{admin:"✓",ceo:"✓",purchase:"✓"}],
+  ["領料：倉管出貨",{admin:"✓",ceo:"✓",warehouse:"✓"}],
+  ["請款：設定付款條件",{admin:"✓",ceo:"✓",sales:"✓",sales_mgr:"✓"}],
+  ["請款：回報完工／送出請款",{admin:"✓",ceo:"✓",eng:"✓",eng_mgr:"✓",sales:"✓",sales_mgr:"✓"}],
+  ["請款：開立發票／登錄收款",{admin:"✓",ceo:"✓",account:"✓"}],
   ["看請款金額",{admin:"✓",ceo:"✓",sales:"✓",sales_mgr:"✓",eng_mgr:"✓",account:"✓",eng:"只看狀態"}],
-  ["圖面設備數量分析（DXF）",{admin:"✓",sales_mgr:"✓",eng_mgr:"✓",eng:"✓",sales:"✓",ceo:"看",account:"看"}],
-  ["IO／IP 編表、網路架構、線材（設計・編表）",{admin:"✓",sales_mgr:"✓",eng_mgr:"✓",eng:"✓",sales:"✓",ceo:"看",account:"看"}],
+  ["圖面設備數量分析（DXF）",{admin:"✓",ceo:"✓",sales_mgr:"✓",eng_mgr:"✓",eng:"✓",sales:"✓",account:"看"}],
+  ["IO／IP 編表、網路架構、線材（設計・編表）",{admin:"✓",ceo:"✓",sales_mgr:"✓",eng_mgr:"✓",eng:"✓",sales:"✓",account:"看"}],
   ["估價單成本審查、看毛利",{admin:"✓",ceo:"✓",sales:"✓",sales_mgr:"✓",eng:"只看數量比對",eng_mgr:"只看數量比對"}],
-  ["設定公司標準估價範本",{admin:"✓",sales_mgr:"✓"}],
+  ["設定公司標準估價範本",{admin:"✓",ceo:"✓",sales_mgr:"✓"}],
   ["看設備採購價（成本）",{admin:"✓",ceo:"✓",sales_mgr:"✓",eng_mgr:"✓",purchase:"✓",account:"✓"}],
-  ["管理使用者與權限",{admin:"✓"}]
+  ["管理使用者與權限",{admin:"✓",ceo:"—（限最高管理權限）"}]
 ];
 function permMatrix(){
   return '<section class="panel"><h3>角色權限一覽</h3><p class="meta">每個操作在伺服器端都會再檢查一次權限，網頁上看不到的按鈕也無法透過其他方式執行。</p><div class="tblwrap"><table class="perm"><thead><tr><th>功能</th>'
