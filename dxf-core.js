@@ -306,25 +306,13 @@ function analyze(text, opt) {
   var cands = T.filter(function (t) { return /平面圖$/.test(t.s) && !/配置圖/.test(t.s); });
   var hmax = cands.reduce(function (m, t) { return Math.max(m, t.h); }, 0);
   var titles = cands.filter(function (t) { return t.h >= hmax * 0.6; });
+  var all0 = titles; titles = titles.filter(function (t) {            /* 先去掉圖說「圖紙目錄」裡一行一行列出的圖名 */
+    return all0.filter(function (o) { return o !== t && Math.abs(o.x - t.x) < t.h && Math.abs(o.y - t.y) < t.h * 4; }).length < 2;
+  });
   titles = titles.filter(function (t) {            /* 去掉「屋突二層至屋頂層」這類群組總標題 */
     var above = titles.filter(function (o) { return o !== t && Math.abs(o.x - t.x) < t.h * 20 && o.y > t.y && o.y - t.y < t.h * 60; });
     return above.length < 2;
   });
-  titles.forEach(function (t) {
-    var best = null, bd = Infinity, tf = cnFloor(t.s), sameFloor = isFloorKey(tf) ? floorsOf(tf).join() : "";
-    /* 先找同樓層的表（標題寫「地下壹層…」、表頭寫「B1F」），找不到才用最近的表 */
-    if (sameFloor) tables.forEach(function (tb) { if (tb.floors.join() !== sameFloor) return; var dd = Math.hypot(tb.x - t.x, tb.y - t.y); if (dd < bd) { bd = dd; best = tb; } });
-    if (best && bd < t.h * 400) { t.table = best; return; }
-    best = null; bd = Infinity;
-    tables.forEach(function (tb) { var dd = Math.hypot(tb.x - t.x, tb.y - t.y); if (dd < bd) { bd = dd; best = tb; } });
-    t.table = best && bd < t.h * 100 && (!sameFloor || best.needFloor) ? best : null;
-    if (!t.table) { warnings.push("平面圖「" + t.s + "」附近找不到數量表，該圖符號未納入核對"); return; }
-    if (t.table.needFloor) {   /* 表名沒寫樓層 → 用旁邊平面圖的樓層 */
-      var fk = cnFloor(t.s), ff = floorsOf(fk);
-      if (ff.every(function (f) { return /^(B|R)?\d+F$|^RF$/.test(f); })) { t.table.key = fk; t.table.floors = ff; t.table.needFloor = false; }
-    }
-  });
-
   /* 圖框（大型圖塊）：同一張圖紙內的符號才歸給該圖紙上的平面圖 */
   var frames = [];
   d.inserts.forEach(function (s) {
@@ -335,6 +323,23 @@ function analyze(text, opt) {
   });
   function frameOf(x, y) { for (var i = 0; i < frames.length; i++) { var b = frames[i]; if (x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]) return i; } return -1; }
   titles.forEach(function (t) { t.frame = frameOf(t.x, t.y); });
+  tables.forEach(function (tb) { tb.frame = frameOf(tb.x, tb.y); });
+  titles.forEach(function (t) {
+    var best = null, bd = Infinity, tf = cnFloor(t.s), sameFloor = isFloorKey(tf) ? floorsOf(tf).join() : "";
+    /* 先找同樓層的表（標題寫「地下壹層…」、表頭寫「B1F」），找不到才用最近的表 */
+    if (sameFloor) tables.forEach(function (tb) { if (tb.floors.join() !== sameFloor) return; var dd = Math.hypot(tb.x - t.x, tb.y - t.y); if (dd < bd) { bd = dd; best = tb; } });
+    if (best && bd < t.h * 400) { t.table = best; return; }
+    best = null; bd = Infinity;
+    tables.forEach(function (tb) { var dd = Math.hypot(tb.x - t.x, tb.y - t.y); if (dd < bd) { bd = dd; best = tb; } });
+    var sameSheet = best && t.frame >= 0 && best.frame === t.frame;   /* 同一張圖紙上的表（例如「屋突參層至屋頂」共用一張表） */
+    t.table = best && bd < t.h * 100 && (!sameFloor || best.needFloor || sameSheet) ? best : null;
+    if (!t.table) { warnings.push("平面圖「" + t.s + "」附近找不到數量表，該圖符號未納入核對"); return; }
+    if (t.table.needFloor) {   /* 表名沒寫樓層 → 用旁邊平面圖的樓層 */
+      var fk = cnFloor(t.s), ff = floorsOf(fk);
+      if (ff.every(function (f) { return /^(B|R)?\d+F$|^RF$/.test(f); })) { t.table.key = fk; t.table.floors = ff; t.table.needFloor = false; }
+    }
+  });
+
 
   /* 4. 平面圖上的符號歸屬 */
   var sym = {};   /* tableKey -> block -> count */
