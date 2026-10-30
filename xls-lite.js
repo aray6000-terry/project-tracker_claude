@@ -68,7 +68,15 @@ function readStr(data, o, cch, flags) {   /* 回傳 [字串, 新位移] ；flags
 function read(buf) {
   var b = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
   var doc = cfb(b), wb = doc.stream("Workbook") || doc.stream("Book");
-  if (!wb) throw new Error("找不到 Workbook 串流");
+  if (!wb) {
+    var pkg = doc.stream("Package"), names = doc.entries.filter(function (x) { return x.type === 2; }).map(function (x) { return x.name.replace(/[\x00-\x1f]/g, ""); });
+    var err;
+    if (pkg) { err = new Error("內嵌的是 Excel 2007 以後的格式（.xlsx）"); err.pkg = pkg; }
+    else if (names.some(function (n) { return /^Ole$/i.test(n); }) && !names.some(function (n) { return /Contents|Ole10Native|CONTENTS/i.test(n); }))
+      err = new Error("這個 Excel 表是「連結」而不是「內嵌」，圖面裡沒有表格內容（請在 CAD 改用內嵌，或另外上傳該 Excel 檔）");
+    else err = new Error("找不到 Workbook 串流（物件內容：" + (names.join("、") || "空白") + "）");
+    throw err;
+  }
   /* 先切出所有記錄 */
   var recs = [];
   for (var o = 0; o + 4 <= wb.length;) { var t = u16(wb, o), l = u16(wb, o + 2); recs.push({ t: t, d: wb.subarray(o + 4, o + 4 + l), off: o }); o += 4 + l; }

@@ -160,7 +160,7 @@ function analyze(text, opt) {
   var d = parse(text, opt.onProgress);
   var warnings = [];
   /* 圖面內嵌的 Excel 表（例如「I/O 管理點數表」） */
-  var embedded = [];
+  var embedded = [], pendingXlsx = [];
   if (opt.xls) d.oles.forEach(function (o) {
     if (!/Excel/i.test(o.type)) return;
     try {
@@ -168,7 +168,10 @@ function analyze(text, opt) {
       for (var i = 0; i < u.length; i++) u[i] = parseInt(hx.substr(i * 2, 2), 16);
       var sh = opt.xls.read(u);
       embedded.push({ x: o.x, y: o.y, sheets: sh.filter(function (x) { return x.rows.length; }) });
-    } catch (e) { warnings.push("圖面內嵌的 Excel 表無法讀取：" + e.message); }
+    } catch (e) {
+      if (e.pkg) pendingXlsx.push({ x: o.x, y: o.y, pkg: e.pkg });   /* .xlsx 需非同步解壓，交給呼叫端 */
+      else warnings.push("圖面內嵌的 Excel 表無法讀取：" + e.message);
+    }
   });
   var center = makeBBox(d.blocks);
   var T = d.texts;
@@ -302,7 +305,7 @@ function analyze(text, opt) {
   var plans = opt.noPlans ? [] : buildPlans(titles, d.segs, blockNames);
   return {
     tables: tables.map(function (t) { return { key: t.key, floors: t.floors, rows: t.rows.map(function (r) { return { name: r.name, qty: r.qty, raw: r.raw, block: r.block }; }) }; }),
-    floors: floorList, items: list, checks: checks, warnings: warnings, embedded: embedded, plans: plans,
+    floors: floorList, items: list, checks: checks, warnings: warnings, embedded: embedded, pendingXlsx: pendingXlsx, plans: plans,
     unitM: guessUnit(plans),
     stats: { inserts: d.inserts.length, texts: T.length, blocks: Object.keys(d.blocks).length, titles: titles.map(function (t) { return t.s + "→" + (t.table ? t.table.key : "?"); }) }
   };
