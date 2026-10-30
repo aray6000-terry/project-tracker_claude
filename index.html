@@ -192,6 +192,11 @@ table.perm td.yes{color:var(--ok);font-weight:700}
 .uprow select,.uprow input[type=text],.fld{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 10px;color:var(--ink)}
 .items td input{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 8px;width:100%;min-width:60px}
 .status{display:inline-block;font-size:12px;padding:2px 9px;border-radius:99px;font-weight:600}
+.st-approval{background:var(--warn-soft,#fff4e0);color:var(--warn,#b25e00)}
+.anomaly{border:1px solid var(--warn,#b25e00);background:var(--warn-soft,#fff8ec);border-radius:8px;padding:10px 12px;margin:8px 0;font-size:14px}
+td.bad,.bad{color:var(--bad)}
+.bar{display:inline-block;width:70px;height:6px;border-radius:3px;background:var(--line,#ddd);vertical-align:middle;margin-right:6px;overflow:hidden}.bar span{display:block;height:100%;background:var(--accent)}
+table.pstat td,table.pstat th{white-space:nowrap}
 .st-submitted,.st-billed,.st-open{background:var(--accent-soft);color:var(--accent)}
 .st-confirmed,.st-invoiced,.st-doing,.st-done{background:var(--warn-soft);color:var(--warn)}
 .st-shipped,.st-paid,.st-closed{background:var(--ok-soft);color:var(--ok)}
@@ -358,6 +363,7 @@ footer{margin-top:32px;color:var(--ink-2);font-size:12px;text-align:center}
 <script src="app.js"></script>
 <script src="ops.js"></script>
 <script src="xlsx-lite.js"></script>
+<script src="xls-lite.js"></script>
 <script src="quote-core.js"></script>
 <script src="analysis.js"></script>
 <script src="io-core.js"></script>

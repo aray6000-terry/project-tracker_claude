@@ -777,6 +777,9 @@ var PERM_ROWS=[
   ["估價單成本審查、看毛利",{admin:"✓",ceo:"✓",sales:"✓",sales_mgr:"✓",eng:"只看數量比對",eng_mgr:"只看數量比對"}],
   ["設定公司標準估價範本",{admin:"✓",ceo:"✓",sales_mgr:"✓"}],
   ["看設備採購價（成本）",{admin:"✓",ceo:"✓",sales_mgr:"✓",eng_mgr:"✓",purchase:"✓",account:"✓"}],
+  ["上傳成交報價單、合約",{admin:"✓",ceo:"✓",sales:"✓",sales_mgr:"✓",eng_mgr:"✓"}],
+  ["看合約、成交報價單金額",{admin:"✓",ceo:"✓",sales:"✓",sales_mgr:"✓",eng_mgr:"✓",purchase:"✓",account:"✓",eng:"只看品項數量"}],
+  ["簽核領料異常單（超出成交報價單）",{admin:"✓",ceo:"✓",eng_mgr:"工務的",sales_mgr:"業務的"}],
   ["管理使用者與權限",{admin:"✓",ceo:"—（限最高管理權限）"}]
 ];
 function permMatrix(){

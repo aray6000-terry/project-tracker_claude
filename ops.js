@@ -4,7 +4,7 @@
 var T = window.TR; if(!T) return;
 var esc=T.esc, api=T.api, toast=T.toast, fmt=T.fmt, fmtTime=T.fmtTime, fail=T.fail;
 var $=function(id){ return document.getElementById(id); };
-var REQ_LABEL={submitted:"待採購確認",confirmed:"待倉管出貨",rejected:"採購退回",shipped:"已出貨",cancelled:"已取消"};
+var REQ_LABEL={approval:"異常單待主管簽核",submitted:"待採購確認",confirmed:"待倉管出貨",rejected:"採購退回",shipped:"已出貨",cancelled:"已取消"};
 var BILL_LABEL={pending:"未達成",done:"已完工待請款",billed:"已請款",invoiced:"已開票",paid:"已收款"};
 var ISSUE_LABEL={open:"待處理",doing:"處理中",closed:"已結案"};
 var FIELD_LABEL={name:"專案名稱",client:"業主／營造",site:"案場地點",engineer:"負責工程師",mentor:"帶案師父",amount:"合約金額（舊欄位）",handover:"預計驗屋交屋日",note:"備註",
@@ -75,6 +75,7 @@ T.views.home=function(){
     h+='<div class="kpis">';
     if(c.projects) h+=kpi(active,"進行中專案")+kpi(late,"有逾期結點的專案",late?"bad":"");
     h+=kpi(d.issueCount||0,"未結案問題",d.issueCount?"warn":"");
+    if(d.approvalCount) h+=kpi(d.approvalCount,"待我簽核的異常單","warn");
     if(c.reqConfirm) h+=kpi(d.reqs.submitted||0,"待採購確認領料單",d.reqs.submitted?"warn":"");
     if(c.reqShip) h+=kpi(d.reqs.confirmed||0,"待出貨領料單",d.reqs.confirmed?"warn":"");
     if(c.reqCreate&&!c.reqConfirm) h+=kpi((d.reqs.submitted||0)+(d.reqs.confirmed||0),"處理中的領料單");
@@ -94,6 +95,7 @@ T.views.home=function(){
     h+='<section class="panel"><h3>待辦事項</h3>'+(todo.length?'<ul class="list">'+todo.join("")+'</ul>':'<p class="meta">目前沒有待辦事項。</p>')+'</section>';
     if(d.issues.length) h+='<section class="panel"><h3>未結案問題（'+d.issueCount+'）</h3><ul class="list">'+d.issues.slice(0,10).map(function(i){
       return '<li><div class="main"><b>'+(i.priority==="high"?'<span style="color:var(--bad)">［急］</span>':'')+esc(i.title)+'</b><span class="meta">'+esc(i.pname)+'｜'+esc(nodeName(i.node))+'｜'+esc(T.userName(i.by))+' '+fmtTime(i.at)+'</span></div>'+chip(i.status,ISSUE_LABEL[i.status])+'<a class="btn small" href="#p='+esc(i.pid)+'/site">查看</a></li>'; }).join("")+'</ul></section>';
+    if(d.projects&&d.projects.length) h+=projectStatsPanel(d.projects);
     if(c.projects&&ps.length){
       var recent=ps.slice().sort(function(a,b){ return String(b.updated).localeCompare(String(a.updated)); }).slice(0,6);
       h+='<section class="panel"><div class="row"><h3>最近更新的專案</h3><a class="btn small" href="#projects">全部專案</a></div><ul class="list">'+recent.map(function(x){
@@ -103,6 +105,27 @@ T.views.home=function(){
     app.innerHTML=h;
   }).catch(function(e){ app.innerHTML='<div class="empty">'+esc(e.message||"讀取失敗")+'</div>'; });
 };
+/* 首頁：各專案狀態統計 */
+function projectStatsPanel(list){
+  var show=view.psAll?list:list.filter(function(p){ return !p.closed; });
+  var hasBills=list.some(function(p){ return p.bills; }), hasAmt=list.some(function(p){ return p.bills&&p.bills.contract!==undefined; });
+  var n=function(v){ return v?String(v):'<span class="meta">0</span>'; };
+  var rows=show.map(function(p){
+    var pct=p.total?Math.round(p.done/p.total*100):0;
+    var stage=p.closed?'已結案':p.next>=0&&T.NODES[p.next]?'結點'+(p.next+1)+' '+T.NODES[p.next].name+(p.nextTarget?'（預計 '+fmt(p.nextTarget)+'）':''):'全部完成';
+    var late=!p.closed&&p.nextTarget&&p.nextTarget<new Date().toISOString().slice(0,10);
+    var rq=p.reqs||{};
+    return '<tr><td><a href="#p='+esc(p.id)+'">'+esc(p.name)+'</a></td><td><div class="bar"><span style="width:'+pct+'%"></span></div><span class="meta">'+p.done+'/'+p.total+'</span></td><td'+(late?' class="bad"':'')+'>'+esc(stage)+(late?'（逾期）':'')+'</td>'
+      +'<td>'+n(rq.approval)+'</td><td>'+n((rq.submitted||0)+(rq.confirmed||0))+'</td><td>'+n(rq.shipped)+'</td><td>'+n(p.issues)+'</td>'
+      +(hasBills?'<td>'+(p.bills?p.bills.paid+'/'+p.bills.terms+(p.bills.overdue?' <span class="bad">逾期 '+p.bills.overdue+'</span>':''):'—')+'</td>':'')
+      +(hasAmt?'<td>'+(p.bills&&p.bills.contract!==undefined?money(p.bills.paidAmt)+' / '+money(p.bills.contract):'—')+'</td>':'')
+      +'<td>'+(p.hasDeal?'✓':'<span class="meta">—</span>')+'</td><td>'+(p.hasContract?'✓':'<span class="meta">—</span>')+'</td></tr>';
+  }).join("");
+  setTimeout(function(){ var b=$("btnPsAll"); if(b) b.onclick=function(){ view.psAll=!view.psAll; T.views.home(); }; },0);
+  return '<section class="panel"><div class="row"><h3>各專案狀態（'+show.length+'）</h3><button class="btn small" id="btnPsAll" type="button">'+(view.psAll?'只看進行中':'含已結案')+'</button></div>'
+    +'<div class="tblwrap"><table class="pstat"><thead><tr><th>專案</th><th>進度</th><th>目前階段</th><th>異常待簽</th><th>領料處理中</th><th>已出貨</th><th>未結問題</th>'+(hasBills?'<th>已收款期數</th>':'')+(hasAmt?'<th>已收／合約</th>':'')+'<th>成交報價單</th><th>合約</th></tr></thead><tbody>'
+    +(rows||'<tr><td colspan="11" class="meta">沒有進行中的專案</td></tr>')+'</tbody></table></div></section>';
+}
 function kpi(n,l,cls){ return '<div class="kpi '+(cls||"")+'"><div class="n">'+esc(n)+'</div><div class="l">'+esc(l)+'</div></div>'; }
 
 /* ======================== 專案分頁 ======================== */
@@ -130,8 +153,9 @@ function filesTab(cur,el){
       var mine=f.by===me().email||cur.myRole==="admin"||cur.myRole==="manager";
       return '<li><div class="main"><b>'+esc(f.name)+'</b><span class="meta">'+sizeTxt(f.size)+'｜'+esc(nodeName(f.node))+(f.caption?'｜'+esc(f.caption):'')+'｜'+esc(T.userName(f.by))+' '+fmtTime(f.at)+'</span></div>'
         +'<button class="btn small" data-dl="'+esc(f.id)+'" type="button">下載</button>'+(edit&&mine?'<button class="btn small danger" data-del="'+esc(f.id)+'" data-name="'+esc(f.name)+'" type="button">刪除</button>':'')+'</li>'; }).join("")+'</ul>':'<p class="meta">尚未上傳圖面。</p>';
-    el.innerHTML=h+'</section><div id="subList"></div>';
+    el.innerHTML=h+'</section><div id="moneyList"></div><div id="subList"></div>';
     bindFiles(el,cur,function(){ filesTab(cur,el); });
+    if(canSeeMoney()) moneyFiles(cur,function(){ filesTab(cur,el); });
     api("files",{id:cur.id,kind:"submittal"}).then(function(r2){
       if(!r2.files.length||!$("subList")) return;
       $("subList").innerHTML='<section class="panel"><h3>送審資料（'+r2.files.length+'）</h3><p class="meta">由「數量・報價」分頁的「產生送審資料」建立。</p><ul class="list">'+r2.files.map(function(f){
@@ -140,6 +164,23 @@ function filesTab(cur,el){
     }).catch(function(){});
     if(edit) $("btnUp").onclick=function(){ uploadFiles(cur,"drawing",$("upFile").files,{node:+$("upNode").value,caption:$("upCap").value},function(){ filesTab(cur,el); }); };
   }).catch(function(e){ el.innerHTML='<div class="empty">'+esc(e.message)+'</div>'; });
+}
+/* 合約、成交報價單（含金額，只有業務、主管、會計、採購、CEO 看得到） */
+function moneyFiles(cur,reload){
+  Promise.all([api("files",{id:cur.id,kind:"contract"}),api("files",{id:cur.id,kind:"deal"})]).then(function(r){
+    var box=$("moneyList"); if(!box) return;
+    var up=canUpMoney(cur)&&T.canEdit();
+    var li=function(f){ var mine=f.by===me().email||cur.myRole==="admin"||cur.myRole==="manager";
+      return '<li><div class="main"><b>'+esc(f.name)+'</b><span class="meta">'+sizeTxt(f.size)+(f.caption?'｜'+esc(f.caption):'')+'｜'+esc(T.userName(f.by))+' '+fmtTime(f.at)+'</span></div><button class="btn small" data-dl="'+esc(f.id)+'" type="button">下載</button>'+(up&&mine?'<button class="btn small danger" data-del="'+esc(f.id)+'" data-name="'+esc(f.name)+'" type="button">刪除</button>':'')+'</li>'; };
+    var h='<section class="panel"><h3>合約（'+r[0].files.length+'）</h3><p class="meta">存放在專案資料夾「合約」，只有業務、主管、會計、採購與 CEO 看得到。支援 PDF、Word、Excel、圖片、ZIP。</p>';
+    if(up) h+='<div class="uprow"><input type="text" id="ctCap" class="fld" maxlength="200" placeholder="說明（例：工程合約 2026-10-30 用印版）"><input type="file" id="ctFile" multiple accept=".pdf,.doc,.docx,.xlsx,.xls,.jpg,.jpeg,.png,.zip"><button class="btn primary small" id="btnCt" type="button">上傳合約</button></div>';
+    h+=r[0].files.length?'<ul class="list">'+r[0].files.map(li).join("")+'</ul>':'<p class="meta">尚未上傳合約。</p>';
+    h+='</section><section class="panel"><h3>成交報價單原始檔（'+r[1].files.length+'）</h3><p class="meta">請在「領料」分頁上傳成交報價單，系統會同時解析品項並保存原始檔。</p>'
+      +(r[1].files.length?'<ul class="list">'+r[1].files.map(li).join("")+'</ul>':'<p class="meta">尚未上傳。</p>')+'</section>';
+    box.innerHTML=h;
+    bindFiles(box,cur,reload);
+    if(up) $("btnCt").onclick=function(){ uploadFiles(cur,"contract",$("ctFile").files,{node:-1,caption:$("ctCap").value},reload); };
+  }).catch(function(){});
 }
 function bindFiles(el,cur,reload){
   el.querySelectorAll("[data-dl]").forEach(function(b){ b.onclick=function(){ download(b.dataset.dl); }; });
@@ -206,49 +247,115 @@ function thumbHtml(p){
 }
 
 /* --- 領料（專案內與全域共用） --- */
-var draft={items:[]};
+var TYPE_LABEL={device:"設備",material:"材料",labor:"工資發包",service:"服務"};
+var draft={items:[],q:{}};
+function usedByRef(list,pid){
+  var u={}; list.forEach(function(q){ if(q.pid!==pid||q.status==="cancelled"||q.status==="rejected") return;
+    q.items.forEach(function(it){ if(it.ref) u[it.ref]=(u[it.ref]||0)+Number(it.qty||0); }); });
+  return u;
+}
+function dealRows(deal){
+  var out=[]; if(!deal||!deal.sections) return out;
+  deal.sections.forEach(function(s){ (s.items||[]).forEach(function(it){ if(Number(it.qty)>0&&it.row) out.push({ref:"r"+it.row,sec:s.name||"",name:it.name,unit:it.unit||"",qty:Number(it.qty),type:it.kind||"",brand:it.brand||""}); }); });
+  return out;
+}
+function canUpMoney(cur){ var c=caps(); return !!(c.quote||c.billTerms||(cur&&(cur.myRole==="admin"||cur.myRole==="manager"))); }
+function canSeeMoney(){ var c=caps(); return !!(c.quote||c.cost||c.billAmounts); }
 function reqsView(el,cur){
   var app=el||$("app"); loading(app);
   var c=caps();
-  api("reqs",cur?{id:cur.id}:{}).then(function(r){
-    var list=r.reqs, h='';
-    if(!cur) h+='<section class="panel" style="margin-bottom:14px"><h3>領料單</h3><p class="meta" style="margin:0">流程：工務申請 → 採購確認 → 倉管出貨；每一步都會記錄處理人與時間。'+(c.reqCreate?'要申請領料請到該專案的「領料」分頁。':'')+'</p></section>';
-    if(cur && c.reqCreate && T.canEdit()) h+=reqForm();
+  Promise.all([api("reqs",cur?{id:cur.id}:{}), cur?api("dealGet",{id:cur.id}).catch(function(){ return {deal:null}; }):Promise.resolve({deal:null})]).then(function(res){
+    var r=res[0], deal=res[1].deal, list=r.reqs, h='';
+    if(!cur) h+='<section class="panel" style="margin-bottom:14px"><h3>領料單</h3><p class="meta" style="margin:0">流程：工務申請 →（超出成交報價單時：直屬主管簽核異常單）→ 採購確認 → 倉管出貨；每一步都會記錄處理人與時間。'+(c.reqCreate?'要申請領料請到該專案的「領料」分頁。':'')+'</p></section>';
+    if(cur) h+=dealPanel(cur,deal);
+    if(cur && c.reqCreate && T.canEdit()) h+=reqForm(deal);
     var filter=view.reqFilter||"active";
     h+='<div class="filters"><div class="seg">'+[["active","處理中"],["all","全部"],["shipped","已出貨"]].map(function(f){ return '<button type="button" data-rf="'+f[0]+'" class="'+(filter===f[0]?"on":"")+'">'+f[1]+'</button>'; }).join("")+'</div></div>';
-    var shown=list.filter(function(q){ return filter==="all"||(filter==="shipped"?q.status==="shipped":["submitted","confirmed","rejected"].indexOf(q.status)>=0); });
+    var shown=list.filter(function(q){ return filter==="all"||(filter==="shipped"?q.status==="shipped":["approval","submitted","confirmed","rejected"].indexOf(q.status)>=0); });
     h+=shown.length?shown.map(function(q){ return reqCard(q,c); }).join(""):'<div class="empty">沒有符合的領料單</div>';
     app.innerHTML=h;
     app.querySelectorAll("[data-rf]").forEach(function(b){ b.onclick=function(){ view.reqFilter=b.dataset.rf; reqsView(el,cur); }; });
     app.querySelectorAll("[data-ract]").forEach(function(b){ b.onclick=function(){
       var act=b.dataset.ract, note="";
-      if(act==="reject"||act==="confirm"||act==="ship"){ note=prompt(act==="reject"?"退回原因":"說明（選填，例：已下單、預計到貨日、出貨單號）",""); if(note===null) return; }
+      if(act==="deny"){ note=prompt("不同意的原因（必填）",""); if(note===null) return; if(!note.trim()){ toast("請填寫原因"); return; } }
+      else if(act==="approve"){ note=prompt("簽核意見（選填）",""); if(note===null) return; }
+      else if(act==="reject"||act==="confirm"||act==="ship"){ note=prompt(act==="reject"?"退回原因":"說明（選填，例：已下單、預計到貨日、出貨單號）",""); if(note===null) return; }
       if(act==="cancel"&&!confirm("確定取消這張領料單？")) return;
       api("reqAct",{reqId:b.dataset.rid,act:act,note:note}).then(function(){ toast("已更新領料單"); reqsView(el,cur); }).catch(fail);
     }; });
     app.querySelectorAll("[data-rprint]").forEach(function(b){ b.onclick=function(){ var q=list.filter(function(x){return x.id===b.dataset.rprint;})[0]; if(q) printReq(q); }; });
-    if(cur && c.reqCreate && T.canEdit()) bindReqForm(cur,function(){ reqsView(el,cur); });
+    if(cur) bindDealPanel(cur,function(){ reqsView(el,cur); });
+    if(cur && c.reqCreate && T.canEdit()) bindReqForm(cur,deal,usedByRef(list,cur.id),function(){ reqsView(el,cur); });
   }).catch(function(e){ app.innerHTML='<div class="empty">'+esc(e.message)+'</div>'; });
 }
 var view={};
+/* 成交報價單：上傳（業務／主管）與摘要 */
+function dealPanel(cur,deal){
+  var rows=dealRows(deal), cnt={};
+  rows.forEach(function(x){ cnt[x.type]=(cnt[x.type]||0)+1; });
+  var h='<section class="panel"><h3>成交報價單</h3>';
+  if(deal) h+='<p class="meta">目前：<b>'+esc(deal.fileName||"成交報價單")+'</b>｜'+esc(T.userName(deal.savedBy||""))+' '+fmtTime(deal.savedAt)+'｜共 '+rows.length+' 項（'+Object.keys(cnt).map(function(k){ return (TYPE_LABEL[k]||"其他")+' '+cnt[k]; }).join("、")+'）。領料表會依這份報價單產生，超出數量需填異常單給直屬主管簽核。</p>';
+  else h+='<p class="meta">尚未上傳成交報價單。上傳後，「申請領料」會依報價單自動列出所有品項（含工資發包），超出報價數量時需填異常單給直屬主管簽核。'+(canUpMoney(cur)?'':'請業務或主管上傳。')+'</p>';
+  if(canUpMoney(cur)&&T.canEdit()) h+='<div class="uprow"><input type="file" id="dealFile" accept=".xlsx,.xls"><button class="btn small'+(deal?'':' primary')+'" id="btnDeal" type="button">'+(deal?'更新成交報價單':'上傳成交報價單')+'</button></div><p class="hint" id="dealMsg">格式同公司估價單範本（Excel）；原始檔會一併存到專案資料夾「成交報價單」。</p>';
+  return h+'</section>';
+}
+function readQuoteFile(f){
+  return f.arrayBuffer().then(function(buf){
+    if(/\.xls$/i.test(f.name)){ if(!window.XLS_LITE) throw new Error("不支援 .xls，請另存為 .xlsx"); return XLS_LITE.read(buf); }
+    return XLSX_LITE.read(buf);
+  }).then(function(sheets){ return QUOTE.parse(sheets); });
+}
+function bindDealPanel(cur,reload){
+  var b=$("btnDeal"); if(!b) return;
+  b.onclick=function(){
+    var f=$("dealFile").files[0]; if(!f){ toast("請先選擇成交報價單"); return; }
+    if(f.size>25*1024*1024){ toast("檔案超過 25MB"); return; }
+    $("dealMsg").textContent="解析中…";
+    readQuoteFile(f).then(function(q){
+      var rows=dealRows(q);
+      if(!rows.length) throw new Error("讀不到品項，請確認是公司估價單格式");
+      if(!confirm("讀到 "+(q.sections||[]).length+" 個系統、"+rows.length+" 個品項，總價 "+money(q.total&&q.total.price)+"。確定設為本專案的成交報價單？")) { $("dealMsg").textContent=""; return; }
+      q.fileName=f.name; $("dealMsg").textContent="儲存中…";
+      return api("analysisSave",{id:cur.id,kind:"deal",fileName:f.name,data:q})
+        .then(function(){ return b64FromFile(f); })
+        .then(function(d){ return api("upload",{id:cur.id,kind:"deal",name:f.name,data:d,caption:"成交報價單"}); })
+        .then(function(){ toast("已更新成交報價單"); reload(); });
+    }).catch(function(e){ $("dealMsg").textContent=""; fail(e); });
+  };
+}
 function reqCard(q,c){
-  var steps='<div class="pipeline"><span class="on">申請 '+esc(T.userName(q.by))+' '+fmtTime(q.at)+'</span> → <span class="'+(q.confirmedAt?"on":"")+'">採購 '+(q.confirmedAt?esc(T.userName(q.purchaser))+' '+fmtTime(q.confirmedAt):'待確認')+'</span> → <span class="'+(q.shippedAt?"on":"")+'">倉管 '+(q.shippedAt?esc(T.userName(q.shipper))+' '+fmtTime(q.shippedAt):'待出貨')+'</span></div>';
+  var anomaly=(q.over&&q.over.length)||q.anomalyReason;
+  var steps='<div class="pipeline"><span class="on">申請 '+esc(T.userName(q.by))+' '+fmtTime(q.at)+'</span>'
+    +(anomaly?' → <span class="'+(q.approvedAt?"on":"")+'">主管簽核 '+(q.approvedAt?esc(T.userName(q.approver))+' '+esc(q.approval)+' '+fmtTime(q.approvedAt):'待簽核')+'</span>':'')
+    +' → <span class="'+(q.confirmedAt?"on":"")+'">採購 '+(q.confirmedAt?esc(T.userName(q.purchaser))+' '+fmtTime(q.confirmedAt):'待確認')+'</span> → <span class="'+(q.shippedAt?"on":"")+'">倉管 '+(q.shippedAt?esc(T.userName(q.shipper))+' '+fmtTime(q.shippedAt):'待出貨')+'</span></div>';
   var acts='';
+  if(q.canApprove&&q.status==="approval") acts+='<button class="btn small primary" data-ract="approve" data-rid="'+esc(q.id)+'" type="button">同意異常單</button><button class="btn small danger" data-ract="deny" data-rid="'+esc(q.id)+'" type="button">不同意</button>';
   if(c.reqConfirm&&q.status==="submitted") acts+='<button class="btn small primary" data-ract="confirm" data-rid="'+esc(q.id)+'" type="button">採購確認</button><button class="btn small danger" data-ract="reject" data-rid="'+esc(q.id)+'" type="button">退回</button>';
   if(c.reqShip&&q.status==="confirmed") acts+='<button class="btn small primary" data-ract="ship" data-rid="'+esc(q.id)+'" type="button">確認出貨</button>';
-  if(q.by===me().email&&q.status==="submitted") acts+='<button class="btn small" data-ract="cancel" data-rid="'+esc(q.id)+'" type="button">取消申請</button>';
+  if(q.by===me().email&&(q.status==="submitted"||q.status==="approval")) acts+='<button class="btn small" data-ract="cancel" data-rid="'+esc(q.id)+'" type="button">取消申請</button>';
   acts+='<button class="btn small" data-rprint="'+esc(q.id)+'" type="button">列印</button>';
+  var ab=anomaly?'<div class="anomaly"><b>異常單</b>：'+esc(q.anomalyReason||"")+(q.approvalNote?'<br>主管意見：'+esc(q.approvalNote):'')+overTable(q.over)+'</div>':'';
   return '<section class="panel"><div class="row" style="flex-wrap:wrap"><h3>'+esc(q.id)+'｜<a href="#p='+esc(q.pid)+'/reqs">'+esc(q.pname)+'</a></h3>'+chip(q.status,REQ_LABEL[q.status])+'</div>'
-    +'<p class="meta" style="margin:4px 0">'+(q.needDate?'需用日期 '+fmt(q.needDate)+'｜':'')+(q.note?'說明：'+esc(q.note):'')+(q.purchaseNote?'｜採購：'+esc(q.purchaseNote):'')+(q.shipNote?'｜倉管：'+esc(q.shipNote):'')+'</p>'+steps
-    +'<div class="tblwrap"><table><thead><tr><th>品名</th><th>廠牌</th><th>型號</th><th>數量</th></tr></thead><tbody>'+q.items.map(function(it){ return '<tr><td>'+esc(it.name)+'</td><td>'+esc(it.brand)+'</td><td class="mono">'+esc(it.model)+'</td><td>'+esc(it.qty)+' '+esc(it.unit)+'</td></tr>'; }).join("")+'</tbody></table></div>'
+    +'<p class="meta" style="margin:4px 0">送出：'+esc(T.userName(q.by))+' '+fmtTime(q.at)+'｜設備需求日期 '+esc(fmt(q.needDate)||"—")+(q.note?'｜說明：'+esc(q.note):'')+(q.purchaseNote?'｜採購：'+esc(q.purchaseNote):'')+(q.shipNote?'｜倉管：'+esc(q.shipNote):'')+'</p>'+steps+ab
+    +'<div class="tblwrap"><table><thead><tr><th>類別</th><th>品名</th><th>廠牌</th><th>型號</th><th>數量</th></tr></thead><tbody>'+q.items.map(function(it){ return '<tr><td>'+esc(TYPE_LABEL[it.type]||(it.ref?"":"報價單外"))+'</td><td>'+esc(it.name)+'</td><td>'+esc(it.brand)+'</td><td class="mono">'+esc(it.model)+'</td><td>'+esc(it.qty)+' '+esc(it.unit)+'</td></tr>'; }).join("")+'</tbody></table></div>'
     +'<div class="tools" style="margin-top:8px">'+acts+'</div></section>';
 }
-function reqForm(){
-  return '<section class="panel"><h3>申請領料</h3><p class="meta">從設備資料庫搜尋加入品項，或直接輸入。送出後由採購確認、倉管出貨。</p>'
+function overTable(over){
+  if(!over||!over.length) return '';
+  return '<div class="tblwrap"><table><thead><tr><th>品名</th><th>報價數量</th><th>先前已申請</th><th>本次</th><th>超出</th></tr></thead><tbody>'+over.map(function(o){
+    return '<tr><td>'+esc(o.name)+(o.extra?'（報價單外）':'')+'</td><td>'+esc(o.extra?"—":o.quote)+'</td><td>'+esc(o.extra?"—":o.before)+'</td><td>'+esc(o.now)+'</td><td><b>'+esc(o.extra?o.now:Math.round((o.before+o.now-o.quote)*100)/100)+'</b></td></tr>'; }).join("")+'</tbody></table></div>';
+}
+function reqForm(deal){
+  var hasDeal=dealRows(deal).length>0;
+  return '<section class="panel"><h3>申請領料</h3><p class="meta">'+(hasDeal?'下表依<b>成交報價單</b>列出所有品項（含工資發包），在「本次申請」填數量即可；報價單沒有的品項可從下方加入，會列為異常。':'尚未上傳成交報價單，請從設備資料庫搜尋加入品項，或直接輸入。')+'送出後由採購確認、倉管出貨；系統會記錄送出人與時間。</p>'
+    +(hasDeal?'<div class="uprow"><input type="text" id="dealQ" class="fld" placeholder="篩選品項（品名、系統）" style="flex:1;min-width:180px"><label class="meta"><input type="checkbox" id="dealLeft"> 只顯示尚有剩餘的</label></div><div class="tblwrap" style="max-height:420px;overflow:auto"><table class="items"><thead><tr><th>系統</th><th>類別</th><th>品名</th><th>報價</th><th>已申請</th><th>剩餘</th><th>本次申請</th></tr></thead><tbody id="dealItems"></tbody></table></div>':'')
+    +'<h4 style="margin:12px 0 6px">'+(hasDeal?'報價單外品項（會列為異常）':'品項')+'</h4>'
     +'<div class="uprow"><input type="text" id="devQ" class="fld" placeholder="搜尋設備（品名、廠牌、型號，例：AR-727、攝影機）" style="flex:1;min-width:200px"><button class="btn small" id="btnDevQ" type="button">搜尋</button><button class="btn small" id="btnAddBlank" type="button">手動新增一列</button></div>'
     +'<ul class="list" id="devRes"></ul>'
     +'<div class="tblwrap"><table class="items"><thead><tr><th>品名</th><th>廠牌</th><th>型號</th><th>數量</th><th>單位</th><th></th></tr></thead><tbody id="reqItems"></tbody></table></div>'
-    +'<div class="uprow"><label class="meta">需用日期 <input type="date" id="reqNeed" class="fld"></label><input type="text" id="reqNote" class="fld" maxlength="300" placeholder="申請說明（例：3F 攝影機安裝用）" style="flex:1;min-width:200px"><button class="btn primary" id="btnReqSubmit" type="button">送出申請</button></div></section>';
+    +'<div id="anomalyBox"></div>'
+    +'<div class="uprow"><label class="meta">設備需求日期 <input type="date" id="reqNeed" class="fld" required></label><input type="text" id="reqNote" class="fld" maxlength="300" placeholder="申請說明（例：3F 攝影機安裝用）" style="flex:1;min-width:200px"><button class="btn primary" id="btnReqSubmit" type="button">送出申請</button></div>'
+    +'<p class="hint">送出人：'+esc(me().name||me().email)+'（送出時間由系統記錄）</p></section>';
 }
 function renderDraft(){
   var tb=$("reqItems"); if(!tb) return;
@@ -256,12 +363,50 @@ function renderDraft(){
     return '<tr><td><input data-di="'+i+'" data-k="name" maxlength="80" value="'+esc(it.name)+'"></td><td><input data-di="'+i+'" data-k="brand" maxlength="40" value="'+esc(it.brand)+'"></td><td><input data-di="'+i+'" data-k="model" maxlength="60" value="'+esc(it.model)+'"></td>'
       +'<td><input data-di="'+i+'" data-k="qty" type="number" min="0" step="1" value="'+esc(it.qty)+'" style="width:80px"></td><td><input data-di="'+i+'" data-k="unit" maxlength="10" value="'+esc(it.unit)+'" style="width:60px"></td><td><button class="btn small danger" data-drm="'+i+'" type="button">移除</button></td></tr>'; }).join("")
     :'<tr><td colspan="6" class="meta">尚未加入品項</td></tr>';
-  tb.querySelectorAll("[data-di]").forEach(function(inp){ inp.oninput=function(){ draft.items[+inp.dataset.di][inp.dataset.k]=inp.value; }; });
-  tb.querySelectorAll("[data-drm]").forEach(function(b){ b.onclick=function(){ draft.items.splice(+b.dataset.drm,1); renderDraft(); }; });
+  tb.querySelectorAll("[data-di]").forEach(function(inp){ inp.oninput=function(){ draft.items[+inp.dataset.di][inp.dataset.k]=inp.value; if(draft.onChange) draft.onChange(); }; });
+  tb.querySelectorAll("[data-drm]").forEach(function(b){ b.onclick=function(){ draft.items.splice(+b.dataset.drm,1); renderDraft(); if(draft.onChange) draft.onChange(); }; });
 }
-function bindReqForm(cur,reload){
-  if(draft.pid!==cur.id) draft={pid:cur.id,items:[]};
-  renderDraft();
+function bindReqForm(cur,deal,used,reload){
+  if(draft.pid!==cur.id) draft={pid:cur.id,items:[],q:{}};
+  var rows=dealRows(deal), hasDeal=rows.length>0;
+  function renderDeal(){
+    var tb=$("dealItems"); if(!tb) return;
+    var kw=($("dealQ").value||"").trim(), left=$("dealLeft").checked;
+    var shown=rows.filter(function(x){ var rem=x.qty-(used[x.ref]||0); return (!kw||(x.name+" "+x.sec).indexOf(kw)>=0)&&(!left||rem>0); });
+    tb.innerHTML=shown.length?shown.map(function(x){
+      var u=used[x.ref]||0, rem=Math.round((x.qty-u)*100)/100, v=draft.q[x.ref]||"";
+      return '<tr><td>'+esc(x.sec)+'</td><td>'+esc(TYPE_LABEL[x.type]||"")+'</td><td>'+esc(x.name)+'</td><td>'+esc(x.qty)+' '+esc(x.unit)+'</td><td>'+esc(u)+'</td><td'+(rem<=0?' class="bad"':'')+'>'+esc(rem)+'</td>'
+        +'<td><input type="number" min="0" step="any" data-dq="'+esc(x.ref)+'" value="'+esc(v)+'" style="width:80px" aria-label="本次申請 '+esc(x.name)+'"></td></tr>'; }).join("")
+      :'<tr><td colspan="7" class="meta">沒有符合的品項</td></tr>';
+    tb.querySelectorAll("[data-dq]").forEach(function(inp){ inp.oninput=function(){ var n=Number(inp.value); if(n>0) draft.q[inp.dataset.dq]=n; else delete draft.q[inp.dataset.dq]; checkOver(); }; });
+  }
+  function collect(){
+    var items=[];
+    rows.forEach(function(x){ var n=draft.q[x.ref]; if(n>0) items.push({name:x.name,brand:x.brand,model:"",qty:n,unit:x.unit,ref:x.ref,type:x.type,sec:x.sec}); });
+    draft.items.forEach(function(it){ if(String(it.name).trim()) items.push({name:it.name,brand:it.brand,model:it.model,qty:Number(it.qty),unit:it.unit}); });
+    return items;
+  }
+  function overList(items){
+    if(!hasDeal) return [];
+    var map={}; rows.forEach(function(x){ map[x.ref]=x; });
+    var out=[];
+    items.forEach(function(it){
+      if(!it.ref){ out.push({name:it.name,now:it.qty,extra:true}); return; }
+      var x=map[it.ref], before=used[it.ref]||0; if(before+it.qty>x.qty+1e-9) out.push({ref:it.ref,name:x.name,quote:x.qty,before:before,now:it.qty});
+    });
+    return out;
+  }
+  function checkOver(){
+    var box=$("anomalyBox"); if(!box) return;
+    var over=overList(collect()), keep=$("anomalyReason")?$("anomalyReason").value:(draft.reason||"");
+    box.innerHTML=over.length?'<div class="anomaly"><b>異常單：有 '+over.length+' 項超出成交報價單</b>（送出後先由直屬主管簽核，同意後才會到採購）'+overTable(over)
+      +'<label class="meta" style="display:block;margin-top:6px">異常說明（必填）<textarea id="anomalyReason" class="fld" maxlength="500" rows="2" style="width:100%" placeholder="例：業主追加 2F 東側門禁 1 樘，已口頭確認，待補追加單">'+esc(keep)+'</textarea></label></div>':'';
+    if($("anomalyReason")) $("anomalyReason").oninput=function(){ draft.reason=this.value; };
+    $("btnReqSubmit").textContent=over.length?"送出（含異常單，送主管簽核）":"送出申請";
+  }
+  draft.onChange=checkOver;
+  if(hasDeal){ renderDeal(); $("dealQ").oninput=renderDeal; $("dealLeft").onchange=renderDeal; }
+  renderDraft(); checkOver();
   var search=function(){
     var q=$("devQ").value.trim(); if(!q){ toast("請輸入關鍵字"); return; }
     $("devRes").innerHTML='<li class="meta">搜尋中…</li>';
@@ -270,25 +415,32 @@ function bindReqForm(cur,reload){
         return '<li><div class="main"><b>'+esc(d.name)+'</b><span class="meta">'+esc(d.brand)+'｜'+esc(d.model)+'｜'+esc(d.sheet)+(d.price?'｜業務價 '+money(d.price):'')+'</span></div><button class="btn small" data-addev="'+i+'" type="button">加入</button></li>'; }).join("")
         :'<li class="meta">資料庫中找不到，可按「手動新增一列」。</li>';
       $("devRes").querySelectorAll("[data-addev]").forEach(function(b){ b.onclick=function(){ var d=r.devices[+b.dataset.addev];
-        draft.items.push({name:d.name,brand:d.brand,model:d.model,qty:1,unit:"個"}); renderDraft(); toast("已加入「"+d.name+"」"); }; });
+        draft.items.push({name:d.name,brand:d.brand,model:d.model,qty:1,unit:"個"}); renderDraft(); checkOver(); toast("已加入「"+d.name+"」"); }; });
     }).catch(fail);
   };
   $("btnDevQ").onclick=search; $("devQ").onkeydown=function(e){ if(e.key==="Enter"){ e.preventDefault(); search(); } };
-  $("btnAddBlank").onclick=function(){ draft.items.push({name:"",brand:"",model:"",qty:1,unit:"個"}); renderDraft(); };
+  $("btnAddBlank").onclick=function(){ draft.items.push({name:"",brand:"",model:"",qty:1,unit:"個"}); renderDraft(); checkOver(); };
   $("btnReqSubmit").onclick=function(){
-    var items=draft.items.filter(function(it){ return String(it.name).trim(); });
-    if(!items.length){ toast("請至少加入一項品項"); return; }
+    var items=collect();
+    if(!items.length){ toast("請至少填一項本次申請數量"); return; }
     if(items.some(function(it){ return !(Number(it.qty)>0); })){ toast("數量需大於 0"); return; }
-    api("reqCreate",{id:cur.id,items:items.map(function(it){ return {name:it.name,brand:it.brand,model:it.model,qty:Number(it.qty),unit:it.unit}; }),needDate:$("reqNeed").value,note:$("reqNote").value})
-      .then(function(r){ draft={pid:cur.id,items:[]}; toast("已送出領料單 "+r.req.id); reload(); }).catch(fail);
+    if(!$("reqNeed").value){ toast("請填設備需求日期"); $("reqNeed").focus(); return; }
+    var over=overList(items), reason=$("anomalyReason")?$("anomalyReason").value.trim():"";
+    if(over.length&&!reason){ toast("超出報價單數量，請填寫異常說明"); $("anomalyReason").focus(); return; }
+    var btn=$("btnReqSubmit"); btn.disabled=true;
+    api("reqCreate",{id:cur.id,items:items,needDate:$("reqNeed").value,note:$("reqNote").value,anomalyReason:reason})
+      .then(function(r){ draft={pid:cur.id,items:[],q:{}}; toast(r.req.status==="approval"?"已送出 "+r.req.id+"，異常單待直屬主管簽核":"已送出領料單 "+r.req.id); reload(); })
+      .catch(function(e){ btn.disabled=false; if(e.code==="OVER_QTY") toast(e.message); else fail(e); });
   };
 }
 function printReq(q){
-  printHtml("領料單 "+q.id,'<h1>領料單 '+esc(q.id)+'</h1><p class="meta">專案：'+esc(q.pname)+'｜狀態：'+esc(REQ_LABEL[q.status])+'｜需用日期：'+esc(fmt(q.needDate))+'</p>'
-    +'<p class="meta">申請：'+esc(T.userName(q.by))+' '+esc(fmtTime(q.at))+'｜採購：'+esc(q.purchaser?T.userName(q.purchaser)+' '+fmtTime(q.confirmedAt):'—')+'｜倉管：'+esc(q.shipper?T.userName(q.shipper)+' '+fmtTime(q.shippedAt):'—')+'</p>'
+  var anomaly=(q.over&&q.over.length)||q.anomalyReason;
+  printHtml("領料單 "+q.id,'<h1>領料單 '+esc(q.id)+'</h1><p class="meta">專案：'+esc(q.pname)+'｜狀態：'+esc(REQ_LABEL[q.status])+'｜設備需求日期：'+esc(fmt(q.needDate))+'</p>'
+    +'<p class="meta">送出：'+esc(T.userName(q.by))+' '+esc(fmtTime(q.at))+(anomaly?'｜主管簽核：'+esc(q.approver?T.userName(q.approver)+' '+q.approval+' '+fmtTime(q.approvedAt):'—'):'')+'｜採購：'+esc(q.purchaser?T.userName(q.purchaser)+' '+fmtTime(q.confirmedAt):'—')+'｜倉管：'+esc(q.shipper?T.userName(q.shipper)+' '+fmtTime(q.shippedAt):'—')+'</p>'
     +(q.note?'<p>說明：'+esc(q.note)+'</p>':'')
-    +'<table><thead><tr><th>#</th><th>品名</th><th>廠牌</th><th>型號</th><th>數量</th><th>單位</th><th>實發</th></tr></thead><tbody>'+q.items.map(function(it,i){ return '<tr><td>'+(i+1)+'</td><td>'+esc(it.name)+'</td><td>'+esc(it.brand)+'</td><td>'+esc(it.model)+'</td><td>'+esc(it.qty)+'</td><td>'+esc(it.unit)+'</td><td></td></tr>'; }).join("")+'</tbody></table>'
-    +'<div class="sign"><div>申請人（工務）</div><div>採購確認</div><div>倉管出貨</div><div>領料人簽收</div></div>');
+    +'<table><thead><tr><th>#</th><th>類別</th><th>品名</th><th>廠牌</th><th>型號</th><th>數量</th><th>單位</th><th>實發</th></tr></thead><tbody>'+q.items.map(function(it,i){ return '<tr><td>'+(i+1)+'</td><td>'+esc(TYPE_LABEL[it.type]||(it.ref?"":"報價單外"))+'</td><td>'+esc(it.name)+'</td><td>'+esc(it.brand)+'</td><td>'+esc(it.model)+'</td><td>'+esc(it.qty)+'</td><td>'+esc(it.unit)+'</td><td></td></tr>'; }).join("")+'</tbody></table>'
+    +(anomaly?'<h2 style="font-size:16px">異常單</h2><p>異常說明：'+esc(q.anomalyReason)+'</p>'+overTable(q.over)+(q.approvalNote?'<p>主管意見：'+esc(q.approvalNote)+'</p>':''):'')
+    +'<div class="sign"><div>申請人（工務）</div>'+(anomaly?'<div>直屬主管簽核</div>':'')+'<div>採購確認</div><div>倉管出貨</div><div>領料人簽收</div></div>');
 }
 T.views.reqs=function(){ reqsView(null,null); };
 
