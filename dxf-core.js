@@ -226,7 +226,7 @@ function analyze(text, opt) {
 
   /* 1. 數量表 */
   var MULQ = /^(\d+)\s*[xX×*＊]\s*(\d+)\s*[=＝]\s*(\d+)$/;
-  var tables = [], usedD = [];
+  var tables = [], usedD = [], noTableSym = {}, noTableTitles = [];
   function isFloorKey(s) { var f = floorsOf(String(s)); return f.length > 0 && f.every(function (x) { return /^(B|R)?\d+F$|^RF$/.test(x); }); }
   /* 方式一：有「XF 監控設備數量表」標題 */
   T.forEach(function (h) {
@@ -333,7 +333,7 @@ function analyze(text, opt) {
     tables.forEach(function (tb) { var dd = Math.hypot(tb.x - t.x, tb.y - t.y); if (dd < bd) { bd = dd; best = tb; } });
     var sameSheet = best && t.frame >= 0 && best.frame === t.frame;   /* 同一張圖紙上的表（例如「屋突參層至屋頂」共用一張表） */
     t.table = best && bd < t.h * 100 && (!sameFloor || best.needFloor || sameSheet) ? best : null;
-    if (!t.table) { warnings.push("平面圖「" + t.s + "」附近找不到數量表，該圖符號未納入核對"); return; }
+    if (!t.table) { noTableTitles.push(t); return; }
     if (t.table.needFloor) {   /* 表名沒寫樓層 → 用旁邊平面圖的樓層 */
       var fk = cnFloor(t.s), ff = floorsOf(fk);
       if (ff.every(function (f) { return /^(B|R)?\d+F$|^RF$/.test(f); })) { t.table.key = fk; t.table.floors = ff; t.table.needFloor = false; }
@@ -360,7 +360,12 @@ function analyze(text, opt) {
       var sc = dx + 0.5 * Math.max(dy, 0);
       if (sc < bs) { bs = sc; best = t; }
     });
-    if (!best || !best.table) return;
+    if (!best) return;
+    if (!best.table) {   /* 這層沒有數量表：用其他層表上學到的「符號→設備」直接數圖上符號 */
+      var nf = cnFloor(best.s);
+      if (isFloorKey(nf)) { var bucket = noTableSym[nf] = noTableSym[nf] || {}; bucket[s.name] = (bucket[s.name] || 0) + 1; (best.devs = best.devs || []).push(s); }
+      return;
+    }
     (best.devs = best.devs || []).push(s);
     var k = best.table.key; sym[k] = sym[k] || {}; sym[k][s.name] = (sym[k][s.name] || 0) + 1;
   });
@@ -381,6 +386,29 @@ function analyze(text, opt) {
       var n = got[b] || 0;
       if (n !== byBlock[b]) checks.push({ table: tb.key, block: b, names: Object.keys(blockNames[b] || {}), table_qty: byBlock[b], symbols: n });
     });
+  });
+  /* 沒有數量表的樓層：以符號數量列入，並提示 */
+  var countedFloors = {};
+  Object.keys(noTableSym).forEach(function (fk) {
+    var fls = floorsOf(fk), parts = [];
+    Object.keys(noTableSym[fk]).forEach(function (b) {
+      var nm = Object.keys(blockNames[b] || {}); if (nm.length !== 1) return;   /* 同一符號對應多種設備時不猜 */
+      var n = noTableSym[fk][b], name = nm[0];
+      var it = items[name] = items[name] || { name: name, sys: sysOf(name, opt.rules), block: b, total: 0, floors: {} };
+      fls.forEach(function (f) { it.floors[f] = (it.floors[f] || 0) + n; it.total += n; floors[f] = 1; });
+      parts.push(name + " " + n);
+    });
+    countedFloors[fk] = parts;
+  });
+  noTableTitles.forEach(function (t) {
+    var fk = cnFloor(t.s);
+    if (countedFloors[fk] && countedFloors[fk].length) {
+      if (countedFloors[fk].shown) return; countedFloors[fk].shown = 1;
+      warnings.push(fk + "（" + t.s + "）沒有數量表，已改用圖上符號計數：" + countedFloors[fk].join("、") + "。請確認數量是否正確");
+    } else if (!countedFloors[fk] || !countedFloors[fk].shown) {
+      if (countedFloors[fk]) countedFloors[fk].shown = 1;
+      warnings.push("平面圖「" + t.s + "」附近找不到數量表，圖上也沒有可辨識的設備符號");
+    }
   });
   var floorList = Object.keys(floors).sort(function (a, b) { return floorRank(a) - floorRank(b); });
   var list = Object.keys(items).map(function (k) { return items[k]; }).sort(function (a, b) { return a.sys < b.sys ? -1 : a.sys > b.sys ? 1 : b.total - a.total; });
