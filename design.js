@@ -23,6 +23,7 @@ T.views.designTab=function(cur,el){
 };
 
 function render(cur,el){
+  if(!st.dr && (st.params.extraIo||[]).length) st.dr={items:[],floors:[],plans:[],tables:[],fileName:"（尚未分析平面圖，只含單線圖／手動點位）"};
   if(!st.dr){ el.innerHTML='<section class="panel"><h3>設計・編表</h3><p class="meta">請先到「數量・報價」分頁分析圖面（DXF），系統會依各樓層設備數量自動產生 IO 模組表、IP 編表、網路架構、交換器埠數與線材估算。</p></section>'; return; }
   var P=DESIGN.plan(st.dr, Object.assign({}, st.params, {systems: cur.project.systems||[]})), h='';
   h+='<section class="panel"><div class="row" style="flex-wrap:wrap"><h3>設計・編表</h3><span class="meta">依圖面分析（'+esc(st.dr.fileName||"")+'）自動產生，參數可在「參數與點位規則」調整</span></div>'

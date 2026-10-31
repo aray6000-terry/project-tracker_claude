@@ -153,8 +153,9 @@ function filesTab(cur,el){
       var mine=f.by===me().email||cur.myRole==="admin"||cur.myRole==="manager";
       return '<li><div class="main"><b>'+esc(f.name)+'</b><span class="meta">'+sizeTxt(f.size)+'｜'+esc(nodeName(f.node))+(f.caption?'｜'+esc(f.caption):'')+'｜'+esc(T.userName(f.by))+' '+fmtTime(f.at)+'</span></div>'
         +'<button class="btn small" data-dl="'+esc(f.id)+'" type="button">下載</button>'+(edit&&mine?'<button class="btn small danger" data-del="'+esc(f.id)+'" data-name="'+esc(f.name)+'" type="button">刪除</button>':'')+'</li>'; }).join("")+'</ul>':'<p class="meta">尚未上傳圖面。</p>';
-    el.innerHTML=h+'</section><div id="moneyList"></div><div id="subList"></div>';
+    el.innerHTML=h+'</section><div id="sldBox"></div><div id="moneyList"></div><div id="subList"></div>';
     bindFiles(el,cur,function(){ filesTab(cur,el); });
+    if(T.views.sldPanel) T.views.sldPanel(cur,$("sldBox"));
     if(canSeeMoney()) moneyFiles(cur,function(){ filesTab(cur,el); });
     api("files",{id:cur.id,kind:"submittal"}).then(function(r2){
       if(!r2.files.length||!$("subList")) return;

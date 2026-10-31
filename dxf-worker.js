@@ -1,5 +1,5 @@
 /* 在背景執行緒分析 DXF，避免大檔讓畫面卡住 */
-importScripts("xlsx-lite.js", "xls-lite.js", "dxf-core.js");
+importScripts("xlsx-lite.js", "xls-lite.js", "dxf-core.js", "sld-core.js");
 self.onmessage = function (ev) {
   var buf = ev.data.buf, name = String(ev.data.name || "").toLowerCase();
   var send = function (m) { self.postMessage(m); };
@@ -14,6 +14,13 @@ self.onmessage = function (ev) {
   get.then(function (u8) {
     send({ type: "progress", text: "讀取圖面文字（" + (u8.length / 1048576).toFixed(1) + " MB）…" });
     var d = DXF.decode(u8);
+    if (ev.data.mode === "sld") {   /* 單線圖：只需要文字 */
+      send({ type: "progress", text: "讀取單線圖負載表…" });
+      var pz = DXF.parse(d.text, function (p) { send({ type: "progress", text: "解析中 " + Math.round(p * 100) + "%" }); });
+      var sr = SLD.analyze(pz.texts); sr.version = d.version;
+      send({ type: "done", result: sr });
+      return;
+    }
     send({ type: "progress", text: "分析圖塊、數量表與平面圖…" });
     var r = DXF.analyze(d.text, { xls: XLS_LITE, onProgress: function (p) { send({ type: "progress", text: "解析中 " + Math.round(p * 100) + "%" }); } });
     r.version = d.version;
