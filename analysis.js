@@ -216,7 +216,7 @@ function bind(cur,el){
     if(!/\.(dxf|zip)$/i.test(f.name)){ toast("請選擇 .dxf 或 .zip"); return; }
     var msg=$("dxfMsg"); msg.textContent="讀取檔案…"; $("btnDxf").disabled=true;
     f.arrayBuffer().then(function(buf){
-      var w=new Worker("dxf-worker.js?v=2.5.3");
+      var w=new Worker("dxf-worker.js?v=2.5.4");
       w.onmessage=function(ev){
         var m=ev.data;
         if(m.type==="progress"){ msg.textContent=m.text; return; }

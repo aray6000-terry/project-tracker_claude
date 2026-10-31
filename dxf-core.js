@@ -579,25 +579,29 @@ function buildPlans(titles, segs, blockNames, frames) {
     var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     t.devs.forEach(function (s) { x0 = Math.min(x0, s.cx); x1 = Math.max(x1, s.cx); y0 = Math.min(y0, s.cy); y1 = Math.max(y1, s.cy); });
     /* 設備多集中在核心，平面外牆常在設備範圍外：往外找 60%（不超過圖框） */
-    var mx = Math.max((x1 - x0) * 0.6, t.h * 15), my = Math.max((y1 - y0) * 0.6, t.h * 15);
+    var mx = Math.max((x1 - x0) * 1.2, t.h * 25), my = Math.max((y1 - y0) * 1.2, t.h * 25);
     var fb = t.frame >= 0 && frames ? frames[t.frame] : null;
     var sx0 = x0 - mx, sx1 = x1 + mx, sy0 = y0 - my, sy1 = y1 + my;
-    if (fb) { sx0 = Math.max(sx0, fb[0]); sy0 = Math.max(sy0, fb[1]); sx1 = Math.min(sx1, fb[2]); sy1 = Math.min(sy1, fb[3]); }
+    if (fb) { var ix = (fb[2] - fb[0]) * 0.03, iy = (fb[3] - fb[1]) * 0.03;   /* 內縮避開圖框邊線 */
+      sx0 = Math.max(sx0, fb[0] + ix); sy0 = Math.max(sy0, fb[1] + iy); sx1 = Math.min(sx1, fb[2] - ix); sy1 = Math.min(sy1, fb[3] - iy); }
     return { t: t, dev: [x0, y0, x1, y1], search: [sx0, sy0, sx1, sy1], list: [] };
   });
   if (!ps.length) return out;
+  function overlap(a, b) { return a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3]; }
   function dist(b, x, y) { var dx = Math.max(b[0] - x, 0, x - b[2]), dy = Math.max(b[1] - y, 0, y - b[3]); return dx * dx + dy * dy; }
   /* 每條線段歸給離它最近的平面（避免同一張圖紙上相鄰平面的線混進來） */
   for (var i = 0; i < segs.length; i++) {
     var g = segs[i];
     if (SKIP_LAYER.test(g[0])) continue;
-    var cx = (g[1] + g[3]) / 2, cy = (g[2] + g[4]) / 2, best = null, bd = Infinity;
+    var cx = (g[1] + g[3]) / 2, cy = (g[2] + g[4]) / 2, best = null, bd = Infinity, cand = [];
     for (var k = 0; k < ps.length; k++) {
       var p = ps[k], b = p.search;
       if (cx < b[0] || cx > b[2] || cy < b[1] || cy > b[3]) continue;
+      cand.push(p);
       var dd = dist(p.dev, cx, cy); if (dd < bd) { bd = dd; best = p; }
     }
-    if (best) best.list.push(g);
+    /* 同一張平面（設備範圍重疊，例如「壹層平面圖」與「壹層中央監控系統平面圖」）共用線條 */
+    if (best) cand.forEach(function (p) { if (p === best || overlap(p.dev, best.dev)) p.list.push(g); });
   }
   ps.forEach(function (p) {
     var t = p.t, x0 = p.dev[0], y0 = p.dev[1], x1 = p.dev[2], y1 = p.dev[3], sb = p.search;
