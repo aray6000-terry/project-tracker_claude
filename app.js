@@ -902,7 +902,15 @@ function route(){
 }
 function renderListFresh(){ loadList(); }
 window.addEventListener("hashchange",route);
-window.TR={views:{}, api:api, esc:esc, toast:toast, fmt:fmt, fmtTime:fmtTime, fail:fail, userName:userName, userLabel:userLabel,
+/** 立即儲存目前專案（回傳 Promise，供其他分頁更新專案欄位後使用） */
+function saveProjectNow(){
+  queueSave(1);
+  return new Promise(function(res,rej){ var t0=Date.now(); (function wait(){
+    if(!saver.dirty&&!saver.busy) return saver.failed?rej(new Error("儲存失敗，請重新整理後再試")):res();
+    if(Date.now()-t0>20000) return rej(new Error("儲存逾時，請稍後再試"));
+    setTimeout(wait,200); })(); });
+}
+window.TR={views:{}, saveProject:saveProjectNow, api:api, esc:esc, toast:toast, fmt:fmt, fmtTime:fmtTime, fail:fail, userName:userName, userLabel:userLabel,
   session:session, data:data, NODES:NODES, SYS_KEYS:SYS_KEYS, sysName:sysName, sysLabel:sysLabel, sysList:sysList, brandOf:brandOf,
   go:go, today:today, getCur:function(){ return cur; }, canEdit:canEdit, ROLE_NAME:ROLE_NAME, sumStat:sumStat, PST_LABEL:PST_LABEL,
   loadUsers:function(){ return data.users.length?Promise.resolve(data):api("list").then(function(d){ data.projects=d.projects||[]; data.users=d.users||[]; return data; }); }};

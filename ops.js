@@ -361,7 +361,11 @@ function bindDealPanel(cur,reload){
       return api("analysisSave",{id:cur.id,kind:"deal",fileName:f.name,data:q})
         .then(function(){ return b64FromFile(f); })
         .then(function(d){ return api("upload",{id:cur.id,kind:"deal",name:f.name,data:d,caption:"成交報價單"}); })
-        .then(function(){ toast("已更新成交報價單"); reload(); });
+        .then(function(){
+          var tot=Math.round((q.total&&q.total.price)||0), cA=Number(cur.project.contractAmount)||0;
+          if(tot>0&&(!cA||(cA!==tot&&confirm("成交報價單總價 "+money(tot)+" 與目前合約總價 "+money(cA)+" 不同，要更新合約總價嗎？"))))
+            return setContractAmount(cur,tot).then(function(){ toast("已更新成交報價單，合約總價帶入 "+money(tot)); reload(); });
+          toast("已更新成交報價單"); reload(); });
     }).catch(function(e){ $("dealMsg").textContent=""; fail(e); });
   };
 }
@@ -489,17 +493,36 @@ T.views.reqs=function(){ reqsView(null,null); };
 /* --- 請款 --- */
 function billsTab(cur,el){
   loading(el);
-  api("bills",{id:cur.id}).then(function(r){
+  var c0=caps();
+  Promise.all([api("bills",{id:cur.id}), c0.billAmounts?api("dealGet",{id:cur.id}).catch(function(){ return {deal:null}; }):Promise.resolve({deal:null})]).then(function(res){
+    var r=res[0], deal=res[1].deal, dealTotal=deal&&!deal.redacted&&deal.total?Math.round(deal.total.price||0):0;
     var c=caps(), list=r.bills, p=r.projects[cur.id]||{}, editTerms=c.billTerms&&T.canEdit();
-    var h='<section class="panel"><h3>請款進度</h3><p class="meta">'+(p.contractAmount!==undefined?'合約總價 '+money(p.contractAmount)+'｜':'')+'付款條件：'+esc(cur.project.payCondition||"未填寫")+'<br>流程：工務回報完工 → 送出請款 → 會計開立發票 → 登錄收款。完工回報後超過 '+r.remindDays+' 天未請款，系統每天早上 8 點寄信提醒工程師與業務。</p>';
+    var editAmt=c.billAmounts&&T.canEdit()&&canUpMoney(cur), cAmt=Number(cur.project.contractAmount)||0;
+    /* 合約總價空白時，自動帶入成交報價單總價（未稅） */
+    if(editAmt&&!cAmt&&dealTotal>0&&!cur.__autoAmt){
+      cur.__autoAmt=true;
+      setContractAmount(cur,dealTotal).then(function(){ toast("已依成交報價單帶入合約總價 "+money(dealTotal)); billsTab(cur,el); }).catch(fail);
+      return;
+    }
+    var h='<section class="panel"><h3>請款進度</h3><p class="meta">'
+      +(c.billAmounts?(editAmt?'合約總價（未稅）<input id="cAmt" class="fld" inputmode="numeric" style="width:140px;margin:0 6px" value="'+(cAmt||"")+'" placeholder="例：3200000"><button class="btn small" id="btnCAmt" type="button">更新</button>':'合約總價 '+money(p.contractAmount))
+        +(dealTotal?'　<span class="hint">成交報價單總價 '+money(dealTotal)+(cAmt&&cAmt!==dealTotal?'，與合約總價不同':'')+'</span>'+(editAmt&&cAmt&&cAmt!==dealTotal?' <button class="btn small" id="btnCAmtDeal" type="button">改用成交報價單總價</button>':''):'')+'<br>':'')
+      +'付款條件：'+esc(cur.project.payCondition||"未填寫")+'<br>流程：工務回報完工 → 送出請款 → 會計開立發票 → 登錄收款。完工回報後超過 '+r.remindDays+' 天未請款，系統每天早上 8 點寄信提醒工程師與業務。</p>';
     h+=list.length?'<div class="tblwrap"><table><thead><tr><th>#</th><th>期別</th><th>比例</th>'+(c.billAmounts?'<th>金額</th>':'')+'<th>觸發結點</th><th>狀態</th><th>紀錄</th><th>操作</th></tr></thead><tbody>'+list.map(function(b){ return billRowHtml(b,c,cur); }).join("")+'</tbody></table></div>'
       :'<p class="meta">尚未設定請款期別。'+(editTerms?'請在下方設定。':'請業務設定付款條件。')+'</p>';
     h+='</section>';
     if(editTerms) h+=termsEditor(list,p);
     el.innerHTML=h;
     bindBillActs(el,function(){ billsTab(cur,el); });
+    var setAmt=function(v){ setContractAmount(cur,v).then(function(){ toast("已更新合約總價 "+money(v)); billsTab(cur,el); }).catch(fail); };
+    if($("btnCAmt")) $("btnCAmt").onclick=function(){ var v=Math.round(Number(String($("cAmt").value).replace(/[,\s$]/g,""))); if(!(v>=0)){ toast("請輸入正確金額"); return; } setAmt(v); };
+    if($("btnCAmtDeal")) $("btnCAmtDeal").onclick=function(){ if(confirm("把合約總價改為成交報價單總價 "+money(dealTotal)+"？各期金額會依比例重新計算（已指定金額的期別不變）。")) setAmt(dealTotal); };
     if(editTerms) bindTermsEditor(cur,list,function(){ billsTab(cur,el); });
   }).catch(function(e){ el.innerHTML='<div class="empty">'+esc(e.message)+'</div>'; });
+}
+function setContractAmount(cur,v){
+  cur.project.contractAmount=v;
+  return T.saveProject?T.saveProject():api("save",{id:cur.id,version:cur.version,project:cur.project}).then(function(r){ cur.version=r.version; });
 }
 function billRowHtml(b,c,cur,showProject){
   var st=b.overdue?chip("overdue","逾期 "+b.daysSinceDone+" 天未請款"):chip(b.status,BILL_LABEL[b.status]);
