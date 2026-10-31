@@ -23,7 +23,7 @@ function cleanMtext(s) {
 function parse(text, onProgress) {
   var lines = text.split(/\r?\n/), n = lines.length;
   var sec = null, blk = null, cur = null, expectSec = false;
-  var blocks = {}, inserts = [], texts = [], oles = [], segs = [], bases = {}, tableIns = [];
+  var blocks = {}, inserts = [], texts = [], oles = [], segs = [], bases = {}, tableIns = [], poly = null;
   function flush() {
     if (!cur) return;
     var e = cur; cur = null;
@@ -34,6 +34,9 @@ function parse(text, onProgress) {
       return;
     }
     if (sec !== "ENTITIES" || e.v["67"] === "1") return;     /* 只看模型空間 */
+    if (e.t === "POLYLINE") { poly = { layer: e.v["8"] || "", closed: (+e.v["70"] || 0) & 1, pts: [] }; return; }
+    if (e.t === "VERTEX") { if (poly) poly.pts.push([+e.v["10"] || 0, +e.v["20"] || 0]); return; }
+    if (e.t === "SEQEND") { if (poly) pushPoly(segs, poly.layer, poly.pts, poly.closed); poly = null; return; }
     if (e.t === "INSERT") inserts.push({ name: e.v["2"] || "", layer: e.v["8"] || "", x: +e.v["10"] || 0, y: +e.v["20"] || 0,
       sx: e.v["41"] ? +e.v["41"] : 1, sy: e.v["42"] ? +e.v["42"] : (e.v["41"] ? +e.v["41"] : 1), rot: +(e.v["50"] || 0) });
     else if (e.t === "LINE") segs.push([e.v["8"] || "", +e.v["10"] || 0, +e.v["20"] || 0, +e.v["11"] || 0, +e.v["21"] || 0]);
@@ -79,7 +82,51 @@ function parse(text, onProgress) {
   }
   flush();
   explodeTexts(blocks, bases, inserts.concat(tableIns), texts);
+  explodeSegs(blocks, bases, inserts, segs);
   return { blocks: blocks, inserts: inserts, texts: texts, oles: oles, segs: segs };
+}
+
+function pushPoly(out, layer, pts, closed) {
+  for (var k = 1; k < pts.length; k++) out.push([layer, pts[k - 1][0], pts[k - 1][1], pts[k][0], pts[k][1]]);
+  if (closed && pts.length > 2) out.push([layer, pts[pts.length - 1][0], pts[pts.length - 1][1], pts[0][0], pts[0][1]]);
+}
+
+/* ---------- 圖塊內的線條（建築平面的牆、柱多半畫在圖塊或外部參考綁定的圖塊裡） ---------- */
+var SEG_CAP = 800000, BLOCK_SEG_CAP = 60000;
+function explodeSegs(blocks, bases, ins, out) {
+  var memo = {};
+  /* 圖塊內的線段，以圖塊基準點為原點；圖層 "0" 的線段沿用插入時的圖層 */
+  function local(name, depth) {
+    if (name in memo) return memo[name];
+    memo[name] = [];
+    var b = bases[name] || [0, 0], list = [], poly = null;
+    (blocks[name] || []).some(function (e) {
+      var L = e.v["8"] || "0";
+      if (e.t === "LINE" && e.pts[0] && e.p2) list.push([L, e.pts[0][0] - b[0], e.pts[0][1] - b[1], e.p2[0] - b[0], e.p2[1] - b[1]]);
+      else if (e.t === "LWPOLYLINE" && e.pts.length > 1) pushPoly(list, L, e.pts.map(function (p) { return [p[0] - b[0], p[1] - b[1]]; }), (+e.v["70"] || 0) & 1);
+      else if (e.t === "POLYLINE") poly = { layer: L, closed: (+e.v["70"] || 0) & 1, pts: [] };
+      else if (e.t === "VERTEX") { if (poly && e.pts[0]) poly.pts.push([e.pts[0][0] - b[0], e.pts[0][1] - b[1]]); }
+      else if (e.t === "SEQEND") { if (poly) pushPoly(list, poly.layer, poly.pts, poly.closed); poly = null; }
+      else if (e.t === "INSERT" && depth < 4 && e.pts[0]) {
+        var s2 = e.v["41"] ? +e.v["41"] : 1, s3 = e.v["42"] ? +e.v["42"] : s2;
+        place(local(e.v["2"] || "", depth + 1), e.pts[0][0] - b[0], e.pts[0][1] - b[1], s2, s3, +(e.v["50"] || 0), L, list);
+      }
+      return list.length > BLOCK_SEG_CAP;
+    });
+    return (memo[name] = list);
+  }
+  function place(src, x, y, sx, sy, rot, layer, dst) {
+    if (!src.length) return;
+    var a = rot * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
+    for (var i = 0; i < src.length; i++) {
+      var g = src[i], ax = g[1] * sx, ay = g[2] * sy, bx = g[3] * sx, by = g[4] * sy;
+      dst.push([g[0] === "0" ? layer : g[0], x + ax * c - ay * sn, y + ax * sn + ay * c, x + bx * c - by * sn, y + bx * sn + by * c]);
+    }
+  }
+  for (var i = 0; i < ins.length && out.length < SEG_CAP; i++) {
+    var s = ins[i];
+    if (blocks[s.name]) place(local(s.name, 0), s.x, s.y, s.sx, s.sy, s.rot, s.layer || "0", out);
+  }
 }
 
 /* ---------- 圖塊內的文字（數量表做成圖塊或 AutoCAD 表格時，文字在圖塊裡） ---------- */
@@ -515,7 +562,7 @@ function analyze(text, opt) {
     seen = seen.filter(function (x, i) { return seen.indexOf(x) === i; }).slice(0, 8);
     warnings.push("圖面中找不到「數量表」。請確認平面圖有附「XF 監控設備數量表」。" + (seen.length ? "（圖上含「數量」的文字：" + seen.join("、") + "）" : "（圖上沒有任何含「數量」的文字，數量表可能是圖片、外部參考或 OLE 物件）"));
   }
-  var plans = opt.noPlans ? [] : buildPlans(titles, d.segs, blockNames);
+  var plans = opt.noPlans ? [] : buildPlans(titles, d.segs, blockNames, frames);
   return {
     tables: tables.map(function (t) { return { key: t.key, floors: t.floors, rows: t.rows.map(function (r) { return { name: r.name, qty: r.qty, raw: r.raw, block: r.block }; }) }; }),
     floors: floorList, items: list, checks: checks, warnings: warnings, embedded: embedded, pendingXlsx: pendingXlsx, plans: plans,
@@ -526,29 +573,54 @@ function analyze(text, opt) {
 
 /* ---------- 平面圖（佈線圖用）：各層簡化線條與設備位置 ---------- */
 var SKIP_LAYER = /TEXT|TXET|DIM|標註|尺寸|HATCH|填充|圖框|傢配|家具|門窗編號|戶編|文字|中心線|軸線|AXIS|DEFPOINTS/i;
-function buildPlans(titles, segs, blockNames) {
+function buildPlans(titles, segs, blockNames, frames) {
   var out = [];
-  titles.forEach(function (t) {
-    if (!t.table || !t.devs || !t.devs.length) return;
+  var ps = titles.filter(function (t) { return t.table && t.devs && t.devs.length; }).map(function (t) {
     var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     t.devs.forEach(function (s) { x0 = Math.min(x0, s.cx); x1 = Math.max(x1, s.cx); y0 = Math.min(y0, s.cy); y1 = Math.max(y1, s.cy); });
-    var mx = Math.max((x1 - x0) * 0.15, t.h * 3), my = Math.max((y1 - y0) * 0.15, t.h * 3);
-    x0 -= mx; x1 += mx; y0 -= my; y1 += my;
-    var q = Math.max(1, Math.round((x1 - x0) / 1500));   /* 座標取整單位，控制資料量 */
-    var inb = function (x, y) { return x >= x0 && x <= x1 && y >= y0 && y <= y1; };
-    var list = [];
-    for (var i = 0; i < segs.length; i++) {
-      var g = segs[i];
-      if (SKIP_LAYER.test(g[0]) || !inb(g[1], g[2]) || !inb(g[3], g[4])) continue;
-      var len = Math.abs(g[3] - g[1]) + Math.abs(g[4] - g[2]);
-      if (len < q * 4) continue;
-      list.push([len, g[1], g[2], g[3], g[4]]);
+    /* 設備多集中在核心，平面外牆常在設備範圍外：往外找 60%（不超過圖框） */
+    var mx = Math.max((x1 - x0) * 0.6, t.h * 15), my = Math.max((y1 - y0) * 0.6, t.h * 15);
+    var fb = t.frame >= 0 && frames ? frames[t.frame] : null;
+    var sx0 = x0 - mx, sx1 = x1 + mx, sy0 = y0 - my, sy1 = y1 + my;
+    if (fb) { sx0 = Math.max(sx0, fb[0]); sy0 = Math.max(sy0, fb[1]); sx1 = Math.min(sx1, fb[2]); sy1 = Math.min(sy1, fb[3]); }
+    return { t: t, dev: [x0, y0, x1, y1], search: [sx0, sy0, sx1, sy1], list: [] };
+  });
+  if (!ps.length) return out;
+  function dist(b, x, y) { var dx = Math.max(b[0] - x, 0, x - b[2]), dy = Math.max(b[1] - y, 0, y - b[3]); return dx * dx + dy * dy; }
+  /* 每條線段歸給離它最近的平面（避免同一張圖紙上相鄰平面的線混進來） */
+  for (var i = 0; i < segs.length; i++) {
+    var g = segs[i];
+    if (SKIP_LAYER.test(g[0])) continue;
+    var cx = (g[1] + g[3]) / 2, cy = (g[2] + g[4]) / 2, best = null, bd = Infinity;
+    for (var k = 0; k < ps.length; k++) {
+      var p = ps[k], b = p.search;
+      if (cx < b[0] || cx > b[2] || cy < b[1] || cy > b[3]) continue;
+      var dd = dist(p.dev, cx, cy); if (dd < bd) { bd = dd; best = p; }
     }
+    if (best) best.list.push(g);
+  }
+  ps.forEach(function (p) {
+    var t = p.t, x0 = p.dev[0], y0 = p.dev[1], x1 = p.dev[2], y1 = p.dev[3], sb = p.search;
+    var clip = function (v, a, b) { return Math.max(a, Math.min(b, v)); };
+    p.list.forEach(function (g) {
+      for (var e = 1; e <= 3; e += 2) {
+        var x = clip(g[e], sb[0], sb[2]), y = clip(g[e + 1], sb[1], sb[3]);
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+    });
+    var pad = Math.max(x1 - x0, y1 - y0) * 0.03;
+    x0 -= pad; x1 += pad; y0 -= pad; y1 += pad;
+    var q = Math.max(1, Math.round((x1 - x0) / 2000));   /* 座標取整單位，控制資料量 */
+    var list = [];
+    p.list.forEach(function (g) {
+      var len = Math.abs(g[3] - g[1]) + Math.abs(g[4] - g[2]);
+      if (len >= q * 3) list.push([len, g[1], g[2], g[3], g[4]]);
+    });
     list.sort(function (a, b) { return b[0] - a[0]; });
-    list = list.slice(0, 2500);
+    list = list.slice(0, 4000);
     var r = function (v) { return Math.round(v / q) * q; };
     out.push({ title: t.s, table: t.table.key, floors: t.table.floors, box: [r(x0), r(y0), r(x1), r(y1)],
-      segs: list.map(function (g) { return [r(g[1]), r(g[2]), r(g[3]), r(g[4])]; }),
+      segs: list.map(function (g) { return [r(g[1]), r(g[2]), r(g[3]), r(g[4])]; }).filter(function (g) { return g[0] !== g[2] || g[1] !== g[3]; }),
       devs: t.devs.map(function (s) { return { n: Object.keys(blockNames[s.name] || {}).join("／"), x: r(s.cx), y: r(s.cy) }; }) });
   });
   return out;
