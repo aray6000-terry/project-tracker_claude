@@ -14,6 +14,10 @@ function csv(name, rows){
   setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },1000);
 }
 function svgEsc(s){ return esc(s); }
+/** 遮罩：前綴長度 → 完整點分格式（24 → 255.255.255.0） */
+function maskOf(pfx){ pfx=+pfx; if(!(pfx>=0&&pfx<=32)) return ""; var m=pfx?(0xffffffff<<(32-pfx))>>>0:0; return [m>>>24,(m>>>16)&255,(m>>>8)&255,m&255].join("."); }
+function ipRange(cidr){ var m=/^(\d+)\.(\d+)\.(\d+)\.(\d+)\/(\d+)$/.exec(cidr||""); if(!m) return ""; var n=((+m[1]<<24)>>>0)+(+m[2]<<16)+(+m[3]<<8)+(+m[4]), p=+m[5], size=Math.pow(2,32-p), net=Math.floor(n/size)*size;
+  var ip=function(v){ return [Math.floor(v/16777216)%256,Math.floor(v/65536)%256,Math.floor(v/256)%256,v%256].join("."); }; return {first:ip(net+1),last:ip(net+size-2),bc:ip(net+size-1)}; }
 /* ---------- 圖面匯出（SVG／PNG）：把畫面樣式寫進 SVG，固定用淺色主題 ---------- */
 var EXP_PROPS=["fill","fill-opacity","stroke","stroke-width","stroke-opacity","stroke-dasharray","stroke-linecap","stroke-linejoin","opacity","font-size","font-weight","font-family","text-anchor","dominant-baseline"];
 function exportSvgText(svg){
@@ -42,11 +46,12 @@ function saveBlob(blob,name){
   var a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click();
   setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },1500);
 }
-function exportSvg(svg,name,fmt){
+function exportSvg(svg,name,fmt,opt){
   if(!svg){ toast("找不到圖面"); return; }
   var x=exportSvgText(svg), fname=name.replace(/[\\/:*?"<>|]/g,"_");
   if(fmt==="svg"){ saveBlob(new Blob([x.text],{type:"image/svg+xml;charset=utf-8"}),fname+".svg"); return; }
-  var scale=Math.max(1,Math.min(4,3000/x.w)), url=URL.createObjectURL(new Blob([x.text],{type:"image/svg+xml;charset=utf-8"})), img=new Image();
+  var scale=Math.max(1,Math.min(4,3000/x.w)); if(opt&&opt.maxPx) scale=Math.min(scale,opt.maxPx/x.h);   /* 瀏覽器畫布高度上限約 32000px */
+  var url=URL.createObjectURL(new Blob([x.text],{type:"image/svg+xml;charset=utf-8"})), img=new Image();
   img.onload=function(){
     var c=document.createElement("canvas"); c.width=Math.round(x.w*scale); c.height=Math.round(x.h*scale);
     var ctx=c.getContext("2d"); ctx.fillStyle="#fff"; ctx.fillRect(0,0,c.width,c.height); ctx.drawImage(img,0,0,c.width,c.height);
@@ -55,6 +60,28 @@ function exportSvg(svg,name,fmt){
   };
   img.onerror=function(){ URL.revokeObjectURL(url); toast("PNG 產生失敗，請改用 SVG"); };
   img.src=url;
+}
+/** 全樓層設備配置配線圖合併：PNG／SVG 為一張長圖，PDF 用瀏覽器列印（每層一頁） */
+function exportAllWire(P,name,fmt){
+  var floors=P.net.floors, parts=floors.map(function(f){ return {f:f,x:wireSvg(P,f)}; });
+  if(fmt==="pdf"){
+    var box=document.createElement("div"); box.id="printAll";
+    box.innerHTML='<h2 class="print-title">'+esc(name)+' 設備配置配線圖（全樓層）</h2>'+parts.map(function(p){ return '<div class="print-page"><svg class="netsvg" viewBox="0 0 '+p.x.W+' '+p.x.H+'">'+p.x.g+'</svg></div>'; }).join("");
+    document.body.appendChild(box); document.body.classList.add("printing");
+    var root=document.documentElement, prev=root.getAttribute("data-theme"); root.setAttribute("data-theme","light");
+    var done=function(){ window.removeEventListener("afterprint",done); document.body.classList.remove("printing"); box.remove(); if(prev===null) root.removeAttribute("data-theme"); else root.setAttribute("data-theme",prev); };
+    window.addEventListener("afterprint",done);
+    setTimeout(function(){ window.print(); setTimeout(function(){ if(document.getElementById("printAll")) done(); },1000); },50);
+    toast("在列印視窗的「目的地」選「另存為 PDF」");
+    return;
+  }
+  var W=980, gap=24, y=0, inner='';
+  parts.forEach(function(p,i){ if(i) inner+='<line x1="0" y1="'+(y-gap/2)+'" x2="'+W+'" y2="'+(y-gap/2)+'" class="ln-f"/>'; inner+='<g transform="translate(0,'+y+')">'+p.x.g+'</g>'; y+=p.x.H+gap; });
+  var H=y-gap, holder=document.createElement("div");
+  holder.style.cssText="position:absolute;left:-99999px;top:0;width:980px";
+  holder.innerHTML='<svg class="netsvg" viewBox="0 0 '+W+' '+H+'">'+inner+'</svg>';
+  document.body.appendChild(holder);
+  try{ exportSvg(holder.firstChild,name+"_設備配置配線圖_全樓層",fmt,{maxPx:30000}); } finally { holder.remove(); }
 }
 function expBtns(){ return '<button class="btn small" data-exp="png" type="button">匯出 PNG</button><button class="btn small" data-exp="svg" type="button">匯出 SVG</button>'; }
 /** 單線圖分析：盤名 → 樓層（IO 點數表位置欄寫盤名時用來判斷樓層） */
@@ -125,8 +152,8 @@ function netView(P){
   return '<div class="row" style="flex-wrap:wrap"><h3>網路架構</h3><div class="tools">'+expBtns()+'</div></div><p class="meta">建議：核心交換器設在 '+esc(n.core.floor)+' 機房（L3，負責各 VLAN 路由與存取控制）；每 '+P.params.distGroup+' 層設一台匯聚交換器（光纖上連）；每層設接取交換器'+(P.params.separateCctv?'，影像監視另設獨立 PoE 交換器（頻寬大、與其他系統實體分離）':'')+'。</p>'
     +'<div class="netwrap">'+g+'</div>'
     +'<div class="legend"><span class="lg acc"></span>整合接取交換器（對講／門禁／中央監控／其他，分 VLAN）<span class="lg cam"></span>影像監視 PoE 交換器<span class="lg dist"></span>匯聚<span class="lg core"></span>核心</div>'
-    +'<h4 style="margin:14px 0 6px">VLAN／網段規劃</h4><div class="tblwrap"><table><thead><tr><th>VLAN</th><th>用途</th><th>網段</th><th>閘道</th><th>設備數</th><th>可用位址</th></tr></thead><tbody>'
-    +subs.map(function(s){ return '<tr><td>'+s.vlan+'</td><td>'+esc(s.name)+'</td><td class="mono">'+esc(s.cidr)+'</td><td class="mono">'+esc(s.gateway)+'</td><td>'+s.hosts+'</td><td>'+s.capacity+'</td></tr>'; }).join("")+'</tbody></table></div>'
+    +'<h4 style="margin:14px 0 6px">VLAN／網段規劃</h4><div class="tblwrap"><table><thead><tr><th>VLAN</th><th>用途</th><th>網段</th><th>子網路遮罩</th><th>預設閘道</th><th>可用範圍</th><th>廣播位址</th><th>設備數</th><th>可用位址</th></tr></thead><tbody>'
+    +subs.map(function(s){ var p=String(s.cidr).split('/')[1], rg=ipRange(s.cidr)||{}; return '<tr><td>'+s.vlan+'</td><td>'+esc(s.name)+'</td><td class="mono">'+esc(s.cidr)+'</td><td class="mono">'+maskOf(p)+'</td><td class="mono">'+esc(s.gateway)+'</td><td class="mono">'+esc((rg.first||'')+' ～ '+(rg.last||''))+'</td><td class="mono">'+esc(rg.bc||'')+'</td><td>'+s.hosts+'</td><td>'+s.capacity+'</td></tr>'; }).join("")+'</tbody></table></div>'
     +'<div class="tipbox"><b>資安建議</b><br>1. 各系統分 VLAN，核心交換器設 ACL：預設禁止 VLAN 互通，只允許管理電腦與整合主機（中央監控、對講伺服器）存取必要網段與埠號。<br>2. 交換器管理介面只在 VLAN 10，關閉 Telnet／HTTP，改用 SSH／HTTPS，並更改預設密碼。<br>3. 未使用的交換器埠關閉，接取埠可啟用 Port Security（限制 MAC 數）。<br>4. 戶外與公共區設備（攝影機、緊急對講）的埠啟用 802.1X 或 MAC 綁定，避免被拔線接入。<br>5. 需要遠端維護時走 VPN，不直接把設備開到網際網路。</div>';
 }
 
@@ -200,7 +227,7 @@ function ipView(P){
     +'<p class="meta">每個 VLAN：.1 為閘道（核心交換器）、.2～.19 給交換器與主機、.20 起依樓層由下往上配給設備；網段預留 '+Math.round(P.params.growth*100)+'% 成長空間。設備名稱格式：代號-樓層-序號（CAM 攝影機、IDU 室內機、ODU 門口機、ACR 讀卡機、IO 模組、SW 交換器…）。</p>'
     +'<div class="filters"><select id="ipVlan"><option value="all">全部 VLAN</option>'+vl.map(function(s){ return '<option value="'+s.vlan+'"'+(String(s.vlan)===f?" selected":"")+'>VLAN '+s.vlan+' '+esc(s.name)+'（'+s.hosts+'）</option>'; }).join("")+'</select></div>'
     +'<div class="tblwrap"><table><thead><tr><th>VLAN</th><th>IP</th><th>遮罩</th><th>閘道</th><th>設備名稱</th><th>樓層</th><th>設備</th></tr></thead><tbody>'
-    +shown.slice(0,600).map(function(r){ return '<tr><td>'+r.vlan+'</td><td class="mono">'+esc(r.ip)+'</td><td>/'+r.mask+'</td><td class="mono">'+esc(r.gw)+'</td><td class="mono">'+esc(r.name)+'</td><td>'+esc(r.floor)+'</td><td>'+esc(r.device)+'</td></tr>'; }).join("")+'</tbody></table></div>';
+    +shown.slice(0,600).map(function(r){ return '<tr><td>'+r.vlan+'</td><td class="mono">'+esc(r.ip)+'</td><td class="mono">'+maskOf(r.mask)+' <span class="hint">/'+r.mask+'</span></td><td class="mono">'+esc(r.gw)+'</td><td class="mono">'+esc(r.name)+'</td><td>'+esc(r.floor)+'</td><td>'+esc(r.device)+'</td></tr>'; }).join("")+'</tbody></table></div>';
 }
 
 /* ---------- 交換器 ---------- */
@@ -259,6 +286,13 @@ function routeView(P){
 /* ---------- 配線圖（各樓層） ---------- */
 function wireView(P){
   var floors=P.net.floors, sel=st.floor&&floors.indexOf(st.floor)>=0?st.floor:floors[0];
+  var x=wireSvg(P,sel), g='<svg class="netsvg" viewBox="0 0 '+x.W+' '+x.H+'" role="img" aria-label="'+esc(sel)+' 設備配置配線圖">'+x.g+'</svg>';
+  return '<div class="row" style="flex-wrap:wrap"><h3>設備配置配線圖</h3><div class="tools"><select id="wireFloor">'+floors.map(function(f){ return '<option'+(f===sel?" selected":"")+'>'+esc(f)+'</option>'; }).join("")+'</select>'+expBtns()+'</div></div>'
+    +'<div class="tools" style="margin:6px 0"><span class="meta">全樓層合併（'+floors.length+' 層）：</span><button class="btn small" data-expall="pdf" type="button">列印／存成 PDF（每層一頁）</button><button class="btn small" data-expall="png" type="button">合併 PNG</button><button class="btn small" data-expall="svg" type="button">合併 SVG</button></div>'
+    +'<p class="meta">依該樓層設備數量，標示每類設備接到哪一台交換器或監控箱，以及使用的線材。單線圖範本提供後，會再加上管路與配線路徑。</p><div class="netwrap">'+g+'</div>';
+}
+/** 單一樓層的設備配置配線圖內容（不含外層 svg 標籤） */
+function wireSvg(P,sel){
   var items=(st.dr.items||[]).filter(function(it){ return it.floors[sel]; });
   var sws=P.net.access.filter(function(a){ return a.floor===sel; }), panel=P.io.panels.filter(function(p){ return p.floor===sel; })[0];
   var ipNames={}; P.ip.rows.forEach(function(r){ if(r.floor===sel) ipNames[r.device]=1; });
@@ -273,7 +307,7 @@ function wireView(P){
     else { to="other"; cable="依原廠規定"; }
     return {name:it.name,n:it.floors[sel],to:to,cable:cable};
   }).sort(function(a,b){ return ORDER[a.to]-ORDER[b.to]; });
-  var W=980, rh=30, top=70, H=top+rows.length*rh+20, g='<svg class="netsvg" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+esc(sel)+' 設備配置配線圖">';
+  var W=980, rh=30, top=70, H=top+Math.max(rows.length,1)*rh+20, g='';
   g+='<text x="10" y="24" class="t-h">'+svgEsc(sel)+' 設備配置配線圖</text>';
   var LABEL={sw:(sws.filter(function(a){return a.group!=="cctv";}).map(function(a){return a.id;}).join(" ")||"樓層交換器"),
     cam:(sws.filter(function(a){return a.group==="cctv";}).map(function(a){return a.id;}).join(" ")||"攝影 PoE 交換器"),
@@ -288,9 +322,8 @@ function wireView(P){
   });
   rows.forEach(function(r,i){ var y=top+i*rh;
     g+='<text x="450" y="'+(y+5)+'" class="t-b">'+svgEsc(r.name)+' ×'+r.n+'</text><text x="760" y="'+(y+5)+'" class="t-s">'+svgEsc(r.cable)+(r.to==="box"?"":" ×"+r.n)+'</text>'; });
-  g+='</svg>';
-  return '<div class="row" style="flex-wrap:wrap"><h3>設備配置配線圖</h3><div class="tools"><select id="wireFloor">'+floors.map(function(f){ return '<option'+(f===sel?" selected":"")+'>'+esc(f)+'</option>'; }).join("")+'</select>'+expBtns()+'</div></div>'
-    +'<p class="meta">依該樓層設備數量，標示每類設備接到哪一台交換器或監控箱，以及使用的線材。單線圖範本提供後，會再加上管路與配線路徑。</p><div class="netwrap">'+g+'</div>';
+  if(!rows.length) g+='<text x="10" y="'+(top+5)+'" class="t-s">這一層沒有設備</text>';
+  return {g:g,W:W,H:H};
 }
 
 /* ---------- 參數與點位規則 ---------- */
@@ -329,6 +362,7 @@ function bind(P,cur,el){
   if($("wireFloor")) $("wireFloor").onchange=function(){ st.floor=this.value; re(); };
   if($("ipVlan")) $("ipVlan").onchange=function(){ st.ipf=this.value; re(); };
   var name=(cur.project.name||"專案");
+  el.querySelectorAll("[data-expall]").forEach(function(b){ b.onclick=function(){ exportAllWire(P,name,b.dataset.expall); }; });
   el.querySelectorAll("[data-exp]").forEach(function(b){ b.onclick=function(){
     var svg=el.querySelector("#dsBody svg.netsvg"), lbl={net:"網路架構",wire:"設備配置配線圖_"+(st.floor&&P.net.floors.indexOf(st.floor)>=0?st.floor:P.net.floors[0]),route:"佈線圖_"+((P.wiring.plans[Math.min(st.plan||0,P.wiring.plans.length-1)]||{}).title||"")}[st.sub]||"圖";
     exportSvg(svg,name+"_"+lbl,b.dataset.exp); }; });
@@ -350,8 +384,8 @@ function bind(P,cur,el){
     var np=Object.assign({},st.params,{ioFloor:m});
     api("analysisSave",{id:cur.id,kind:"design",data:np}).then(function(){ st.params=np; toast("「"+sel.dataset.iofl+"」接到 "+(sel.value||"自動判斷")); re(); }).catch(fail);
   }; });
-  if($("csvIo")) $("csvIo").onclick=function(){ var rows=[["樓層","監控箱","模組","型號","模組IP","遮罩","閘道","端子","點位編號","設備","點位內容","位置","說明"]]; P.io.panels.forEach(function(p){ var mm={}; p.modules.forEach(function(m){ mm[m.id]=m; }); p.rows.forEach(function(r){ var m=mm[r.mod]||{}; rows.push([p.floor,p.panel,r.mod||r.module,r.type||"",r.ip||"",m.mask?"/"+m.mask:"",m.gw||"",r.ch,r.tag,r.dev||r.name,r.point||"",r.loc||"",r.note||""]); }); }); csv(name+"_IO接線編表.csv",rows); };
-  if($("csvIp")) $("csvIp").onclick=function(){ csv(name+"_IP編表.csv",[["VLAN","用途","IP","遮罩","閘道","設備名稱","樓層","設備"]].concat(P.ip.rows.map(function(r){ return [r.vlan,r.sys,r.ip,"/"+r.mask,r.gw,r.name,r.floor,r.device]; }))); };
+  if($("csvIo")) $("csvIo").onclick=function(){ var rows=[["樓層","監控箱","模組","型號","模組IP","遮罩","閘道","端子","點位編號","設備","點位內容","位置","說明"]]; P.io.panels.forEach(function(p){ var mm={}; p.modules.forEach(function(m){ mm[m.id]=m; }); p.rows.forEach(function(r){ var m=mm[r.mod]||{}; rows.push([p.floor,p.panel,r.mod||r.module,r.type||"",r.ip||"",m.mask?maskOf(m.mask):"",m.gw||"",r.ch,r.tag,r.dev||r.name,r.point||"",r.loc||"",r.note||""]); }); }); csv(name+"_IO接線編表.csv",rows); };
+  if($("csvIp")) $("csvIp").onclick=function(){ csv(name+"_IP編表.csv",[["VLAN","用途","IP","遮罩","閘道","設備名稱","樓層","設備"]].concat(P.ip.rows.map(function(r){ return [r.vlan,r.sys,r.ip,maskOf(r.mask),r.gw,r.name,r.floor,r.device]; }))); };
   if($("csvSw")) $("csvSw").onclick=function(){ csv(name+"_交換器.csv",[["層級","樓層","編號","埠數","使用","PoE(W)","上連"]].concat(P.net.access.map(function(a){ var d=P.net.dist.filter(function(d){ return d.floors.indexOf(a.floor)>=0; })[0]; return ["接取",a.floor,a.id,a.ports,a.used,a.poe?a.poeW:"",d?d.id:""]; }),P.net.dist.map(function(d){ return ["匯聚",d.at,d.id,d.ports,d.downlinks,"",P.net.core.id]; }),[["核心",P.net.core.floor,P.net.core.id,P.net.core.ports,"","",""]])); };
   if($("routePlan")) $("routePlan").onchange=function(){ st.plan=+this.value; re(); };
   el.querySelectorAll("[data-wc]").forEach(function(c){ c.onchange=function(){ st.wc=st.wc||{}; st.wc[c.dataset.wc]=c.checked; re(); }; });
