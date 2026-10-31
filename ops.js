@@ -31,6 +31,44 @@ function printHtml(title,body){
     +'.meta{color:#444;font-size:13px}</style></head><body>'+body+'</body></html>');
   w.document.close(); setTimeout(function(){ w.focus(); w.print(); },300);
 }
+/** 大型文字圖檔（DXF 等）在瀏覽器內壓成 ZIP（DXF 通常可縮到 1/8～1/10），邊讀邊壓，不佔大量記憶體 */
+var CRC_TABLE=(function(){ var t=new Uint32Array(256); for(var n=0;n<256;n++){ var c=n; for(var k=0;k<8;k++) c=c&1?0xEDB88320^(c>>>1):c>>>1; t[n]=c>>>0; } return t; })();
+function zipFile(file,onProgress){
+  if(typeof CompressionStream==="undefined"||!file.stream) return Promise.reject(new Error("此瀏覽器無法自動壓縮，請先把檔案壓成 ZIP 再上傳"));
+  var crc=0xFFFFFFFF, read=0, total=file.size||1;
+  var tap=new TransformStream({transform:function(chunk,ctl){
+    for(var i=0,n=chunk.length;i<n;i++) crc=CRC_TABLE[(crc^chunk[i])&0xFF]^(crc>>>8);
+    read+=chunk.length; if(onProgress) onProgress(read/total); ctl.enqueue(chunk);
+  }});
+  return new Response(file.stream().pipeThrough(tap).pipeThrough(new CompressionStream("deflate-raw"))).blob().then(function(body){
+    crc=(crc^0xFFFFFFFF)>>>0;
+    var name=new TextEncoder().encode(file.name), d=new Date(file.lastModified||Date.now());
+    var dt=((d.getHours()<<11)|(d.getMinutes()<<5)|(d.getSeconds()>>1))&0xFFFF, dd=(((d.getFullYear()-1980)<<9)|((d.getMonth()+1)<<5)|d.getDate())&0xFFFF;
+    function hdr(central){
+      var b=new DataView(new ArrayBuffer(central?46:30)), o=0;
+      function u16(v){ b.setUint16(o,v,true); o+=2; } function u32(v){ b.setUint32(o,v>>>0,true); o+=4; }
+      u32(central?0x02014b50:0x04034b50); if(central) u16(20); u16(20); u16(0x0800); u16(8); u16(dt); u16(dd);
+      u32(crc); u32(body.size); u32(file.size); u16(name.length); u16(0);
+      if(central){ u16(0); u16(0); u16(0); u32(0); u32(0); }
+      return b.buffer;
+    }
+    var local=hdr(false), cen=hdr(true), cenOff=local.byteLength+name.length+body.size;
+    var end=new DataView(new ArrayBuffer(22));
+    end.setUint32(0,0x06054b50,true); end.setUint16(8,1,true); end.setUint16(10,1,true);
+    end.setUint32(12,cen.byteLength+name.length,true); end.setUint32(16,cenOff,true);
+    return new File([local,name,body,cen,name,end.buffer],file.name+".zip",{type:"application/zip"});
+  });
+}
+var MAX_UP=25*1024*1024;
+/** 超過 25MB 的 DXF／文字檔自動壓成 ZIP；壓縮後仍超過才擋下 */
+function fitUpload(f,msg){
+  if(f.size<=MAX_UP) return Promise.resolve(f);
+  if(!/\.(dxf|txt|csv)$/i.test(f.name)) return Promise.reject(new Error("「"+f.name+"」超過 25MB"));
+  return zipFile(f,function(p){ if(msg) msg.textContent="壓縮「"+f.name+"」中… "+Math.round(p*100)+"%"; }).then(function(z){
+    if(z.size>MAX_UP) throw new Error("「"+f.name+"」壓縮後仍有 "+(z.size/1048576).toFixed(1)+"MB，超過 25MB");
+    return z;
+  });
+}
 function b64FromFile(file){
   return new Promise(function(res,rej){ var r=new FileReader(); r.onload=function(){ res(String(r.result).split(",")[1]||""); }; r.onerror=rej; r.readAsDataURL(file); });
 }
@@ -147,7 +185,7 @@ function filesTab(cur,el){
   loading(el);
   api("files",{id:cur.id,kind:"drawing"}).then(function(r){
     var edit=T.canEdit();
-    var h='<section class="panel"><h3>圖面檔案</h3><p class="meta">檔案存放在公司雲端「平台資料」的專案資料夾（圖面），只有可看到此專案的人能下載。支援 DWF、DXF、DWG、ZIP、PDF、圖片、Excel，單檔 25MB 以內（大型 DXF 請先壓縮成 ZIP）。<br>要自動計算各樓層設備數量，請到「數量・報價」分頁分析 <b>DXF</b>。</p>';
+    var h='<section class="panel"><h3>圖面檔案</h3><p class="meta">檔案存放在公司雲端「平台資料」的專案資料夾（圖面），只有可看到此專案的人能下載。支援 DWF、DXF、DWG、ZIP、PDF、圖片、Excel，單檔 25MB 以內；超過 25MB 的 DXF 會自動壓縮成 ZIP 再上傳（通常可縮到原本的 1/10）。<br>要自動計算各樓層設備數量，請到「數量・報價」分頁分析 <b>DXF</b>。</p>';
     if(edit) h+='<div class="uprow"><select id="upNode" class="fld" aria-label="對應結點">'+nodeOptions(-1,true)+'</select><input type="text" id="upCap" class="fld" maxlength="200" placeholder="說明（例：3F 弱電平面圖 R2）"><input type="file" id="upFile" multiple accept=".dwf,.dwfx,.dxf,.dwg,.zip,.pdf,.jpg,.jpeg,.png,.xlsx,.xls"><button class="btn primary small" id="btnUp" type="button">上傳</button></div><p class="hint" id="upMsg"></p>';
     h+=r.files.length?'<ul class="list">'+r.files.map(function(f){
       var mine=f.by===me().email||cur.myRole==="admin"||cur.myRole==="manager";
@@ -194,14 +232,17 @@ function bindFiles(el,cur,reload){
 function uploadFiles(cur,kind,files,opt,done){
   files=Array.prototype.slice.call(files||[]);
   if(!files.length){ toast("請先選擇檔案"); return; }
-  var big=files.filter(function(f){ return kind!=="photo" && f.size>25*1024*1024; });
+  var big=files.filter(function(f){ return kind!=="photo" && f.size>MAX_UP && !/\.(dxf|txt|csv)$/i.test(f.name); });
   if(big.length){ toast("「"+big[0].name+"」超過 25MB"); return; }
   var i=0, ok=0, msg=$("upMsg");
   (function next(){
     if(i>=files.length){ toast("已上傳 "+ok+" 個檔案"); done(); return; }
-    var f=files[i++]; if(msg) msg.textContent="上傳中 "+i+" / "+files.length+"：「"+f.name+"」…";
+    var f=files[i++], n=i; if(msg) msg.textContent="上傳中 "+n+" / "+files.length+"：「"+f.name+"」…";
     var prep = kind==="photo" ? shrinkImage(f).then(function(x){ return {data:x.data,thumb:x.thumb,name:f.name.replace(/\.[^.]+$/,"")+".jpg"}; })
-                              : b64FromFile(f).then(function(d){ return {data:d,name:f.name}; });
+                              : fitUpload(f,msg).then(function(g){
+                                  if(msg) msg.textContent="上傳中 "+n+" / "+files.length+"：「"+g.name+"」"+(g!==f?"（已壓縮為 "+(g.size/1048576).toFixed(1)+"MB）":"")+"…";
+                                  return b64FromFile(g).then(function(d){ return {data:d,name:g.name}; });
+                                });
     prep.then(function(x){
       return api("upload",{id:cur.id,kind:kind,name:x.name,data:x.data,thumb:x.thumb||"",node:opt.node,caption:opt.caption||"",issueId:opt.issueId||""});
     }).then(function(){ ok++; next(); }).catch(function(e){ fail(e); next(); });
