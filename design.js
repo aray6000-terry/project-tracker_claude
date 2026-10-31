@@ -14,18 +14,22 @@ function csv(name, rows){
   setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },1000);
 }
 function svgEsc(s){ return esc(s); }
+/** 單線圖分析：盤名 → 樓層（IO 點數表位置欄寫盤名時用來判斷樓層） */
+function sldPanelFloors(d){ var m={}; ((d&&d.panels)||[]).forEach(function(p){ var f=String(p.floor||"").split("~")[0]; if(p.name&&/^(B|R)?\d+F$|^RF$/.test(f)) m[String(p.name).trim().toUpperCase()]=f; }); return m; }
 
 T.views.designTab=function(cur,el){
   if(st.pid!==cur.id) st={pid:cur.id,dr:null,params:{},sub:"net",floor:null};
   el.innerHTML='<div class="loading">讀取中…</div>';
-  api("analysisGet",{id:cur.id}).then(function(d){ st.dr=d.drawing; st.params=d.design||{}; st.quote=d.quote; st.xio=null; render(cur,el); })
+  api("analysisGet",{id:cur.id}).then(function(d){ st.dr=d.drawing; st.params=d.design||{}; st.quote=d.quote; st.xio=null;
+      return api("analysisOne",{id:cur.id,kind:"sld"}).then(function(r){ st.panelFloors=sldPanelFloors(r&&r.data); },function(){ st.panelFloors={}; });
+    }).then(function(){ render(cur,el); })
     .catch(function(e){ el.innerHTML='<div class="empty">'+esc(e.message)+'</div>'; });
 };
 
 function render(cur,el){
   if(!st.dr && (st.params.extraIo||[]).length) st.dr={items:[],floors:[],plans:[],tables:[],fileName:"（尚未分析平面圖，只含單線圖／手動點位）"};
   if(!st.dr){ el.innerHTML='<section class="panel"><h3>設計・編表</h3><p class="meta">請先到「數量・報價」分頁分析圖面（DXF），系統會依各樓層設備數量自動產生 IO 模組表、IP 編表、網路架構、交換器埠數與線材估算。</p></section>'; return; }
-  var P=DESIGN.plan(st.dr, Object.assign({}, st.params, {systems: cur.project.systems||[]})), h='';
+  var P=DESIGN.plan(st.dr, Object.assign({}, st.params, {systems: cur.project.systems||[], panelFloors: st.panelFloors||{}})), h='';
   h+='<section class="panel"><div class="row" style="flex-wrap:wrap"><h3>設計・編表</h3><span class="meta">依圖面分析（'+esc(st.dr.fileName||"")+'）自動產生，參數可在「參數與點位規則」調整</span></div>'
     +'<nav class="ptabs" style="margin-top:8px">'+SUBS.map(function(s){ return '<button type="button" data-dsub="'+s[0]+'" class="'+(st.sub===s[0]?"on":"")+'">'+s[1]+'</button>'; }).join("")+'</nav></section>';
   h+='<section class="panel" id="dsBody">'+body(P,cur)+'</section>';
@@ -95,19 +99,21 @@ function ioView(P){
   if(tb){
     var tt=tb.totals, qi=quoteIo();
     h+='<p class="meta">'+(tb.source==="embedded"?'<b>來源：圖面內嵌的「大樓自動化 I/O 管理點數表」</b>（設計單位填寫，直接採用）。':'<b>來源：公司範本＋圖面數量</b>。圖面沒有點數表時，依範本每台設備的點數計算；泵浦、風機、電錶、燈光迴路等不在平面圖上的設備，請在下表填數量。')
-      +'<br>點數表中「通訊格式＝數位訊號」或通訊格式沒填的項目走 IO 整合，DI／DO 點配到各樓層監控箱的 IO 模組；TCP／MODBUS 通訊整合的項目屬軟體點，不佔 IO 模組。</p>'
+      +'<br>點數表中「通訊格式＝數位訊號」或通訊格式沒填的項目走 IO 整合，DI／DO 點配到各樓層監控箱的 IO 模組；TCP／MODBUS 通訊整合的項目屬軟體點，不佔 IO 模組；住戶的防盜保全（各戶防盜、住家保全、戶內求救、住戶磁簧）接戶內對講保全主機，屬通訊協定，也不佔 IO 模組。</p>'
       +'<div class="kpis">'+k(tt.di,"數位輸入 DI（點數表）")+k(tt.ai,"類比輸入 AI")+k(tt.do,"數位輸出 DO")+k(tt.comm,"通信協定點")+k(tt.hwDi,"IO 整合實體 DI")+k(tt.hwDo,"IO 整合實體 DO")+k(t.n18,"18DI 模組")+k(t.n10,"10DI8DO 模組")+'</div>';
     if(qi) h+='<div class="tipbox"><b>與估價單比對</b>：估價單「'+esc(qi.name)+'」<br>DI：估價 '+qi.di+'，點數表 '+tt.di+(qi.di!==tt.di?'（<span style="color:var(--bad)">差 '+(qi.di-tt.di)+'</span>，DI＋AI＝'+(tt.di+tt.ai)+'）':' ✓')
       +(qi.do!==null?'｜DO：估價 '+qi.do+'，點數表 '+tt.do+(qi.do!==tt.do?'（<span style="color:var(--bad)">差 '+(qi.do-tt.do)+'</span>）':' ✓'):'')
       +(qi.comm!==null?'｜通訊協定：估價 '+qi.comm+'，點數表 '+tt.comm+(qi.comm!==tt.comm?'（<span style="color:var(--bad)">差 '+(qi.comm-tt.comm)+'</span>）':' ✓'):'')+'</div>';
+    var need=[]; tb.sections.forEach(function(sec){ sec.rows.forEach(function(r){ if(r.at&&/推定|中央監控室/.test(r.at.by)&&!(P.params.ioFloor||{})[r.fkey]) need.push(r); }); });
+    if(need.length) h+='<div class="tipbox" style="border-color:var(--warn,#b7791f)"><b>有 '+need.length+' 項判斷不出樓層，請確認</b>（在下表「接到監控箱」欄選樓層，改完會自動重算模組、IP 與網路架構）：<br>'+need.map(function(r){ return esc(r.name)+(r.loc?'（'+esc(r.loc)+'）':'')+'→'+esc(r.at.floors.join("、"))+'（'+esc(r.at.by.replace(/^推定（|）$/g,""))+'）'; }).join("；")+'</div>';
     var tmpl=tb.source==="template"&&edit;
-    h+='<div class="tblwrap"><table class="qty iot"><thead><tr><th>項目</th><th>設備名稱</th><th>位置</th><th>通訊格式</th><th>數量</th><th>DI</th><th>AI</th><th>DO</th><th>通信</th><th>點位內容</th></tr></thead><tbody>';
+    h+='<div class="tblwrap"><table class="qty iot"><thead><tr><th>項目</th><th>設備名稱</th><th>位置</th><th>通訊格式</th><th>數量</th><th>DI</th><th>AI</th><th>DO</th><th>通信</th><th>接到監控箱</th><th>點位內容</th></tr></thead><tbody>';
     tb.sections.forEach(function(sec){
-      h+='<tr class="grp"><td>'+esc(sec.no)+'</td><td colspan="9"><b>'+esc(sec.name)+'</b></td></tr>';
+      h+='<tr class="grp"><td>'+esc(sec.no)+'</td><td colspan="10"><b>'+esc(sec.name)+'</b></td></tr>';
       sec.rows.forEach(function(r){
         var labels=Object.keys(r.pts).filter(function(k){ return !/@sys$/.test(k); }).map(function(k){ var g=k.split("@"); return g[0]+"×"+r.pts[k]; });
         var qty=tmpl?'<input type="number" min="0" max="999" data-ioq="'+esc(r.name)+'" value="'+(r.qty||0)+'" style="width:64px">'+(r.auto?'<span class="hint">圖面</span>':''):(r.qty||"");
-        h+='<tr'+(r.hw?'':' class="muted"')+'><td>'+esc(r.no)+'</td><td>'+esc(r.name)+(r.merged?'<span class="hint">（已併入上方同類）</span>':'')+'</td><td>'+esc(r.loc)+'</td><td>'+esc(r.format)+(r.hw?'':'（不佔模組）')+'</td><td>'+qty+'</td><td>'+(r.sum.di||"")+'</td><td>'+(r.sum.ai||"")+'</td><td>'+(r.sum.do||"")+'</td><td>'+(r.sum.comm||"")+'</td><td class="hint" style="text-align:left;white-space:normal">'+esc(labels.join("、"))+'</td></tr>';
+        h+='<tr'+(r.hw?'':' class="muted"')+'><td>'+esc(r.no)+'</td><td>'+esc(r.name)+(r.merged?'<span class="hint">（已併入上方同類）</span>':'')+'</td><td>'+esc(r.loc)+'</td><td>'+esc(r.format)+(r.hw?'':(r.unit?'（住戶保全，通訊協定）':'（不佔模組）'))+'</td><td>'+qty+'</td><td>'+(r.sum.di||"")+'</td><td>'+(r.sum.ai||"")+'</td><td>'+(r.sum.do||"")+'</td><td>'+(r.sum.comm||"")+'</td><td style="white-space:nowrap">'+atCell(r,P,edit)+'</td><td class="hint" style="text-align:left;white-space:normal">'+esc(labels.join("、"))+'</td></tr>';
       });
     });
     h+='<tr class="grp"><td></td><td><b>總計</b></td><td></td><td></td><td></td><td><b>'+tt.di+'</b></td><td><b>'+tt.ai+'</b></td><td><b>'+tt.do+'</b></td><td><b>'+tt.comm+'</b></td><td></td></tr></tbody></table></div>';
@@ -115,7 +121,7 @@ function ioView(P){
   } else {
     h+='<div class="kpis">'+k(t.di,"DI 點")+k(t.do,"DO 點")+k(t.n18,"18DI 模組")+k(t.n10,"10DI8DO 模組")+'</div>';
   }
-  h+='<h4 style="margin:16px 0 6px">各樓層監控箱模組配置</h4><p class="meta">模組規格：18DI 或 10DI8DO。依 DO 點數先配 10DI8DO，剩下的 DI 再配 18DI，預留 '+Math.round(P.params.spare*100)+'%。位置欄有樓層的依位置分配，否則依圖面各樓層數量分配，都沒有則放 '+esc(P.params.coreFloor)+' 中央監控室。</p>'
+  h+='<h4 style="margin:16px 0 6px">各樓層監控箱模組配置</h4><p class="meta">模組規格：18DI 或 10DI8DO。依 DO 點數先配 10DI8DO，剩下的 DI 再配 18DI，預留 '+Math.round(P.params.spare*100)+'%。判斷順序：手動指定 → 位置欄樓層 → 設備名稱樓層 → 位置欄盤名對照單線圖 → 圖面各樓層數量 → 依設備種類推定（泵浦、水池在最底層地下室，發電機、ATS 在 B1，屋頂水箱在最高屋突層）→ '+esc(P.params.coreFloor)+' 中央監控室。上方點數表「接到監控箱」欄可逐項修改。</p>'
     +'<div class="tblwrap"><table><thead><tr><th>監控箱</th><th>DI</th><th>DO</th><th>18DI</th><th>10DI8DO</th><th>模組／IP</th></tr></thead><tbody>'
     +io.panels.map(function(p){ return '<tr><td>'+esc(p.panel)+'</td><td>'+p.di+'</td><td>'+p.do+'</td><td>'+(p.n18||"")+'</td><td>'+(p.n10||"")+'</td><td class="mono" style="text-align:left">'+p.modules.map(function(m){return esc(m.id)+(m.ip?' <span class="hint">'+esc(m.ip)+'</span>':'');}).join("<br>")+'</td></tr>'; }).join("")
     +'<tr class="grp"><td><b>合計</b></td><td><b>'+t.di+'</b></td><td><b>'+t.do+'</b></td><td><b>'+t.n18+'</b></td><td><b>'+t.n10+'</b></td><td></td></tr></tbody></table></div>';
@@ -130,6 +136,16 @@ function ioView(P){
         return '<tr'+(r.name==="預留"?' class="muted"':'')+(first?' style="border-top:2px solid var(--line)"':'')+'>'+(sel==="all"?'<td>'+(first?esc(x.panel):'')+'</td>':'')+'<td class="mono">'+(first?esc(r.mod||r.module):'')+'</td><td>'+(first?esc(r.type||""):'')+'</td><td class="mono">'+(first?esc(r.ip||""):'')+'</td><td class="mono">'+esc(r.ch)+'</td><td class="mono">'+esc(r.tag)+'</td><td>'+esc(r.dev||r.name)+'</td><td>'+esc(r.point||"")+'</td><td>'+esc(r.loc||r.note||"")+'</td></tr>'; }).join(""); }).join("")+'</tbody></table></div>';
   }
   return h;
+}
+/** 點數表每列「接到哪一層監控箱」：顯示判斷依據，可手動改 */
+function atCell(r,P,edit){
+  if(r.unit) return '<span class="hint">住戶保全：經戶內對講保全主機（通訊協定），不接 IO</span>';
+  if(!r.at) return '<span class="hint">不佔模組</span>';
+  var cur=(P.params.ioFloor||{})[r.fkey]||"", txt=r.at.floors.length>3?r.at.floors.length+" 層（依圖面）":r.at.floors.join("、");
+  var warn=/推定|中央監控室/.test(r.at.by);
+  if(!edit) return esc(txt)+'<br><span class="hint"'+(warn?' style="color:var(--warn,#b7791f)"':'')+'>'+esc(r.at.by)+'</span>';
+  var fl=P.net.floors.slice(); (P.io.panels||[]).forEach(function(p){ if(fl.indexOf(p.floor)<0) fl.push(p.floor); });
+  return '<select data-iofl="'+esc(r.fkey)+'" class="fld" style="padding:2px 4px"><option value="">自動：'+esc(txt)+'</option>'+fl.map(function(f){ return '<option'+(f===cur?" selected":"")+'>'+esc(f)+'</option>'; }).join("")+'</select><br><span class="hint"'+(warn&&!cur?' style="color:var(--warn,#b7791f)"':'')+'>'+esc(r.at.by)+'</span>';
 }
 function k(n,l){ return '<div class="kpi"><div class="n">'+esc(n)+'</div><div class="l">'+esc(l)+'</div></div>'; }
 
@@ -283,6 +299,11 @@ function bind(P,cur,el){
     var np=Object.assign({},st.params,{ioQty:q});
     api("analysisSave",{id:cur.id,kind:"design",data:np}).then(function(){ st.params=np; toast("已儲存數量"); re(); }).catch(fail);
   };
+  el.querySelectorAll("[data-iofl]").forEach(function(sel){ sel.onchange=function(){
+    var m=Object.assign({},st.params.ioFloor||{}); if(sel.value) m[sel.dataset.iofl]=sel.value; else delete m[sel.dataset.iofl];
+    var np=Object.assign({},st.params,{ioFloor:m});
+    api("analysisSave",{id:cur.id,kind:"design",data:np}).then(function(){ st.params=np; toast("「"+sel.dataset.iofl+"」接到 "+(sel.value||"自動判斷")); re(); }).catch(fail);
+  }; });
   if($("csvIo")) $("csvIo").onclick=function(){ var rows=[["樓層","監控箱","模組","型號","模組IP","遮罩","閘道","端子","點位編號","設備","點位內容","位置","說明"]]; P.io.panels.forEach(function(p){ var mm={}; p.modules.forEach(function(m){ mm[m.id]=m; }); p.rows.forEach(function(r){ var m=mm[r.mod]||{}; rows.push([p.floor,p.panel,r.mod||r.module,r.type||"",r.ip||"",m.mask?"/"+m.mask:"",m.gw||"",r.ch,r.tag,r.dev||r.name,r.point||"",r.loc||"",r.note||""]); }); }); csv(name+"_IO接線編表.csv",rows); };
   if($("csvIp")) $("csvIp").onclick=function(){ csv(name+"_IP編表.csv",[["VLAN","用途","IP","遮罩","閘道","設備名稱","樓層","設備"]].concat(P.ip.rows.map(function(r){ return [r.vlan,r.sys,r.ip,"/"+r.mask,r.gw,r.name,r.floor,r.device]; }))); };
   if($("csvSw")) $("csvSw").onclick=function(){ csv(name+"_交換器.csv",[["層級","樓層","編號","埠數","使用","PoE(W)","上連"]].concat(P.net.access.map(function(a){ var d=P.net.dist.filter(function(d){ return d.floors.indexOf(a.floor)>=0; })[0]; return ["接取",a.floor,a.id,a.ports,a.used,a.poe?a.poeW:"",d?d.id:""]; }),P.net.dist.map(function(d){ return ["匯聚",d.at,d.id,d.ports,d.downlinks,"",P.net.core.id]; }),[["核心",P.net.core.floor,P.net.core.id,P.net.core.ports,"","",""]])); };
@@ -292,7 +313,7 @@ function bind(P,cur,el){
     P.wiring.plans.forEach(function(p){ p.runs.forEach(function(r){ rows.push([p.title,p.floors.join(" "),r.n,r.cable,r.m,r.x,r.y,r.tx,r.ty]); }); }); csv(name+"_配線清單.csv",rows); };
   if($("csvCable")) $("csvCable").onclick=function(){ csv(name+"_線材估算.csv",[["線材","用途","條數","米數","依據"]].concat(P.cables.map(function(c){ return [c.type,c.use,c.runs,c.meters,c.basis||"估算"]; }))); };
   if($("btnDsSave")) $("btnDsSave").onclick=function(){
-    var np={ioQty:st.params.ioQty||{}, ioRules:{}, extraIo:xio().filter(function(x){ return String(x.name).trim()&&+x.n>0; }).map(function(x){ return {floor:x.floor,name:String(x.name).trim().slice(0,60),n:Math.min(200,+x.n)}; })};
+    var np={ioQty:st.params.ioQty||{}, ioFloor:st.params.ioFloor||{}, ioRules:{}, extraIo:xio().filter(function(x){ return String(x.name).trim()&&+x.n>0; }).map(function(x){ return {floor:x.floor,name:String(x.name).trim().slice(0,60),n:Math.min(200,+x.n)}; })};
     ["baseNet","spare","growth","floorHeight","avgRun","slack","distGroup","coreFloor","separateCctv","unitM","drop"].forEach(function(k){ var e=$("p_"+k); if(e) np[k]=e.value; });
     if(!/^\d{1,3}\.\d{1,3}$/.test(np.baseNet)){ toast("IP 前兩段格式例：10.10"); return; }
     var items=(st.dr.items||[]).filter(function(it){ return it.total>0; });

@@ -76,6 +76,8 @@ function fl(f) { return /^(B|R)\d+F$/.test(f) ? f.replace(/F$/, "") : f; }
 /* ---------- 1. IO 模組表 ---------- */
 function ioRuleOf(P, name) {
   if (P.ioRules && P.ioRules[name]) return P.ioRules[name];
+  /* 住戶磁簧、住戶求救鈕：接戶內對講保全主機（通訊協定），不佔 IO；公共區（含安全梯、店鋪）才接 IO */
+  if (/磁簧|求救|押扣|壓扣|防盜|保全|紅外線|玻璃破碎/.test(name) && !/公共|公設|安全梯|梯廳|店鋪|店舖|社福|機房|管委|大廳|門廳|停車|車道|屋頂|地下/.test(name)) return null;
   return ruleOf(IO_RULES, name);
 }
 var IOC = root.IOCORE || (typeof require === "function" ? (function () { try { return require("./io-core.js"); } catch (e) { return null; } })() : null);
@@ -311,7 +313,7 @@ function plan(dr, params) {
   ["spare", "growth", "floorHeight", "avgRun", "slack", "distGroup"].forEach(function (k) { P[k] = Number(P[k]); });
   if (params) { P.unitM = params.unitM; P.drop = params.drop; }
   P.separateCctv = P.separateCctv === true || P.separateCctv === "true";
-  if (params) { P.ioRules = params.ioRules; P.ipRules = params.ipRules; P.extraIo = params.extraIo || []; P.systems = params.systems || []; }
+  if (params) { P.ioRules = params.ioRules; P.ipRules = params.ipRules; P.extraIo = params.extraIo || []; P.systems = params.systems || []; P.ioQty = params.ioQty || {}; P.ioFloor = params.ioFloor || {}; P.panelFloors = params.panelFloors || {}; }
   var io = ioPlan(dr, P); io.comm = commPlan(dr, P);
   var net = network(dr, P, io), ip = ipPlan(dr, P, io, net), cb = cables(dr, P, io, net);
   var ipOf = {}; ip.rows.forEach(function (r) { if (/^IO-/.test(r.name)) ipOf[r.name] = r; });   /* IO 模組 IP（與 IP 編表同名） */

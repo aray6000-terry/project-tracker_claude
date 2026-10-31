@@ -24,9 +24,18 @@ var DRAW_ALIAS = [
   [/^攝影機$/, /攝影機/], [/電子佈告欄/, /佈告欄/], [/緊急求救對講/, /緊急對講|求救對講/], [/水箱$/, /水箱蓋/], [/數位水錶/, /水錶|水表/],
   [/感應式讀卡機-電梯/, /電梯樓層管制感應讀卡機/], [/^感應式讀卡機$/, /^感應式讀卡機$|Smart ?Key讀卡機/i]
 ];
+var CORES = [/磁簧/, /求救(按鈕|押扣|鈕)/, /紅外線/, /柵欄機/, /玻璃破碎/, /鐵捲門/, /液位|水位/, /一氧化碳/, /漏水/, /淹水/, /地震/, /感應線圈/];
+var QUALS = ["公共", "安全梯", "梯廳", "電梯", "店鋪", "社福", "機房", "無障礙"];
 function drawMatch(name, items) {
   var hits = [];
   DRAW_ALIAS.forEach(function (a) { if (a[0].test(name)) items.forEach(function (it) { if (a[1].test(it.name) && hits.indexOf(it) < 0) hits.push(it); }); });
+  if (hits.length) return hits;
+  /* 通用比對：設備關鍵字相同、且「公共／安全梯／店鋪…」等附註一致（「公共磁簧(安全梯)」↔「隱藏式磁簧(公共)(安全梯)」） */
+  var q = function (s) { s = String(s).replace(/公設/g, "公共").replace(/店舖/g, "店鋪"); if (/店鋪|社福/.test(s)) s = s.replace(/公共/g, ""); return QUALS.filter(function (w) { return s.indexOf(w) >= 0; }).sort().join(); };
+  CORES.forEach(function (c) {
+    if (!c.test(name)) return;
+    items.forEach(function (it) { if (c.test(it.name) && q(it.name) === q(name) && hits.indexOf(it) < 0) hits.push(it); });
+  });
   return hits;
 }
 function floorsFromLoc(loc, known) {
@@ -73,17 +82,42 @@ function mergeSame(rows) {
   return out;
 }
 
+/** 位置欄的盤名（「PS-1」「PWA,PWB」）→ 單線圖分析得到的盤所在樓層 */
+function panelFloors(loc, map) {
+  var out = []; if (!loc || !map) return out;
+  String(loc).split(/[,，、.\/\s]+/).forEach(function (k) { k = k.trim().toUpperCase(); var f = k && map[k]; if (f && out.indexOf(f) < 0) out.push(f); });
+  return out;
+}
+/** 沒有任何樓層資訊時，依設備種類推定：泵浦、水池在最底層地下室；發電機、ATS 在地下一層電氣室；屋頂水箱在最高的屋突層 */
+function guessFloor(name, known) {
+  var ks = (known || []).filter(function (f) { return /^(B|R)?\d+F$|^RF$/.test(f); });
+  var bs = ks.filter(function (f) { return /^B\d+F$/.test(f); }).sort(function (a, b) { return +b.slice(1, -1) - +a.slice(1, -1); });
+  var rs = ks.filter(function (f) { return /^R\d+F$|^RF$/.test(f); }).sort(function (a, b) { return (a === "RF" ? 99 : +a.slice(1, -1)) - (b === "RF" ? 99 : +b.slice(1, -1)); });
+  if (/屋頂|屋突|高架水塔|高置水箱/.test(name) && rs.length) return { floor: rs[rs.length - 1], why: "屋頂設備在最高屋突層" };
+  if (/發電機|油箱|油位|ATS|電瓶|變電|配電|受電|電氣室|台電/i.test(name) && bs.length)
+    return { floor: bs[bs.length - 1], why: "電力設備在地下一層電氣室" };
+  if (/泵|幫浦|水池|蓄水|污泥|污水|廢水|放流|調節池|雨水|筏基|集水|消防水|水箱|機房/.test(name) && bs.length)
+    return { floor: bs[0], why: "泵浦與水池在最底層地下室" };
+  return null;
+}
 /** 把「數位訊號」項目的點分配到各樓層，回傳 {floor: [{type:'DI'|'DO', name, label}]} */
 function distribute(t, dr, P, floorsKnown) {
   var items = dr.items || [], out = {};
   function add(f, type, name, label, n, loc) { var a = out[f] = out[f] || []; for (var i = 0; i < n; i++) a.push({ type: type, name: name, label: label, loc: loc || "" }); }
   t.sections.forEach(function (s) { s.rows.forEach(function (r) {
     if (!r.hw || !(r.sum.di + r.sum.do)) return;
-    var share = {}, m = drawMatch(r.name, items), tot = 0, fs = floorsFromLoc(r.loc, floorsKnown);
-    if (!fs.length) fs = floorsFromLoc(r.name, floorsKnown).filter(function (f) { return floorsKnown.indexOf(f) >= 0; });   /* 位置沒寫、名稱有樓層（「R2F水箱」） */
+    var share = {}, m = drawMatch(r.name, items), tot = 0, by = "";
+    r.fkey = r.name + (r.loc ? "｜" + r.loc : "");
+    var fs = (P.ioFloor && P.ioFloor[r.fkey]) ? [P.ioFloor[r.fkey]] : [];
+    if (fs.length) by = "手動指定";
+    if (!fs.length) { fs = floorsFromLoc(r.loc, floorsKnown); if (fs.length) by = "位置欄"; }
+    if (!fs.length) { fs = floorsFromLoc(r.name, floorsKnown).filter(function (f) { return floorsKnown.indexOf(f) >= 0; }); if (fs.length) by = "設備名稱"; }   /* 「R2F水箱」 */
+    if (!fs.length) { fs = panelFloors(r.loc, P.panelFloors); if (fs.length) by = "單線圖盤位"; }                                      /* 位置寫盤名（PS-1、PWA）→ 單線圖上該盤的樓層 */
     if (fs.length) fs.forEach(function (f) { share[f] = 1; tot++; });
-    if (!tot && m.length) m.forEach(function (it) { Object.keys(it.floors).forEach(function (f) { share[f] = (share[f] || 0) + it.floors[f]; tot += it.floors[f]; }); });
-    if (!tot) { share[P.coreFloor || "1F"] = 1; tot = 1; }
+    if (!tot && m.length) { m.forEach(function (it) { Object.keys(it.floors).forEach(function (f) { if (!(it.floors[f] > 0)) return; share[f] = (share[f] || 0) + it.floors[f]; tot += it.floors[f]; }); }); if (tot) by = "圖面數量"; }
+    if (!tot) { var g = guessFloor(r.name, floorsKnown); if (g) { share[g.floor] = 1; tot = 1; by = "推定（" + g.why + "）"; } }
+    if (!tot) { share[P.coreFloor || "1F"] = 1; tot = 1; by = "中央監控室（無樓層資訊）"; }
+    r.at = { floors: Object.keys(share), by: by };
     var fsList = Object.keys(share);
     t.columns.forEach(function (c) {
       if (c.group !== "di" && c.group !== "do") return;
@@ -135,6 +169,14 @@ function parseRaw(rows) {
   }
   return { columns: columns.map(function (c) { return { group: c.group, label: c.label }; }), sections: sections };
 }
+/** 住戶的防盜保全（各戶防盜、住家保全警報、戶內求救、住戶磁簧）接到戶內對講保全主機，經通訊協定上傳，不接實體 IO */
+var UNIT_RE = /各戶|住戶|住家|戶內|每戶|宅內/, PUBLIC_RE = /公共|公設|安全梯|梯廳|店鋪|店舖|社福|機房|管委|大廳|門廳|停車|車道|屋頂|地下/;
+function isUnit(name, pts) {
+  name = String(name || "");
+  if (PUBLIC_RE.test(name)) return false;
+  if (UNIT_RE.test(name)) return true;
+  return Object.keys(pts || {}).some(function (k) { return /^住家保全警報@/.test(k); });
+}
 /** 佔不佔 IO 模組：寫「數位訊號／接點」→ 佔；寫 TCP／MODBUS／通訊整合等 → 軟體點不佔；
     通訊格式沒填（設計單位點數表常留白）→ 有 DI／DO 點就視為實體接點，佔模組 */
 function isHw(format, g) {
@@ -148,7 +190,7 @@ function finishKeyed(t) {
   t.sections.forEach(function (s) { s.rows.forEach(function (r) {
     var g = { di: 0, ai: 0, do: 0, comm: 0 };
     Object.keys(r.pts).forEach(function (k) { var grp = k.split("@").pop(); if (g[grp] !== undefined) g[grp] += r.pts[k]; });
-    r.sum = g; r.hw = isHw(r.format, g);
+    r.sum = g; r.unit = isUnit(r.name, r.pts); r.hw = !r.unit && isHw(r.format, g);
     tot.di += g.di; tot.ai += g.ai; tot.do += g.do; tot.comm += g.comm;
     if (r.hw) { tot.hwDi += g.di; tot.hwDo += g.do; }
   }); });
@@ -163,6 +205,6 @@ function toTemplate(t) {
   }) }; }) };
 }
 
-var api = { parse: parse, build: build, distribute: distribute, toTemplate: toTemplate, setTemplate: setTemplate, drawMatch: drawMatch, floorsFromLoc: floorsFromLoc };
+var api = { isUnit: isUnit, parse: parse, build: build, distribute: distribute, toTemplate: toTemplate, setTemplate: setTemplate, drawMatch: drawMatch, floorsFromLoc: floorsFromLoc };
 if (typeof module === "object" && module.exports) module.exports = api; else root.IOCORE = api;
 })(typeof self !== "undefined" ? self : this);

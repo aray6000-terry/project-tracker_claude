@@ -1,5 +1,5 @@
 /* 在背景執行緒分析 DXF，避免大檔讓畫面卡住 */
-importScripts("xlsx-lite.js?v=2.5.0", "xls-lite.js?v=2.5.0", "dxf-core.js?v=2.5.0", "sld-core.js?v=2.5.0");
+importScripts("xlsx-lite.js?v=2.5.2", "xls-lite.js?v=2.5.2", "dxf-core.js?v=2.5.2", "sld-core.js?v=2.5.2");
 self.onmessage = function (ev) {
   var buf = ev.data.buf, name = String(ev.data.name || "").toLowerCase();
   var send = function (m) { self.postMessage(m); };
