@@ -8,7 +8,7 @@ var REQ_LABEL={approval:"異常單待主管簽核",submitted:"待採購確認",c
 var BILL_LABEL={pending:"未達成",done:"已完工待請款",billed:"已請款",invoiced:"已開票",paid:"已收款"};
 var ISSUE_LABEL={open:"待處理",doing:"處理中",closed:"已結案"};
 var FIELD_LABEL={name:"專案名稱",client:"業主／營造",site:"案場地點",engineer:"負責工程師",mentor:"帶案師父",amount:"合約金額（舊欄位）",handover:"預計驗屋交屋日",note:"備註",
-  salesRep:"業務負責人",contractNo:"合約編號",contractAmount:"合約總價",payCondition:"付款條件",otherName:"其它系統名稱"};
+  company:"所屬公司",salesRep:"業務負責人",contractNo:"合約編號",contractAmount:"合約總價",payCondition:"付款條件",otherName:"其它系統名稱"};
 function caps(){ return (T.session.me&&T.session.me.caps)||{}; }
 function me(){ return T.session.me||{}; }
 function dOnly(iso){ return iso?String(fmtTime(iso)).split(" ")[0]:""; }

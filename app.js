@@ -38,7 +38,7 @@ var NODES = [
 /* 依交屋日倒推的建議天數（交屋日為 0），可依實際案場修改 */
 var OFFSETS = [-540,-480,-360,-240,-120,-45,0,60];
 var GROUPS = [["task","完成事項"],["gate","查驗關卡"],["form","產出表單"]];
-var FIELDS = ["name","client","site","engineer","mentor","amount","handover","note","salesRep","contractNo","contractAmount","payCondition"];
+var FIELDS = ["name","company","client","site","engineer","mentor","amount","handover","note","salesRep","contractNo","contractAmount","payCondition"];
 var ROLES = [["admin","最高管理權限"],["ceo","CEO"],["sales","業務"],["sales_mgr","業務主管"],["eng","工務"],["eng_mgr","工務主管"],["purchase","採購"],["account","會計"],["warehouse","倉管"]];
 var ROLE_NAME = {}; ROLES.forEach(function(r){ ROLE_NAME[r[0]]=r[1]; });
 /* 各結點施工注意事項（依《專案工程師養成計畫》整理） */
@@ -107,7 +107,7 @@ var PST_LABEL = {idle:["未開始","b-idle"],run:["進行中","b-run"],late:["�
 var session = {token:null, exp:0, me:null};
 var data = {projects:[], users:[]};
 var cur = null;              /* 目前開啟的專案 {id,version,myRole,owner,members,project} */
-var view = {filter:"all", scope:"all", q:""};
+var view = {filter:"all", scope:"all", q:"", co:""};
 var saver = {timer:null, busy:false, dirty:false, failed:false, target:null};
 var lastActive = Date.now();
 
@@ -337,12 +337,13 @@ function renderList(){
     if(view.filter==="closed" && o.s.status!=="closed") return false;
     if(view.scope==="mine" && o.x.owner!==me.email) return false;
     if(view.scope==="shared" && (o.x.owner===me.email || o.x.myRole==="admin")) return false;
-    if(q){ var hay=[sm.name,sm.client,sm.site,sm.engineer,sm.mentor,o.x.owner,userName(o.x.owner)].join(" ").toLowerCase(); if(hay.indexOf(q)<0) return false; }
+    if(view.co && (sm.company||"")!==(view.co==="(none)"?"":view.co)) return false;
+    if(q){ var hay=[sm.name,sm.company,sm.client,sm.site,sm.engineer,sm.mentor,o.x.owner,userName(o.x.owner)].join(" ").toLowerCase(); if(hay.indexOf(q)<0) return false; }
     return true;
   });
   list.sort(function(a,b){ return String(b.x.updated).localeCompare(String(a.x.updated)); });
   var h='<section class="stats">'
-    +statBox(data.projects.length, (me.role==="admin"||me.role==="ceo")?"專案總數（全部）":"我可看的專案")
+    +statBox(data.projects.length, me.role==="admin"?"專案總數（全部）":me.role==="ceo"?"管理公司的專案":"我可看的專案")
     +statBox(act.length,"進行中專案")
     +statBox(overNodes,"逾期結點",overNodes>0?"bad":"")
     +statBox(avg+"%","進行中平均進度")+'</section>';
@@ -350,7 +351,7 @@ function renderList(){
     +seg("filter","all","全部")+seg("filter","active","進行中")+seg("filter","late","有逾期")+seg("filter","closed","已結案")
     +'</div><div class="seg" role="group" aria-label="範圍">'
     +seg("scope","all","全部")+seg("scope","mine","我負責")+seg("scope","shared","分享給我")
-    +'</div><input class="search" id="q" type="search" placeholder="搜尋專案、業主、工程師…" value="'+esc(view.q)+'"></div>';
+    +'</div>'+companyFilter()+'<input class="search" id="q" type="search" placeholder="搜尋專案、業主、工程師…" value="'+esc(view.q)+'"></div>';
   if(!data.projects.length){
     h+='<div class="empty"><p style="font-size:16px;margin:0 0 6px">目前沒有可檢視的專案</p><p style="margin:0">'
       +(me.canCreate?'按「新增專案」建立第一個案件；舊版網頁的資料可用「匯入舊資料」搬進來。':'請等待專案負責人分享，或請管理員指派給您。')+'</p></div>';
@@ -363,6 +364,7 @@ function renderList(){
       var nx = s.next===null ? "全部結點已完成" : "下一結點："+NODES[s.next].name+"（"+fmt(((sm.nodes||[])[s.next]||{}).t)+"）";
       h+='<article class="card" tabindex="0" data-open="'+esc(x.id)+'">'
         +'<div class="row"><h3>'+esc(sm.name)+'</h3><span class="badge '+lb[1]+'">'+lb[0]+'</span></div>'
+        +(sm.company?'<div class="meta"><span class="badge b-idle">'+esc(sm.company)+'</span></div>':'')
         +'<div class="meta">'+esc(sm.client||"—")+(sm.site?'｜'+esc(sm.site):'')+'</div>'
         +'<div class="meta">工程師：'+esc(sm.engineer||"—")+'　師父：'+esc(sm.mentor||"—")+'</div>'
         +(sysList(sm).length?'<div class="meta">系統：'+esc(sysList(sm).map(function(k){return sysLabel(sm,k);}).join("、"))+'</div>':'')
@@ -376,12 +378,21 @@ function renderList(){
   }
   $("app").innerHTML=h;
   document.querySelectorAll("[data-seg]").forEach(function(b){ b.onclick=function(){ view[b.dataset.seg]=b.dataset.v; renderList(); }; });
+  if($("coFilter")) $("coFilter").onchange=function(){ view.co=this.value; renderList(); };
   var qi=$("q");
   qi.oninput=function(){ view.q=qi.value; var pos=qi.selectionStart; renderList(); var q2=$("q"); q2.focus(); try{q2.setSelectionRange(pos,pos);}catch(e){} };
   document.querySelectorAll("[data-open]").forEach(function(c){
     c.onclick=function(){ go("p="+c.dataset.open); };
     c.onkeydown=function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); go("p="+c.dataset.open); } };
   });
+}
+function companyFilter(){
+  var seen={}, none=false;
+  data.projects.forEach(function(x){ var c=(x.summary||{}).company||""; if(c) seen[c]=(seen[c]||0)+1; else none=true; });
+  var cos=Object.keys(seen).sort(); if(!cos.length && !none) return "";
+  if(cos.length<2 && !none) return "";
+  return '<select id="coFilter" aria-label="公司"><option value="">全部公司</option>'+cos.map(function(c){ return '<option value="'+esc(c)+'"'+(view.co===c?" selected":"")+'>'+esc(c)+'（'+seen[c]+'）</option>'; }).join("")
+    +(none?'<option value="(none)"'+(view.co==="(none)"?" selected":"")+'>未設定公司</option>':'')+'</select>';
 }
 function statBox(n,l,cls){ return '<div class="stat '+(cls||"")+'"><div class="n">'+n+'</div><div class="l">'+l+'</div></div>'; }
 function seg(k,v,l){ return '<button type="button" data-seg="'+k+'" data-v="'+v+'" class="'+(view[k]===v?"on":"")+'">'+l+'</button>'; }
@@ -399,7 +410,7 @@ function renderDetail(keepNode){
   if(ro) h+='<div class="notice">您對此專案為「僅檢視」權限，無法修改內容。</div>';
   h+='<section class="detail-head"><div class="row" style="flex-wrap:wrap"><h2>'+esc(p.name)+'</h2><span><span class="badge '+lb[1]+'">'+lb[0]+'</span> <span class="badge '+rl[1]+'">'+rl[0]+'</span></span></div>'
     +'<div class="info">'
-    +info("業主／營造",p.client)+info("案場地點",p.site)+info("負責工程師",p.engineer)+info("帶案師父",p.mentor)
+    +info("所屬公司",p.company)+info("業主／營造",p.client)+info("案場地點",p.site)+info("負責工程師",p.engineer)+info("帶案師父",p.mentor)
     +info("業務負責人",p.salesRep?userName(p.salesRep):"")+info("合約編號",p.contractNo)
     +info("合約金額",p.contractAmount?("NT$ "+Number(p.contractAmount).toLocaleString()):p.amount)+info("預計驗屋交屋",fmt(p.handover))+info("負責帳號",userName(cur.owner))+info("完成結點",s.okn+" / "+NODES.length)
     +'</div>'
@@ -604,7 +615,11 @@ function openForm(existing){
   var f=$("frm"), p=existing?cur.project:null;
   $("dlgTitle").textContent=existing?"編輯專案資料":"新增專案";
   $("salesRepSel").innerHTML='<option value="">（未指定）</option>'+data.users.map(function(u){ return '<option value="'+esc(u.email)+'">'+esc(u.name?u.name+"（"+u.email+"）":u.email)+'</option>'; }).join("");
+  var coOpts=(session.me.companyOptions||[]).slice(); if(p&&p.company&&coOpts.indexOf(p.company)<0) coOpts.unshift(p.company);
+  $("companySel").innerHTML=(session.me.companyScoped?'':'<option value="">（未指定）</option>')+coOpts.map(function(c){ return '<option>'+esc(c)+'</option>'; }).join("");
+  $("companySel").required=!!session.me.companyScoped;
   FIELDS.forEach(function(k){ f.elements[k].value=p?(p[k]||""):(k==="salesRep"&&session.me.role==="sales"?session.me.email:""); });
+  if(!p && session.me.companyScoped && coOpts.length) f.elements.company.value=coOpts[0];
   var chosen=sysList(p);
   document.querySelectorAll('#sysPick input[type=checkbox]').forEach(function(cb){ cb.checked=chosen.indexOf(cb.value)>=0; });
   f.elements.otherName.value=(p&&p.otherName)||"";
@@ -716,10 +731,13 @@ function renderAdmin(){
   if(!(session.me.caps&&session.me.caps.manageUsers)){ go(""); return; }
   $("app").innerHTML='<div class="loading">讀取中…</div>';
   Promise.all([api("adminUsers"),api("adminAudit",{limit:200})]).then(function(r){
-    var users=r[0].users, fixed=r[0].fixedAdmins||[], logs=r[1].rows;
+    var users=r[0].users, fixed=r[0].fixedAdmins||[], logs=r[1].rows, cos=r[0].companies||[];
     var h=permMatrix();
+    h+='<section class="panel"><h3>公司清單</h3><p class="meta">CEO 只看得到「管理公司」內的專案；專案在新增／編輯時選擇所屬公司。移除公司不會改動已設定的專案，但之後無法再選。</p>'
+      +'<div class="cochips">'+cos.map(function(c,i){ return '<span class="cochip">'+esc(c)+'<button type="button" data-corm="'+i+'" aria-label="移除 '+esc(c)+'">×</button></span>'; }).join("")+'</div>'
+      +'<div class="tools" style="margin-top:8px"><input id="coNew" maxlength="20" placeholder="新公司名稱"><button class="btn small primary" type="button" id="btnCoAdd">新增公司</button></div></section>';
     h+='<section class="panel"><h3>使用者與權限</h3><p class="meta">只有名單中「啟用」的帳號可以登入。角色決定看得到哪些頁面與資料（見上方權限表）；工務另勾「可建立專案」才能自行開案。</p>'
-      +'<div class="tblwrap"><table class="cards"><thead><tr><th>Google 帳號</th><th>姓名</th><th>角色</th><th>可建立專案</th><th>啟用</th><th>備註</th><th></th></tr></thead><tbody>';
+      +'<div class="tblwrap"><table class="cards"><thead><tr><th>Google 帳號</th><th>姓名</th><th>角色</th><th>可建立專案</th><th>啟用</th><th>管理公司</th><th>備註</th><th></th></tr></thead><tbody>';
     users.forEach(function(u,i){
       var locked=fixed.indexOf(u.email)>=0;
       h+='<tr data-u="'+i+'"><td class="mono" data-label="帳號">'+esc(u.email)+(locked?'<br><span class="meta">（系統管理員）</span>':'')+'</td>'
@@ -727,6 +745,7 @@ function renderAdmin(){
         +'<td data-label="角色"><select data-k="role"'+(locked?' disabled':'')+'>'+roleOptions(u.role)+'</select></td>'
         +'<td class="c" data-label="可建立專案"><input type="checkbox" data-k="canCreate"'+(u.canCreate?" checked":"")+(locked?' disabled':'')+'></td>'
         +'<td class="c" data-label="啟用"><input type="checkbox" data-k="enabled"'+(u.enabled?" checked":"")+(locked?' disabled':'')+'></td>'
+        +'<td data-label="管理公司">'+coPicker(cos,u.companies||[],u.role)+'</td>'
         +'<td data-label="備註"><input type="text" maxlength="100" data-k="memo" value="'+esc(u.memo)+'"></td>'
         +'<td class="act"><button class="btn small" type="button" data-save="'+i+'">儲存</button></td></tr>';
     });
@@ -734,6 +753,7 @@ function renderAdmin(){
       +'<td data-label="姓名"><input type="text" maxlength="30" id="nuName" placeholder="姓名"></td>'
       +'<td data-label="角色"><select id="nuRole">'+roleOptions("eng")+'</select></td>'
       +'<td class="c" data-label="可建立專案"><input type="checkbox" id="nuCreate"></td><td class="c" data-label="啟用"><input type="checkbox" id="nuEnabled" checked></td>'
+      +'<td data-label="管理公司" id="nuCo">'+coPicker(cos,[],"eng")+'</td>'
       +'<td data-label="備註"><input type="text" maxlength="100" id="nuMemo" placeholder="例：工務部"></td>'
       +'<td class="act"><button class="btn small primary" type="button" id="btnAddUser">新增</button></td></tr>';
     h+='</tbody></table></div><p class="hint">停用帳號後，對方立即無法登入或讀取任何專案（已分享的設定保留，重新啟用即恢復）。</p></section>';
@@ -743,25 +763,39 @@ function renderAdmin(){
       +'</tbody></table></div></section>';
     $("app").innerHTML=h;
     $("btnAuditReload").onclick=renderAdmin;
+    var saveCos=function(list,msg){ api("adminSaveCompanies",{companies:list}).then(function(){ toast(msg); renderAdmin(); }).catch(fail); };
+    $("btnCoAdd").onclick=function(){ var v=$("coNew").value.replace(/[,，、;；]/g,"").trim(); if(!v) return; if(cos.indexOf(v)>=0){ toast("已有這家公司"); return; } saveCos(cos.concat([v]),"已新增「"+v+"」"); };
+    $("coNew").onkeydown=function(e){ if(e.key==="Enter"){ e.preventDefault(); $("btnCoAdd").click(); } };
+    document.querySelectorAll("[data-corm]").forEach(function(b){ b.onclick=function(){ var c=cos[+b.dataset.corm]; if(!confirm("從清單移除「"+c+"」？\n已設定這家公司的專案與 CEO 不受影響，但之後無法再選。")) return; saveCos(cos.filter(function(x){ return x!==c; }),"已移除「"+c+"」"); }; });
+    document.querySelectorAll("select[data-k=role],#nuRole").forEach(function(sel){ sel.addEventListener("change",function(){ var td=sel.closest("tr").querySelector("details.copick"); if(td) td.classList.toggle("dim",sel.value!=="ceo"); }); });
     document.querySelectorAll("[data-save]").forEach(function(b){
       b.onclick=function(){
         var tr=b.closest("tr"), u=users[+b.dataset.save];
         var g=function(k){ return tr.querySelector('[data-k="'+k+'"]'); };
-        saveUser({email:u.email,name:g("name").value,role:g("role").value,canCreate:g("canCreate").checked,enabled:g("enabled").checked,memo:g("memo").value});
+        saveUser({email:u.email,name:g("name").value,role:g("role").value,canCreate:g("canCreate").checked,enabled:g("enabled").checked,memo:g("memo").value,companies:pickedCos(tr)});
       };
     });
     $("btnAddUser").onclick=function(){
       var email=$("nuEmail").value.trim().toLowerCase();
       if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ toast("請輸入正確的 Google 帳號"); return; }
       if(users.some(function(u){return u.email===email;})){ toast("此帳號已在名單中"); return; }
-      saveUser({email:email,name:$("nuName").value,role:$("nuRole").value,canCreate:$("nuCreate").checked,enabled:$("nuEnabled").checked,memo:$("nuMemo").value});
+      saveUser({email:email,name:$("nuName").value,role:$("nuRole").value,canCreate:$("nuCreate").checked,enabled:$("nuEnabled").checked,memo:$("nuMemo").value,companies:pickedCos($("newUserRow"))});
     };
   }).catch(function(e){ fail(e); });
 }
+/** 管理公司多選（只對 CEO 生效） */
+function coPicker(cos,sel,role){
+  var extra=sel.filter(function(c){ return cos.indexOf(c)<0; }), all=cos.concat(extra);
+  return '<details class="copick'+(role==="ceo"?"":" dim")+'"><summary>'+(sel.length?esc(sel.length>3?sel.slice(0,3).join("、")+" 等 "+sel.length+" 家":sel.join("、")):'（未設定）')+'</summary>'
+    +'<div class="cogrid"><label class="coall"><input type="checkbox" data-coall>全選</label>'+all.map(function(c){ return '<label><input type="checkbox" data-co="'+esc(c)+'"'+(sel.indexOf(c)>=0?" checked":"")+'>'+esc(c)+'</label>'; }).join("")+'</div>'
+    +'<div class="hint">只對 CEO 生效</div></details>';
+}
+function pickedCos(tr){ return Array.prototype.map.call(tr.querySelectorAll("input[data-co]:checked"),function(i){ return i.dataset.co; }); }
+document.addEventListener("change",function(e){ var t=e.target; if(t && t.hasAttribute && t.hasAttribute("data-coall")){ t.closest(".cogrid").querySelectorAll("input[data-co]").forEach(function(i){ i.checked=t.checked; }); } });
 function roleOptions(sel){ return ROLES.map(function(r){ return '<option value="'+r[0]+'"'+(r[0]===sel?" selected":"")+'>'+r[1]+'</option>'; }).join(""); }
 /* 權限可視化：各角色可看、可做的事 */
 var PERM_ROWS=[
-  ["看得到的專案",{admin:"全部",ceo:"全部",sales:"自己負責／被指派",sales_mgr:"全部",eng:"自己負責／被分享",eng_mgr:"全部",purchase:"—",account:"全部（唯讀）",warehouse:"—"}],
+  ["看得到的專案",{admin:"全部",ceo:"管理公司的專案（可多選）",sales:"自己負責／被指派",sales_mgr:"全部",eng:"自己負責／被分享",eng_mgr:"全部",purchase:"—",account:"全部（唯讀）",warehouse:"—"}],
   ["建立專案",{admin:"✓",ceo:"✓",sales_mgr:"✓",eng_mgr:"✓",sales:"需勾選",eng:"需勾選"}],
   ["指派負責人",{admin:"✓",ceo:"✓",sales_mgr:"✓",eng_mgr:"✓"}],
   ["施工進度、照片、問題回報",{admin:"✓",ceo:"✓",sales_mgr:"✓",eng_mgr:"✓",eng:"✓",sales:"✓",account:"看"}],
@@ -789,6 +823,7 @@ function permMatrix(){
     +'</tbody></table></div></section>';
 }
 function saveUser(u){
+  if(u.role==="ceo" && !(u.companies||[]).length && !confirm(u.email+" 是 CEO 但沒有勾選管理公司，將看不到任何專案（自己負責或被分享的除外）。確定儲存？")) return;
   if(u.role==="admin" && !confirm("確定要將 "+u.email+" 設為最高管理權限？可以看到並修改所有專案、管理使用者。")) return;
   api("adminSaveUser",u).then(function(){ toast("已儲存 "+u.email); data.users=[]; renderAdmin(); }).catch(fail);
 }

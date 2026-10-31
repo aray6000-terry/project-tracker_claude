@@ -218,6 +218,12 @@ table.pstat td,table.pstat th{white-space:nowrap}
 tr.muted td{color:var(--ink-2);opacity:.7}
 #printAll{display:none}
 @media print{body.printing>*:not(#printAll){display:none!important}body.printing #printAll{display:block}#printAll .print-page{break-after:page;page-break-after:always}#printAll .print-page:last-child{break-after:auto;page-break-after:auto}#printAll .netsvg{min-width:0;width:100%;max-height:25cm}#printAll .print-title{font-size:14pt;margin:0 0 8pt}}
+.cochips{display:flex;flex-wrap:wrap;gap:6px}.cochip{display:inline-flex;align-items:center;gap:2px;padding:3px 4px 3px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);font-size:13px}
+.cochip button{border:0;background:none;color:var(--ink-2);cursor:pointer;font-size:15px;line-height:1;padding:0 6px;border-radius:999px}.cochip button:hover{color:var(--bad);background:var(--accent-soft)}
+details.copick{min-width:140px}details.copick summary{cursor:pointer;font-size:13px;white-space:nowrap}details.copick.dim summary{color:var(--ink-2)}
+details.copick .cogrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:2px 8px;margin:6px 0;min-width:260px}details.copick .cogrid label{display:flex;gap:4px;align-items:center;font-size:13px;font-weight:400}
+details.copick .coall{grid-column:1/-1;font-weight:600!important}
+#coFilter{max-width:180px}
 .plansvg{min-width:700px;max-height:75vh;background:var(--surface)}
 .plansvg .pl-wall{fill:none;stroke:var(--ink-2);opacity:.45}
 .plansvg .pl-run{fill:none;opacity:.85}.plansvg .pl-dev{stroke:none}.plansvg .pl-panel{fill:var(--accent);stroke:#fff}
@@ -322,6 +328,7 @@ footer{margin-top:32px;color:var(--ink-2);font-size:12px;text-align:center}
     <h3 id="dlgTitle">新增專案</h3>
     <div class="fgrid">
       <label class="full">專案名稱 *<input name="name" required maxlength="80" placeholder="例：○○建設 ○○案 弱電工程"></label>
+      <label>所屬公司<select name="company" id="companySel"></select></label>
       <label>業主／營造<input name="client" maxlength="60"></label>
       <label>案場地點<input name="site" maxlength="60"></label>
       <label>負責工程師<input name="engineer" maxlength="30"></label>
@@ -361,19 +368,19 @@ footer{margin-top:32px;color:var(--ink-2);font-size:12px;text-align:center}
 </dialog>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<script src="config.js?v=2.5.7"></script>
-<script src="app.js?v=2.5.7"></script>
-<script src="ops.js?v=2.5.7"></script>
-<script src="xlsx-lite.js?v=2.5.7"></script>
-<script src="xls-lite.js?v=2.5.7"></script>
-<script src="quote-core.js?v=2.5.7"></script>
-<script src="analysis.js?v=2.5.7"></script>
-<script src="io-core.js?v=2.5.7"></script>
-<script src="design-core.js?v=2.5.7"></script>
-<script src="design.js?v=2.5.7"></script>
-<script src="dxf-core.js?v=2.5.7"></script>
-<script src="sld-core.js?v=2.5.7"></script>
-<script src="sld.js?v=2.5.7"></script>
+<script src="config.js?v=2.6.0"></script>
+<script src="app.js?v=2.6.0"></script>
+<script src="ops.js?v=2.6.0"></script>
+<script src="xlsx-lite.js?v=2.6.0"></script>
+<script src="xls-lite.js?v=2.6.0"></script>
+<script src="quote-core.js?v=2.6.0"></script>
+<script src="analysis.js?v=2.6.0"></script>
+<script src="io-core.js?v=2.6.0"></script>
+<script src="design-core.js?v=2.6.0"></script>
+<script src="design.js?v=2.6.0"></script>
+<script src="dxf-core.js?v=2.6.0"></script>
+<script src="sld-core.js?v=2.6.0"></script>
+<script src="sld.js?v=2.6.0"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </body>
 </html>
