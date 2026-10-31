@@ -566,7 +566,7 @@ function analyze(text, opt) {
   return {
     tables: tables.map(function (t) { return { key: t.key, floors: t.floors, rows: t.rows.map(function (r) { return { name: r.name, qty: r.qty, raw: r.raw, block: r.block }; }) }; }),
     floors: floorList, items: list, checks: checks, warnings: warnings, embedded: embedded, pendingXlsx: pendingXlsx, plans: plans,
-    unitM: guessUnit(plans),
+    unitM: guessUnit(plans), planVer: 2,
     stats: { frames: frames.length, inserts: d.inserts.length, texts: T.length, blocks: Object.keys(d.blocks).length, titles: titles.map(function (t) { return t.s + "→" + (t.table ? t.table.key : "?"); }) }
   };
 }
