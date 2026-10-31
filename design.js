@@ -95,7 +95,7 @@ function ioView(P){
   if(tb){
     var tt=tb.totals, qi=quoteIo();
     h+='<p class="meta">'+(tb.source==="embedded"?'<b>來源：圖面內嵌的「大樓自動化 I/O 管理點數表」</b>（設計單位填寫，直接採用）。':'<b>來源：公司範本＋圖面數量</b>。圖面沒有點數表時，依範本每台設備的點數計算；泵浦、風機、電錶、燈光迴路等不在平面圖上的設備，請在下表填數量。')
-      +'<br>點數表中「通訊格式＝數位訊號」的項目走 IO 整合，DI／DO 點配到各樓層監控箱的 IO 模組；TCP／MODBUS 通訊整合的項目屬軟體點，不佔 IO 模組。</p>'
+      +'<br>點數表中「通訊格式＝數位訊號」或通訊格式沒填的項目走 IO 整合，DI／DO 點配到各樓層監控箱的 IO 模組；TCP／MODBUS 通訊整合的項目屬軟體點，不佔 IO 模組。</p>'
       +'<div class="kpis">'+k(tt.di,"數位輸入 DI（點數表）")+k(tt.ai,"類比輸入 AI")+k(tt.do,"數位輸出 DO")+k(tt.comm,"通信協定點")+k(tt.hwDi,"IO 整合實體 DI")+k(tt.hwDo,"IO 整合實體 DO")+k(t.n18,"18DI 模組")+k(t.n10,"10DI8DO 模組")+'</div>';
     if(qi) h+='<div class="tipbox"><b>與估價單比對</b>：估價單「'+esc(qi.name)+'」<br>DI：估價 '+qi.di+'，點數表 '+tt.di+(qi.di!==tt.di?'（<span style="color:var(--bad)">差 '+(qi.di-tt.di)+'</span>，DI＋AI＝'+(tt.di+tt.ai)+'）':' ✓')
       +(qi.do!==null?'｜DO：估價 '+qi.do+'，點數表 '+tt.do+(qi.do!==tt.do?'（<span style="color:var(--bad)">差 '+(qi.do-tt.do)+'</span>）':' ✓'):'')

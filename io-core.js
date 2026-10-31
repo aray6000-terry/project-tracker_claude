@@ -134,12 +134,20 @@ function parseRaw(rows) {
   }
   return { columns: columns.map(function (c) { return { group: c.group, label: c.label }; }), sections: sections };
 }
+/** 佔不佔 IO 模組：寫「數位訊號／接點」→ 佔；寫 TCP／MODBUS／通訊整合等 → 軟體點不佔；
+    通訊格式沒填（設計單位點數表常留白）→ 有 DI／DO 點就視為實體接點，佔模組 */
+function isHw(format, g) {
+  var f = String(format || "").replace(/\s/g, "");
+  if (/數位訊號|接點|^DI|^DO|硬體/i.test(f)) return true;
+  if (/TCP|MODBUS|BACNET|通訊|通信|協定|RS-?485|網路|軟體/i.test(f)) return false;
+  return (g.di + g.do) > 0;
+}
 function finishKeyed(t) {
   var tot = { di: 0, ai: 0, do: 0, comm: 0, hwDi: 0, hwDo: 0 };
   t.sections.forEach(function (s) { s.rows.forEach(function (r) {
     var g = { di: 0, ai: 0, do: 0, comm: 0 };
     Object.keys(r.pts).forEach(function (k) { var grp = k.split("@").pop(); if (g[grp] !== undefined) g[grp] += r.pts[k]; });
-    r.sum = g; r.hw = /數位訊號|接點/.test(r.format);
+    r.sum = g; r.hw = isHw(r.format, g);
     tot.di += g.di; tot.ai += g.ai; tot.do += g.do; tot.comm += g.comm;
     if (r.hw) { tot.hwDi += g.di; tot.hwDo += g.do; }
   }); });
