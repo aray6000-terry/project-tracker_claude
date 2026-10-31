@@ -76,10 +76,11 @@ function mergeSame(rows) {
 /** 把「數位訊號」項目的點分配到各樓層，回傳 {floor: [{type:'DI'|'DO', name, label}]} */
 function distribute(t, dr, P, floorsKnown) {
   var items = dr.items || [], out = {};
-  function add(f, type, name, label, n) { var a = out[f] = out[f] || []; for (var i = 0; i < n; i++) a.push({ type: type, name: name, label: label }); }
+  function add(f, type, name, label, n, loc) { var a = out[f] = out[f] || []; for (var i = 0; i < n; i++) a.push({ type: type, name: name, label: label, loc: loc || "" }); }
   t.sections.forEach(function (s) { s.rows.forEach(function (r) {
     if (!r.hw || !(r.sum.di + r.sum.do)) return;
     var share = {}, m = drawMatch(r.name, items), tot = 0, fs = floorsFromLoc(r.loc, floorsKnown);
+    if (!fs.length) fs = floorsFromLoc(r.name, floorsKnown).filter(function (f) { return floorsKnown.indexOf(f) >= 0; });   /* 位置沒寫、名稱有樓層（「R2F水箱」） */
     if (fs.length) fs.forEach(function (f) { share[f] = 1; tot++; });
     if (!tot && m.length) m.forEach(function (it) { Object.keys(it.floors).forEach(function (f) { share[f] = (share[f] || 0) + it.floors[f]; tot += it.floors[f]; }); });
     if (!tot) { share[P.coreFloor || "1F"] = 1; tot = 1; }
@@ -92,7 +93,7 @@ function distribute(t, dr, P, floorsKnown) {
         acc += share[f];
         var k = i === fsList.length - 1 ? left : Math.round(n * acc / tot) - (n - left);
         k = Math.max(0, Math.min(k, left)); left -= k;
-        add(f, c.group === "di" ? "DI" : "DO", r.name, c.label, k);
+        add(f, c.group === "di" ? "DI" : "DO", r.name, c.label, k, r.loc);
       });
     });
   }); });
