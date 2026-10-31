@@ -39,6 +39,7 @@ function render(cur,el){
   else if(dr) h+='<p class="meta">目前結果：'+esc(dr.fileName||"")+'｜'+esc(T.userName(dr.savedBy||""))+' '+fmtTime(dr.savedAt)+'</p>';
   if(dr) h+=drawingHtml(dr); else h+='<p class="meta">尚未分析圖面。</p>';
   h+='</section>';
+  if(c.quote && T.quoteGen) h+=T.quoteGen.html(cur,dr);
   /* B. 估價單 */
   h+='<section class="panel"><h3>估價單比對'+(c.quote?'與成本審查':'')+'</h3>';
   if(c.quote){
@@ -59,6 +60,7 @@ function render(cur,el){
   el.innerHTML=h;
   bind(cur,el);
   bindModels(cur,el);
+  if(c.quote && T.quoteGen) T.quoteGen.bind(cur,el,function(){ render(cur,el); },dr,function(){ T.views.qtyTab(cur,el); });
 }
 
 /* ---------- 圖面結果 ---------- */
@@ -216,7 +218,7 @@ function bind(cur,el){
     if(!/\.(dxf|zip)$/i.test(f.name)){ toast("請選擇 .dxf 或 .zip"); return; }
     var msg=$("dxfMsg"); msg.textContent="讀取檔案…"; $("btnDxf").disabled=true;
     f.arrayBuffer().then(function(buf){
-      var w=new Worker("dxf-worker.js?v=2.6.0");
+      var w=new Worker("dxf-worker.js?v=2.7.0");
       w.onmessage=function(ev){
         var m=ev.data;
         if(m.type==="progress"){ msg.textContent=m.text; return; }

@@ -2,12 +2,12 @@
 (function (root) {
 "use strict";
 var CN = "一二三四五六七八九十";
-function isCnNo(v) { return typeof v === "string" && /^[一二三四五六七八九十]{1,3}$/.test(v.trim()); }
+function isCnNo(v) { return typeof v === "string" && /^[一二三四五六七八九十]{1,3}$/.test(str(v)); }
 function cnVal(s) { s = str(s); if (s === "十") return 10; var m = /^([一二三四五六七八九])?(十)?([一二三四五六七八九])?$/.exec(s); if (!m) return 0;
   return m[2] ? (m[1] ? CN.indexOf(m[1]) + 1 : 1) * 10 + (m[3] ? CN.indexOf(m[3]) + 1 : 0) : CN.indexOf(m[1] || m[3]) + 1; }
 function itemNo(v) { if (typeof v === "number") return v; var t = str(v); return /^\d+([-.]\d+)*$/.test(t) ? t : null; }
 function num(v) { if (typeof v === "number") return isFinite(v) ? v : null; if (typeof v === "string" && /^-?[\d,.]+$/.test(v.trim())) return Number(v.replace(/,/g, "")); return null; }
-function str(v) { return v === null || v === undefined ? "" : String(v).trim(); }
+function str(v) { return v === null || v === undefined ? "" : String(v).trim().replace(/^ㄧ/, "一"); }
 function norm(s) { return str(s).replace(/\s+/g, ""); }
 
 var SEC_RULES = [
@@ -26,7 +26,7 @@ function parse(sheets) {
       row.forEach(function (v, i) {
         var t = norm(v);
         if (t === "項次") c.no = i;
-        else if (/^(工程項目|品名|項目|品名規格)$/.test(t)) c.name = i;
+        else if (/^(工程項目|品名|項目|品名規格|名稱|品名及規格)$/.test(t)) c.name = i;
         else if (t === "單位") c.unit = i;
         else if (t === "數量") c.qty = i;
         else if (t === "單價") c.price = i;
@@ -54,6 +54,7 @@ function parse(sheets) {
   for (var r = hr + 1; r < rows.length; r++) {
     var row = rows[r] || [], no = row[col.no], name = str(row[col.name]), qty = num(row[col.qty]), unit = str(row[col.unit]);
     if (!name) continue;
+    if (!seenDetail && (/^註/.test(str(no)) || /^\d+[.、．]\S/.test(name) && !itemNo(no)) && !/^(合|稅|總|小)\s*計|稅\s*金/.test(name.replace(/\s/g, ""))) { (meta.notes = meta.notes || []).push(name.replace(/^\d+[.、．]\s*/, "")); continue; }
     if (isCnNo(no)) {
       if (!seenDetail && qty !== null && unit) { summary.push({ no: str(no), name: name, price: num(row[col.amount]) || 0, cost: num(row[col.cost]) || 0, margin: num(row[col.margin]) }); continue; }
       if (seenDetail && cur && cnVal(no) <= cnVal(cur.no)) { cur.groups = (cur.groups || []).concat(name); continue; }   /* 子分項（例如 十二 之下的 一、二） */
