@@ -49,10 +49,17 @@ function render(cur,el){
   h+='<div class="kpis"><div class="kpi"><div class="n">'+res.sheets.length+'</div><div class="l">單線圖圖紙</div></div><div class="kpi"><div class="n">'+res.panels.filter(function(p){return !p.unit;}).length+'</div><div class="l">公設盤體</div></div>'
     +'<div class="kpi"><div class="n">'+v.points.length+'</div><div class="l">監控負載</div></div><div class="kpi"><div class="n">'+tt.di+'</div><div class="l">DI 點</div></div><div class="kpi"><div class="n">'+tt.do+'</div><div class="l">DO 點</div></div><div class="kpi"><div class="n">'+tt.comm+'</div><div class="l">通訊整合</div></div></div>';
   if(res.warnings&&res.warnings.length) h+='<div class="tipbox">'+res.warnings.map(esc).join("<br>")+'</div>';
-  h+='<div class="tools" style="margin:8px 0"><button class="btn small" id="sldCsv" type="button">下載編表（CSV）</button><button class="btn small" id="sldPrint" type="button">列印編表</button>'+(edit&&!st.draft?'<button class="btn small primary" id="sldApply" type="button">套用到 IO 模組表</button>':'')+'</div>';
+  var mt=SLD.moduleTable(v.points);
+  h+='<div class="tools" style="margin:8px 0"><button class="btn small" id="sldCsv" type="button">下載監控點編表（CSV）</button><button class="btn small" id="sldModCsv" type="button">下載模組編表（CSV）</button><button class="btn small" id="sldPrint" type="button">列印編表</button>'+(edit&&!st.draft?'<button class="btn small primary" id="sldApply" type="button">套用到 IO 模組表</button>':'')+'</div>';
   /* 樓層彙總 */
   h+='<h4 style="margin:10px 0 6px">各樓層監控箱彙總</h4><div class="tblwrap"><table><thead><tr><th>樓層</th><th>盤體</th><th>DI</th><th>DO</th><th>通訊</th><th>建議 IO 模組（預留 15%）</th></tr></thead><tbody>'
-    +v.byFloor.map(function(b){ return '<tr><td'+(b.floor==="未定位"?' class="bad"':'')+'>'+esc(b.floor)+'</td><td>'+esc(b.panels.join("、"))+'</td><td>'+b.di+'</td><td>'+b.do+'</td><td>'+b.comm+'</td><td>'+esc(modules(b.di,b.do))+'</td></tr>'; }).join("")+'</tbody></table></div>';
+    +v.byFloor.map(function(b){ var m=mt.filter(function(x){ return x.floor===(b.floor||"未定位").split("~")[0]; })[0]; return '<tr><td'+(b.floor==="未定位"?' class="bad"':'')+'>'+esc(b.floor)+'</td><td>'+esc(b.panels.join("、"))+'</td><td>'+b.di+'</td><td>'+b.do+'</td><td>'+b.comm+'</td><td>'+esc(modules(b.di,b.do))+(m&&m.modules.length?'<br><span class="meta mono">'+esc(m.modules.map(function(x){ return x.id+" "+x.type; }).join("、"))+'</span>':'')+'</td></tr>'; }).join("")+'</tbody></table></div>';
+  /* IO 模組編表（每層一個監控箱） */
+  h+='<h4 style="margin:12px 0 6px">IO 模組編表</h4><p class="meta">每層一個監控箱；燈光等有 DO 的迴路整組放同一顆 10DI8DO，泵浦、風機的運轉／故障放同一顆模組；空出的通道為預留（預留 15%）。</p>'
+    +mt.map(function(b){ return '<details'+(mt.length<=4?' open':'')+'><summary><b>'+esc(b.box)+'</b>｜DI '+b.di+'、DO '+b.do+(b.comm.length?'、通訊 '+b.comm.length:'')+'｜'+esc(b.modules.map(function(x){ return x.id+"（"+x.type+"）"; }).join("、")||"無 IO 模組")+'</summary>'
+      +'<div class="tblwrap"><table><thead><tr><th>模組</th><th>型號</th><th>通道</th><th>位址</th><th>點位編號</th><th>盤名／迴路</th><th>負載</th><th>點位</th></tr></thead><tbody>'
+      +b.rows.concat(b.comm).map(function(r){ var sp=r.load==="預留"; return '<tr'+(sp?' class="meta"':'')+'><td>'+esc(r.module)+'</td><td>'+esc(r.type)+'</td><td>'+esc(r.ch)+'</td><td class="mono">'+esc(r.tag)+'</td><td class="mono">'+esc(r.code)+'</td><td>'+esc(r.panel?r.panel+(r.no!==""?" #"+r.no:""):"")+'</td><td>'+esc(r.load)+'</td><td>'+esc(r.label)+'</td></tr>'; }).join("")
+      +'</tbody></table></div></details>'; }).join("");
   /* 盤體樓層（可修改） */
   var withPts={}; v.points.forEach(function(p){ withPts[p.panel]=1; });
   var pl=res.panels.filter(function(p){ return withPts[p.name]; });
@@ -69,6 +76,11 @@ function render(cur,el){
       +p.circuits.map(function(c){ return '<tr><td>'+c.no+'</td><td>'+esc(c.name)+'</td><td>'+esc(c.desc)+'</td><td class="mono">'+esc(c.ctrl.join(" "))+'</td><td>'+(c.point?'✓ 監控':c.feeds?'→ 分盤 '+esc(c.feeds):esc(c.skip||""))+'</td></tr>'; }).join("")+'</tbody></table></div>'; }).join("")+'</details>';
   el.innerHTML=h+'</section>';
   bind(cur,el);
+}
+function modRows(res){
+  var v=withFloors(res), mt=SLD.moduleTable(v.points), out=[["監控箱","模組","型號","通道","位址","點位編號","盤名","迴路","負載","點位"]];
+  mt.forEach(function(b){ b.rows.concat(b.comm).forEach(function(r){ out.push([b.box,r.module,r.type,r.ch,r.tag,r.code,r.panel,r.no,r.load,r.label]); }); });
+  return out;
 }
 function rows(res){
   var v=withFloors(res);
@@ -108,9 +120,12 @@ function bind(cur,el){
   };
   if($("btnSldCancel")) $("btnSldCancel").onclick=function(){ st.draft=null; render(cur,el); };
   if($("sldCsv")) $("sldCsv").onclick=function(){ csv(((cur.project&&cur.project.name)||"專案")+"_盤體監控點編表.csv",rows(res)); };
+  if($("sldModCsv")) $("sldModCsv").onclick=function(){ csv(((cur.project&&cur.project.name)||"專案")+"_IO模組編表.csv",modRows(res)); };
   if($("sldPrint")) $("sldPrint").onclick=function(){
-    var r=rows(res), w=window.open("","_blank"); if(!w){ toast("請允許彈出視窗"); return; }
-    w.document.write('<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>盤體監控點編表</title><style>body{font-family:"Microsoft JhengHei",sans-serif;padding:20px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #999;padding:4px 6px;font-size:12px}th{background:#eee}</style></head><body><h2>'+esc((cur.project&&cur.project.name)||"")+'｜盤體監控點編表</h2><table><thead><tr>'+r[0].map(function(x){return '<th>'+esc(x)+'</th>';}).join("")+'</tr></thead><tbody>'+r.slice(1).map(function(x){ return '<tr>'+x.map(function(c){return '<td>'+esc(c)+'</td>';}).join("")+'</tr>'; }).join("")+'</tbody></table></body></html>');
+    var w=window.open("","_blank"); if(!w){ toast("請允許彈出視窗"); return; }
+    var tbl=function(r){ return '<table><thead><tr>'+r[0].map(function(x){return '<th>'+esc(x)+'</th>';}).join("")+'</tr></thead><tbody>'+r.slice(1).map(function(x){ return '<tr>'+x.map(function(c){return '<td>'+esc(c)+'</td>';}).join("")+'</tr>'; }).join("")+'</tbody></table>'; };
+    var nm=esc((cur.project&&cur.project.name)||"");
+    w.document.write('<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>盤體監控點與 IO 模組編表</title><style>body{font-family:"Microsoft JhengHei",sans-serif;padding:20px}table{border-collapse:collapse;width:100%;margin-bottom:18px}th,td{border:1px solid #999;padding:4px 6px;font-size:12px}th{background:#eee}h2{page-break-before:always}h2:first-of-type{page-break-before:auto}</style></head><body><h2>'+nm+'｜盤體監控點編表</h2>'+tbl(rows(res))+'<h2>'+nm+'｜IO 模組編表</h2>'+tbl(modRows(res))+'</body></html>');
     w.document.close(); setTimeout(function(){ w.print(); },300);
   };
   if($("sldApply")) $("sldApply").onclick=function(){

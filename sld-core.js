@@ -119,7 +119,7 @@ function analyze(texts, opt) {
     if (p.unit && !opt.includeUnits) return;
     if (p.meters) points.push({ panel: p.name, floor: p.floor, no: "", load: "盤內電表 ×" + p.meters, cat: "電表", method: "通訊", di: 0, do: 0, comm: p.meters, label: "數位電表 MODBUS" });
     p.circuits.forEach(function (c) {
-      var text = (c.name + " " + c.desc).trim();
+      var text = (c.name + " " + c.desc).replace(/\s*不列入負載計算\s*/g, "（備用機）").replace(/\s+/g, " ").trim();
       var code = (c.name.match(/^[A-Z][A-Za-z0-9\-]{0,12}$/) || [])[0];
       if (code && panelNames[code]) { c.feeds = code; return; }   /* 分盤幹線：點位算在分盤 */
       var r = classify(text);
@@ -175,6 +175,54 @@ function toExtraIo(res) {
   return Object.keys(m).map(function (k) { var a = k.split("|"); return { floor: a[0], name: "單線圖：" + a[1], n: m[k] }; });
 }
 
-var api = { analyze: analyze, toExtraIo: toExtraIo, LOAD_RULES: LOAD_RULES };
+/** IO 模組編表：每層一個監控箱；有 DO 的負載（燈光）優先放 10DI8DO 並讓 DI／DO 同一顆，其餘 DI 依序填入；預留 15%（可調）。
+ *  points 需已套用手動樓層；回傳 [{floor, box, modules:[{id,type}], rows:[{module,type,ch,tag,code,panel,no,load,label}], comm:[...], di, do}] */
+function pad2(n) { return ("0" + n).slice(-2); }
+function pointCodes(p) {
+  var base = (p.floor || "X").split("~")[0] + "-" + p.panel + "-C" + (p.no === "" ? "M" : pad2(p.no)), out = [];
+  for (var i = 1; i <= p.di; i++) out.push({ type: "DI", code: base + "-DI" + i, label: (p.label.split("、")[i - 1] || "DI " + i).replace(/^DI\s*/, "") });
+  for (var j = 1; j <= p.do; j++) out.push({ type: "DO", code: base + "-DO" + j, label: (p.label.split("、")[p.di + j - 1] || "DO " + j).replace(/^DO\s*/, "") });
+  return out;
+}
+function moduleTable(points, opt) {
+  opt = opt || {};
+  var spare = opt.spare === undefined ? 0.15 : +opt.spare, rank = DXF ? DXF.floorRank : function () { return 0; };
+  var floors = {};
+  points.forEach(function (p) { var f = (p.floor || "未定位").split("~")[0]; (floors[f] = floors[f] || []).push(p); });
+  return Object.keys(floors).sort(function (a, b) { return rank(a) - rank(b); }).map(function (f) {
+    var pts = floors[f], io = pts.filter(function (p) { return p.method === "IO"; }), comm = pts.filter(function (p) { return p.method !== "IO"; });
+    var di = io.reduce(function (a, p) { return a + p.di; }, 0), dO = io.reduce(function (a, p) { return a + p.do; }, 0);
+    var tag = f === "未定位" ? "XX" : f.replace(/F$/, "");
+    var n10 = Math.ceil(dO * (1 + spare) / 8), rest = Math.max(0, Math.ceil(di * (1 + spare)) - n10 * 10), n18 = Math.ceil(rest / 18);
+    var mods = [], k = 0;
+    for (var i = 0; i < n10; i++) mods.push({ id: tag + "-M" + pad2(++k), type: "10DI8DO", di: 10, do: 8, ud: 0, uo: 0, rows: [] });
+    for (var j = 0; j < n18; j++) mods.push({ id: tag + "-M" + pad2(++k), type: "18DI", di: 18, do: 0, ud: 0, uo: 0, rows: [] });
+    function put(m, c, p) {
+      var ch = c.type === "DI" ? ++m.ud : ++m.uo;
+      m.rows.push({ module: m.id, type: m.type, ch: c.type + pad2(ch), tag: m.id + "-" + c.type + pad2(ch), code: c.code, panel: p.panel, no: p.no, load: p.load, label: c.label, cat: p.cat });
+    }
+    /* 有 DO 的負載：整組放同一顆 10DI8DO */
+    io.filter(function (p) { return p.do > 0; }).forEach(function (p) {
+      var cs = pointCodes(p), m = mods.filter(function (x) { return x.di - x.ud >= p.di && x.do - x.uo >= p.do; })[0];
+      cs.forEach(function (c) { var mm = m || mods.filter(function (x) { return c.type === "DI" ? x.ud < x.di : x.uo < x.do; })[0]; if (mm) put(mm, c, p); });
+    });
+    /* 只有 DI：同一負載的運轉／故障盡量放同一顆 */
+    io.filter(function (p) { return !p.do; }).forEach(function (p) {
+      var cs = pointCodes(p), m = mods.filter(function (x) { return x.di - x.ud >= p.di; })[0];
+      cs.forEach(function (c) { var mm = m || mods.filter(function (x) { return x.ud < x.di; })[0]; if (mm) put(mm, c, p); });
+    });
+    var rows = [];
+    mods.forEach(function (m) {
+      rows = rows.concat(m.rows.filter(function (r) { return /^DI/.test(r.ch); }).sort(function (a, b) { return a.ch < b.ch ? -1 : 1; }));
+      for (var a = m.ud + 1; a <= m.di; a++) rows.push({ module: m.id, type: m.type, ch: "DI" + pad2(a), tag: m.id + "-DI" + pad2(a), code: "", panel: "", no: "", load: "預留", label: "", cat: "" });
+      rows = rows.concat(m.rows.filter(function (r) { return /^DO/.test(r.ch); }).sort(function (a, b) { return a.ch < b.ch ? -1 : 1; }));
+      for (var b = m.uo + 1; b <= m.do; b++) rows.push({ module: m.id, type: m.type, ch: "DO" + pad2(b), tag: m.id + "-DO" + pad2(b), code: "", panel: "", no: "", load: "預留", label: "", cat: "" });
+    });
+    var crow = comm.map(function (p, i) { return { module: tag + "-COM", type: p.label, ch: "COM" + pad2(i + 1), tag: tag + "-COM" + pad2(i + 1), code: (p.floor || "X").split("~")[0] + "-" + p.panel + "-C" + (p.no === "" ? "M" : pad2(p.no)) + "-COM", panel: p.panel, no: p.no, load: p.load, label: p.label, cat: p.cat }; });
+    return { floor: f, box: (f === "未定位" ? "未定位" : f) + " 監控箱", di: di, do: dO, n10: n10, n18: n18, modules: mods.map(function (m) { return { id: m.id, type: m.type, usedDi: m.ud, usedDo: m.uo }; }), rows: rows, comm: crow };
+  });
+}
+
+var api = { analyze: analyze, toExtraIo: toExtraIo, moduleTable: moduleTable, LOAD_RULES: LOAD_RULES };
 if (typeof module !== "undefined" && module.exports) module.exports = api; else root.SLD = api;
 })(typeof self !== "undefined" ? self : this);
