@@ -14,6 +14,9 @@
 | `index.html` | 畫面與樣式（含 Content-Security-Policy） |
 | `app.js` | 登入、專案列表、專案頁、分享、權限管理、舊資料匯入 |
 | `config.js` | `CLIENT_ID`（Google OAuth 用戶端 ID）、`API_URL`（Apps Script 網址） |
+| `submittal-pdf.js` | 送審型錄 PDF 合併（封面、送審目錄、送審資料表＋原廠型錄，瀏覽器端產生） |
+| `catalog-seed.js` | 內建型錄庫清單（雲端「廠牌型號」資料夾的型錄檔 ID 與型號關鍵字） |
+| `pdf-lib.min.js` | PDF 合併元件 pdf-lib 1.17.1（MIT 授權） |
 
 後端程式（Code.gs）與完整的部署、資安說明存放於管理員的 Google Drive。
 
