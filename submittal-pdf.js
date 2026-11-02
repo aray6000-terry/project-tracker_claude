@@ -9,7 +9,7 @@
 var W=1240, H=1754, M=80, TW=W-2*M;            /* A4 @150dpi */
 var A4=[595.28,841.89];
 var FONT='"Microsoft JhengHei","PingFang TC","Noto Sans TC","Noto Sans CJK TC","Heiti TC",sans-serif';
-var TOC_ROWS=30, SEARCH_PAGES=8;
+var TOC_ROWS=27, SEARCH_PAGES=8;  /* 27 列：表格下緣留空間給右下角送審章 */
 var RED=[0.86,0.08,0.08];
 
 function str(v){ return v===null||v===undefined?"":String(v); }
@@ -117,8 +117,9 @@ function cleanTitle(t){ return str(t).replace(/\.(pdf|jpe?g|png)$/i,""); }
 /* pdf.js：找型號在型錄上的位置 */
 function loadPdfjs(){
   if(root.__subPdfjs) return root.__subPdfjs;
-  var base=(root.document&&document.baseURI)||"";
-  var url=root.SUBMITTAL_PDFJS_URL||new URL("pdfjs/pdf.min.mjs",base).href, wk=root.SUBMITTAL_PDFJS_WORKER||new URL("pdfjs/pdf.worker.min.mjs",base).href;
+  var base=(root.document&&document.baseURI)||"", url, wk;
+  try{ url=root.SUBMITTAL_PDFJS_URL||new URL("pdfjs/pdf.min.mjs",base).href; wk=root.SUBMITTAL_PDFJS_WORKER||new URL("pdfjs/pdf.worker.min.mjs",base).href; }
+  catch(e){ root.__subPdfjs=Promise.resolve(null); return root.__subPdfjs; }
   var dir=url.replace(/[^\/]*$/,"");
   root.__subPdfjs=import(url).then(function(m){ m.GlobalWorkerOptions.workerSrc=wk; return {getDocument:function(x){ return m.getDocument(x); },__opt:{cMapUrl:dir+"cmaps/",cMapPacked:true,standardFontDataUrl:dir+"standard_fonts/",wasmUrl:dir+"wasm/",isEvalSupported:false,stopAtErrors:false,verbosity:0}}; }).catch(function(e){ if(root.console) console.warn("pdf.js 載入失敗，型錄只標示項次",e); return null; });
   return root.__subPdfjs;
@@ -225,6 +226,28 @@ function markPage(doc,page,hit,label){
   });
 }
 
+/* ---------- 送審章：每頁右下角（Stamp 註解，可在 Acrobat 移動；全檔共用同一張圖） ---------- */
+function stampPages(doc,st){
+  var P=root.PDFLib, isPng=/png/i.test(str(st.mime))||(st.bytes[0]===0x89&&st.bytes[1]===0x50);
+  return (isPng?doc.embedPng(st.bytes):doc.embedJpg(st.bytes)).then(function(img){
+    var wPt=st.width||90, hPt=wPt*img.height/img.width, m=st.margin||14;
+    doc.getPages().forEach(function(pg,i){
+      if(i===0&&st.skipCover) return;
+      var mb=pg.getMediaBox(), rot=(pg.getRotation().angle%360+360)%360;
+      var x=mb.x+mb.width-wPt-m, y=mb.y+m+6;
+      if(rot===90){ x=mb.x+mb.width-hPt-m; y=mb.y+mb.height-wPt-m; }
+      else if(rot===180){ x=mb.x+m; y=mb.y+mb.height-hPt-m; }
+      else if(rot===270){ x=mb.x+m; y=mb.y+m; }
+      var w=(rot===90||rot===270)?hPt:wPt, h=(rot===90||rot===270)?wPt:hPt;
+      /* 旋轉頁的圖要反向轉，讓使用者看到的章是正的 */
+      var cm=rot===90?["0 1 -1 0",x+w,y]:rot===180?["-1 0 0 -1",x+w,y+h]:rot===270?["0 -1 1 0",x,y+h]:["1 0 0 1",x,y];
+      var sx=(rot===90||rot===270)?h:w, sy=(rot===90||rot===270)?w:h;
+      addAnnot(doc,pg,{Subtype:"Stamp",Name:"SubmittalSeal",Rect:[x,y,x+w,y+h],Contents:"送審章"},
+        {content:"q "+cm[0]+" "+f2(cm[1])+" "+f2(cm[2])+" cm "+f2(sx)+" 0 0 "+f2(sy)+" 0 0 cm /Seal Do Q",res:{XObject:{Seal:img.ref}}});
+    });
+  });
+}
+
 /* ---------- 書籤 ---------- */
 function addOutline(doc,entries){
   if(!entries.length) return;
@@ -240,7 +263,7 @@ function addOutline(doc,entries){
 }
 
 /**
- * o = {project, client, contractor, date, mark(預設 true), items:[{no,section,name,brand,model,keys,qty,unit,quoteBrand,spec,note,
+ * o = {project, client, contractor, date, mark(預設 true), stamp:{bytes,mime,width(pt，預設 90),skipCover}, items:[{no,section,name,brand,model,keys,qty,unit,quoteBrand,spec,note,
  *        files:[{id,title,mime,bytes:Uint8Array}]}]}
  * progress(text) 可省略。回傳 Promise<Uint8Array>
  */
@@ -346,7 +369,9 @@ function build(o,progress){
       return jobs.reduce(function(p2,j){ return p2.then(function(){ return markPage(out,j[0],j[1],j[2].join("、")); }); },Promise.resolve());
     }); },Promise.resolve());
   })
-  /* 6. 頁碼（封面以外，右下紅字） */
+  /* 6. 送審章 */
+  .then(function(){ if(o.stamp&&o.stamp.bytes&&o.stamp.bytes.length){ progress("加蓋送審章…"); return stampPages(out,o.stamp); } })
+  /* 7. 頁碼（封面以外，下方置中紅字） */
   .then(function(){ return out.embedFont(P.StandardFonts.HelveticaBold); })
   .then(function(fnt){
     out.getPages().forEach(function(pg,i){

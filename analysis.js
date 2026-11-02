@@ -152,7 +152,7 @@ function catOf(p){
   var ss=seedByModel(p.model), fs=[];
   ss.forEach(function(s){ s.files.forEach(function(f){ if(!fs.some(function(x){ return x.id===f.id; })) fs.push(f); }); });
   if(fs.length) return {files:fs,src:"型錄庫"};
-  var lib=(st.catlib||[]).filter(function(f){ return f.model&&normTok(f.model)===normTok(p.model); });
+  var lib=(st.catlib||[]).filter(function(f){ return !isSeal(f)&&f.model&&normTok(f.model)===normTok(p.model); });
   if(lib.length) return {files:[{id:lib[0].id,title:lib[0].title}],src:"上傳"};
   return {files:[],src:"",ext:/^https:\/\//.test(p.link||"")?p.link:""};
 }
@@ -179,11 +179,47 @@ function matchRows(q){
   });
   return rows;
 }
+/* ---------- 送審章（每頁右下角） ---------- */
+var SEAL_KEY="subSeal", SEAL_BRAND="送審章";
+function sealGet(){ var v=null; try{ v=JSON.parse(localStorage.getItem(SEAL_KEY)||"null"); }catch(e){ v=null; } return v||st.sealMem||{}; }
+function sealSet(v){ try{ localStorage.setItem(SEAL_KEY,JSON.stringify(v)); return true; }catch(e){ return false; } }
+function isSeal(f){ return f&&(f.brand===SEAL_BRAND||/送審章/.test(f.title||"")); }
+/* 去白底＋縮到最長邊 900px，輸出 PNG dataURL */
+function sealPrep(file,clearWhite){
+  return new Promise(function(res,rej){
+    var url=URL.createObjectURL(file), img=new Image();
+    img.onload=function(){
+      var s=Math.min(1,900/Math.max(img.width,img.height)), c=document.createElement("canvas");
+      c.width=Math.round(img.width*s); c.height=Math.round(img.height*s);
+      var x=c.getContext("2d"); x.drawImage(img,0,0,c.width,c.height);
+      if(clearWhite){ var d=x.getImageData(0,0,c.width,c.height), p=d.data;
+        for(var i=0;i<p.length;i+=4){ var m=Math.min(p[i],p[i+1],p[i+2]); if(m>235) p[i+3]=0; else if(m>200) p[i+3]=Math.round(p[i+3]*(235-m)/35); }
+        x.putImageData(d,0,0); }
+      URL.revokeObjectURL(url); res(c.toDataURL("image/png"));
+    };
+    img.onerror=function(){ URL.revokeObjectURL(url); rej(new Error("無法讀取圖片，請用 PNG 或 JPG")); };
+    img.src=url;
+  });
+}
+function sealHtml(edit){
+  var s=sealGet(), lib=(st.catlib||[]).filter(isSeal), on=s.data&&s.on!==false;
+  var h='<div class="uprow" id="sealBar" style="border:1px solid var(--line);border-radius:8px;padding:8px 10px">'
+    +'<b>送審章</b>'+(s.data?'<img src="'+esc(s.data)+'" alt="目前的送審章" style="height:56px;width:auto;background:#fff;border:1px solid var(--line);border-radius:6px">':'<span class="hint">尚未設定</span>')
+    +(s.data?'<label class="hint"><input type="checkbox" id="sealOn"'+(on?" checked":"")+'> 每頁右下角加蓋</label>'
+      +'<label class="hint">大小 <select id="sealSize" class="fld">'+[["70","小"],["90","中"],["115","大"]].map(function(x){ return '<option value="'+x[0]+'"'+(String(s.size||90)===x[0]?" selected":"")+'>'+x[1]+'</option>'; }).join("")+'</select></label>'
+      +'<label class="hint"><input type="checkbox" id="sealCover"'+(s.skipCover?" checked":"")+'> 封面不蓋</label>':'')
+    +(lib.length?'<select id="sealPick" class="fld"><option value="">選公司送審章…</option>'+lib.map(function(f){ return '<option value="'+esc(f.id)+'"'+(s.fileId===f.id?" selected":"")+'>'+esc(f.model||f.title)+'</option>'; }).join("")+'</select>':'')
+    +(edit?'<input type="file" id="sealFile" accept=".png,.jpg,.jpeg"><label class="hint"><input type="checkbox" id="sealWhite" checked> 去除白底</label><button class="btn small" id="sealUp" type="button">上傳送審章</button>':'')
+    +(s.data?'<button class="btn small" id="sealClr" type="button">不使用</button>':'')
+    +'<span class="hint" id="sealMsg"></span></div>';
+  return h;
+}
 function modelsHtml(q,edit){
   var h='<section class="panel" id="mdlPanel"><div class="row" style="flex-wrap:wrap"><h3>設備型號對應與送審型錄</h3>'+(st.db?'<div class="tools">'+(edit?'<button class="btn small" id="btnMdlSave" type="button">儲存型號</button><button class="btn small" id="btnSubmittal" type="button">產生送審資料</button>':'')+'<button class="btn small primary" id="btnSubPdf" type="button">輸出送審型錄 PDF</button><button class="btn small" id="btnSubPrint" type="button">列印送審清單</button></div>':'')+'</div>'
-    +'<p class="meta">依估價項目的廠牌，從「設備單價資料庫」與「型錄庫」找出對應型號與原廠型錄。每一項都可以從選單改選其他型號，或選「手動輸入型號…」；型錄可按「更換」改選或上傳（PDF／JPG／PNG），上傳的型錄會存進公司型錄庫，下次其他專案也能選用。確認後按「輸出送審型錄 PDF」，依估價單項次排成「封面 → 送審目錄 → 送審資料表＋原廠型錄」一份 PDF；型錄上會自動框選型號、以箭頭標示對應項次（可在 Acrobat 移動調整），同一份型錄只附一次並標示所有共用項次，每頁加紅色頁碼。</p>';
+    +'<p class="meta">依估價項目的廠牌，從「設備單價資料庫」與「型錄庫」找出對應型號與原廠型錄。每一項都可以從選單改選其他型號，或選「手動輸入型號…」；型錄可按「更換」改選或上傳（PDF／JPG／PNG），上傳的型錄會存進公司型錄庫，下次其他專案也能選用。送審章上傳一次即可（建議 PNG，可自動去白底），輸出時每頁右下角加蓋。確認後按「輸出送審型錄 PDF」，依估價單項次排成「封面 → 送審目錄 → 送審資料表＋原廠型錄」一份 PDF；型錄上會自動框選型號、以箭頭標示對應項次（可在 Acrobat 移動調整），同一份型錄只附一次並標示所有共用項次，每頁加紅色頁碼。</p>';
   if(!st.db) return h+'<button class="btn small" id="btnLoadDb" type="button">載入設備資料庫並配對</button></section>';
   if(st.catlibErr) h+='<div class="tipbox"><b>型錄庫無法讀取</b>'+esc(st.catlibErr)+'</div>';
+  h+=sealHtml(edit);
   var rows=matchRows(q), f=st.mf||"todo";
   var cnt={}, nocat=0; rows.forEach(function(r){ cnt[r.status]=(cnt[r.status]||0)+1; if(r.pick&&r.pick.model!=="-"&&!catOf(r.pick).files.length) nocat++; });
   h+='<div class="filters"><div class="seg">'+[["todo","需處理（"+((cnt.suggest||0)+(cnt.none||0))+"）"],["nocat","缺型錄（"+nocat+"）"],["all","全部（"+rows.length+"）"]].map(function(x){ return '<button type="button" data-mf="'+x[0]+'" class="'+(f===x[0]?"on":"")+'">'+x[1]+'</button>'; }).join("")+'</div>'
@@ -229,6 +265,28 @@ function bindModels(cur,el){
     Promise.all([api("devices",{all:true}),libP]).then(function(a){ st.db=a[0].devices; st.sheets=a[0].sheets; render(cur,el); }).catch(fail);
   };
   el.querySelectorAll("[data-mf]").forEach(function(b){ b.onclick=function(){ st.mf=b.dataset.mf; render(cur,el); }; });
+  /* 送審章 */
+  var sv=sealGet(), sealSave=function(v){ if(!sealSet(v)) toast("瀏覽器無法記住送審章（可能是無痕模式），本次仍可使用"); st.sealMem=v; };
+  if($("sealOn")) $("sealOn").onchange=function(){ sv.on=this.checked; sealSave(sv); };
+  if($("sealSize")) $("sealSize").onchange=function(){ sv.size=+this.value; sealSave(sv); };
+  if($("sealCover")) $("sealCover").onchange=function(){ sv.skipCover=this.checked; sealSave(sv); };
+  if($("sealClr")) $("sealClr").onclick=function(){ sealSave({}); try{ localStorage.removeItem(SEAL_KEY); }catch(e){} render(cur,el); };
+  if($("sealPick")) $("sealPick").onchange=function(){
+    var id=this.value; if(!id) return; $("sealMsg").textContent="讀取中…";
+    api("catalogFile",{id:cur.id,fileId:id}).then(function(f){ sv={data:"data:"+(f.mime||"image/png")+";base64,"+f.data,mime:f.mime,fileId:id,on:true,size:sv.size||90}; sealSave(sv); render(cur,el); }).catch(fail);
+  };
+  if($("sealUp")) $("sealUp").onclick=function(){
+    var fl=$("sealFile").files[0], btn=this; if(!fl){ toast("請先選擇送審章圖片（PNG／JPG）"); return; }
+    if(fl.size>8*1024*1024){ toast("圖片超過 8MB"); return; }
+    btn.disabled=true; $("sealMsg").textContent="處理中…";
+    sealPrep(fl,$("sealWhite").checked).then(function(du){
+      sv={data:du,mime:"image/png",on:true,size:sv.size||90}; sealSave(sv);
+      var co=((cur.project||{}).company||"")||"公司";
+      return api("catalogUpload",{id:cur.id,fileName:"送審章.png",data:du.split(",")[1],brand:SEAL_BRAND,model:co+" 送審章",name:"送審章"})
+        .then(function(meta){ sv.fileId=meta.id; sealSave(sv); (st.catlib=st.catlib||[]).push(meta); toast("送審章已上傳，公司其他人也能選用"); })
+        .catch(function(){ toast("送審章已存在這台電腦（後端未更新，未上傳到公司型錄庫）"); });
+    }).then(function(){ render(cur,el); }).catch(function(e){ btn.disabled=false; $("sealMsg").textContent=""; fail(e); });
+  };
   if(!q||!st.db) return;
   var rows=matchRows(q), byKey={}; rows.forEach(function(r){ byKey[r.key]=r; });
   function pickOf(d){ return {sheet:d.sheet,name:d.name,brand:d.brand,model:d.model,link:d.link,price:d.price}; }
@@ -274,7 +332,7 @@ function bindModels(cur,el){
     var go=function(){
       var qq=$("catQ").value.trim().toLowerCase(), res=[];
       SEED.forEach(function(s){ if(!qq||(s.brand+" "+s.model+" "+s.name+" "+s.keys.join(" ")+" "+s.files.map(function(f){ return f.title; }).join(" ")).toLowerCase().indexOf(qq)>=0) res.push({t:(s.brand+" "+s.model).trim(),d:s.name+"｜內建型錄庫",files:s.files}); });
-      (st.catlib||[]).forEach(function(f){ if(!qq||(f.title+" "+f.brand+" "+f.model+" "+f.name).toLowerCase().indexOf(qq)>=0) res.push({t:(f.brand+" "+f.model).trim()||f.title,d:f.title+"｜平台上傳",files:[{id:f.id,title:f.title}]}); });
+      (st.catlib||[]).forEach(function(f){ if(isSeal(f)) return; if(!qq||(f.title+" "+f.brand+" "+f.model+" "+f.name).toLowerCase().indexOf(qq)>=0) res.push({t:(f.brand+" "+f.model).trim()||f.title,d:f.title+"｜平台上傳",files:[{id:f.id,title:f.title}]}); });
       st.db.forEach(function(d){ var id=driveId(d.link); if(id&&(!qq||(d.name+" "+d.brand+" "+d.model).toLowerCase().indexOf(qq)>=0)) res.push({t:d.brand+" "+d.model,d:d.name+"｜設備資料庫連結",files:[{id:id,title:d.brand+" "+d.model+" 型錄"}]}); });
       res=res.slice(0,30);
       $("catRes").innerHTML=res.length?res.map(function(x,i){ return '<li><div class="main"><b>'+esc(x.t)+'</b><span class="meta">'+esc(x.d)+'</span></div><button class="btn small" data-cpick="'+i+'" type="button">選用</button><button class="btn small" data-cadd="'+i+'" type="button">加入</button></li>'; }).join(""):'<li class="meta">型錄庫找不到，請直接上傳。</li>';
@@ -371,7 +429,8 @@ function bindModels(cur,el){
           files:c.files.filter(function(f){ return st.fcache[f.id]; }).map(function(f){ var x=st.fcache[f.id]; return {id:f.id,title:x.name||f.title,mime:x.mime,bytes:x.bytes}; }),
           failed:c.files.filter(function(f){ return !st.fcache[f.id]; }).map(function(f){ return shortT(f.title)+"（"+(errs[f.id]||"讀取失敗")+"）"; })};
       });
-      return SUBMITTAL_PDF.build({project:pj.name||qm.project||"",client:pj.client||qm.client||"",contractor:qm.company||pj.company||"",items:items},say).then(function(bytes){
+      var sl=st.sealMem||sealGet(), stamp=sl.data&&sl.on!==false?{bytes:b64ToBytes(sl.data.split(",")[1]),mime:sl.mime||"image/png",width:sl.size||90,skipCover:!!sl.skipCover}:null;
+      return SUBMITTAL_PDF.build({project:pj.name||qm.project||"",client:pj.client||qm.client||"",contractor:qm.company||pj.company||"",items:items,stamp:stamp},say).then(function(bytes){
         var a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([bytes],{type:"application/pdf"}));
         a.download=((pj.name||"專案")+"_送審型錄.pdf").replace(/[\\\/:*?"<>|]/g,"_"); document.body.appendChild(a); a.click();
         setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },3000);
@@ -403,7 +462,7 @@ function bind(cur,el){
     if(!/\.(dxf|zip)$/i.test(f.name)){ toast("請選擇 .dxf 或 .zip"); return; }
     var msg=$("dxfMsg"); msg.textContent="讀取檔案…"; $("btnDxf").disabled=true;
     f.arrayBuffer().then(function(buf){
-      var w=new Worker("dxf-worker.js?v=2.9.1");
+      var w=new Worker("dxf-worker.js?v=2.9.2");
       w.onmessage=function(ev){
         var m=ev.data;
         if(m.type==="progress"){ msg.textContent=m.text; return; }
