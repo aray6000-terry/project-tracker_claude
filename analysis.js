@@ -181,7 +181,7 @@ function matchRows(q){
 }
 function modelsHtml(q,edit){
   var h='<section class="panel" id="mdlPanel"><div class="row" style="flex-wrap:wrap"><h3>設備型號對應與送審型錄</h3>'+(st.db?'<div class="tools">'+(edit?'<button class="btn small" id="btnMdlSave" type="button">儲存型號</button><button class="btn small" id="btnSubmittal" type="button">產生送審資料</button>':'')+'<button class="btn small primary" id="btnSubPdf" type="button">輸出送審型錄 PDF</button><button class="btn small" id="btnSubPrint" type="button">列印送審清單</button></div>':'')+'</div>'
-    +'<p class="meta">依估價項目的廠牌，從「設備單價資料庫」與「型錄庫」找出對應型號與原廠型錄。每一項都可以從選單改選其他型號，或選「手動輸入型號…」；型錄可按「更換」改選或上傳（PDF／JPG／PNG），上傳的型錄會存進公司型錄庫，下次其他專案也能選用。確認後按「輸出送審型錄 PDF」，依估價單項次排成「封面 → 送審目錄 → 送審資料表＋原廠型錄」一份 PDF。</p>';
+    +'<p class="meta">依估價項目的廠牌，從「設備單價資料庫」與「型錄庫」找出對應型號與原廠型錄。每一項都可以從選單改選其他型號，或選「手動輸入型號…」；型錄可按「更換」改選或上傳（PDF／JPG／PNG），上傳的型錄會存進公司型錄庫，下次其他專案也能選用。確認後按「輸出送審型錄 PDF」，依估價單項次排成「封面 → 送審目錄 → 送審資料表＋原廠型錄」一份 PDF；型錄上會自動框選型號、以箭頭標示對應項次（可在 Acrobat 移動調整），同一份型錄只附一次並標示所有共用項次，每頁加紅色頁碼。</p>';
   if(!st.db) return h+'<button class="btn small" id="btnLoadDb" type="button">載入設備資料庫並配對</button></section>';
   if(st.catlibErr) h+='<div class="tipbox"><b>型錄庫無法讀取</b>'+esc(st.catlibErr)+'</div>';
   var rows=matchRows(q), f=st.mf||"todo";
@@ -367,7 +367,8 @@ function bindModels(cur,el){
       var items=list.map(function(r){
         var c=catOf(r.pick), sec=r.key.split("-")[0];
         return {no:r.key,section:sec+"、"+r.section,name:r.name,brand:r.pick.brand||"",model:r.pick.model||"",qty:r.qty,unit:r.unit||"",quoteBrand:r.brand||r.brandSpec||"",spec:"",note:r.pick.manual?"手動指定型號":"",
-          files:c.files.filter(function(f){ return st.fcache[f.id]; }).map(function(f){ var x=st.fcache[f.id]; return {title:x.name||f.title,mime:x.mime,bytes:x.bytes}; }),
+          keys:seedByModel(r.pick.model).reduce(function(k,s){ return k.concat(s.keys,[s.model]); },[]),
+          files:c.files.filter(function(f){ return st.fcache[f.id]; }).map(function(f){ var x=st.fcache[f.id]; return {id:f.id,title:x.name||f.title,mime:x.mime,bytes:x.bytes}; }),
           failed:c.files.filter(function(f){ return !st.fcache[f.id]; }).map(function(f){ return shortT(f.title)+"（"+(errs[f.id]||"讀取失敗")+"）"; })};
       });
       return SUBMITTAL_PDF.build({project:pj.name||qm.project||"",client:pj.client||qm.client||"",contractor:qm.company||pj.company||"",items:items},say).then(function(bytes){
@@ -402,7 +403,7 @@ function bind(cur,el){
     if(!/\.(dxf|zip)$/i.test(f.name)){ toast("請選擇 .dxf 或 .zip"); return; }
     var msg=$("dxfMsg"); msg.textContent="讀取檔案…"; $("btnDxf").disabled=true;
     f.arrayBuffer().then(function(buf){
-      var w=new Worker("dxf-worker.js?v=2.8.0");
+      var w=new Worker("dxf-worker.js?v=2.9.1");
       w.onmessage=function(ev){
         var m=ev.data;
         if(m.type==="progress"){ msg.textContent=m.text; return; }
