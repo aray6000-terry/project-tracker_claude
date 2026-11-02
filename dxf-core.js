@@ -50,6 +50,10 @@ function parse(text, onProgress) {
       var s = e.t === "MTEXT" ? cleanMtext((e.v["3all"] || "") + (e.v["1"] || "")) : (e.v["1"] || "").trim();
       if (s) texts.push({ s: s, x: +e.v["10"] || 0, y: +e.v["20"] || 0, h: +(e.v["40"] || 0) });
     }
+    else if (e.t === "ATTDEF") {   /* 模型空間裡被炸開的圖框屬性：AutoCAD 顯示的是標籤（例：「地下五層」「強波器配置平面圖」） */
+      var tg = (e.v["2"] || "").trim();
+      if (tg && /[一-鿿]/.test(tg)) texts.push({ s: tg, x: +e.v["10"] || 0, y: +e.v["20"] || 0, h: +(e.v["40"] || 0), att: true });
+    }
   }
   for (var i = 0; i + 1 < n; i += 2) {
     var code = lines[i].trim(), val = lines[i + 1];
@@ -83,7 +87,7 @@ function parse(text, onProgress) {
   flush();
   explodeTexts(blocks, bases, inserts.concat(tableIns), texts);
   explodeSegs(blocks, bases, inserts, segs);
-  return { blocks: blocks, inserts: inserts, texts: texts, oles: oles, segs: segs };
+  return { blocks: blocks, inserts: inserts, texts: texts, oles: oles, segs: segs, bases: bases };
 }
 
 function pushPoly(out, layer, pts, closed) {
@@ -345,6 +349,92 @@ function analyze(text, opt) {
     usedD.push(dh);
     buildTable(lg || dh, dh, qh, isFloorKey(qh.s) ? qh.s : "", true);
   });
+  /* 方式四：設備在欄、樓層／盤體在列的「轉置」數量表（Philips 燈控格式）：
+     表頭左上「區域」，往右每欄一種設備（欄上方有廠商、型號、名稱），每列一個盤（樓層＋盤名），最後一列「合計」 */
+  var anchors = T.filter(function (t) { return /^區\s*域$/.test(t.s); }).sort(function (a, b) { return b.y - a.y; });
+  anchors.forEach(function (a, ai) {
+    var hh = a.h || 50;
+    var below = anchors.filter(function (o) { return o !== a && o.y < a.y && Math.abs(o.x - a.x) < hh * 20; })[0];
+    var yStop = below ? below.y + hh * 3 : a.y - hh * 200;
+    var box = T.filter(function (t) { return t.x > a.x - hh * 3 && t.x < a.x + hh * 80 && t.y < a.y + hh * 4 && t.y > yStop; });
+    var labelX = box.filter(function (t) { return t.y < a.y - hh * 0.3 && /[A-Za-z一-鿿]/.test(t.s) && t.x < a.x + hh * 8; });
+    var seenN = {};
+    var nums = box.filter(function (t) {
+      if (!/^\d+$/.test(t.s.trim()) || t.y >= a.y + hh * 0.5) return false;
+      var k = t.s.trim() + "@" + Math.round(t.x) + "," + Math.round(t.y); if (seenN[k]) return false; seenN[k] = 1; return true;   /* 圖上重疊的重複文字只算一次 */
+    });
+    if (nums.length < 2) return;
+    /* 依 y 分列 */
+    nums.sort(function (p, q) { return q.y - p.y || p.x - q.x; });
+    var rws = [];
+    nums.forEach(function (t) { var r = rws[rws.length - 1]; if (r && Math.abs(r.y - t.y) < hh * 0.5) r.cells.push(t); else rws.push({ y: t.y, cells: [t] }); });
+    /* 每列的列名（左側文字）；列名是「合計」者為合計列 */
+    rws.forEach(function (r) {
+      var minX = Math.min.apply(null, r.cells.map(function (c) { return c.x; }));
+      r.minX = minX;
+      r.labels = labelX.filter(function (t) { return Math.abs(t.y - r.y) < hh * 0.6 && t.x < minX - hh * 0.5; }).sort(function (p, q) { return p.x - q.x; });
+      r.total = r.labels.some(function (t) { return /^合\s*計$|^總\s*計$/.test(t.s); });
+    });
+    rws = rws.filter(function (r) { return r.labels.length; });
+    if (!rws.length) return;
+    var firstColX = Math.min.apply(null, rws.map(function (r) { return r.minX; }));
+    /* 連續的資料列（列距穩定），遇到合計列為止 */
+    var data = [], tot = null, gap = 0;
+    for (var i = 0; i < rws.length; i++) {
+      var r = rws[i], prevY = data.length ? data[data.length - 1].y : a.y;
+      if (!data.length && prevY - r.y > hh * 12) break;
+      if (data.length >= 2 && gap && prevY - r.y > gap * 3.5) break;
+      if (r.total) { tot = r; break; }
+      if (data.length === 1) gap = prevY - r.y;
+      data.push(r);
+    }
+    if (!data.length) return;
+    var topData = data[0].y;
+    /* 欄：數字的 x 分群 */
+    var colsX = [];
+    data.concat(tot ? [tot] : []).forEach(function (r) { r.cells.forEach(function (c) { if (!colsX.some(function (x) { return Math.abs(x - c.x) < hh * 2; })) colsX.push(c.x); }); });
+    colsX.sort(function (p, q) { return p - q; });
+    var hdrT = box.filter(function (t) { return t.y > topData + hh * 0.5 && t.y < a.y + hh * 4 && t.x > firstColX - hh * 4; });
+    var cols = colsX.map(function (x) {
+      var near = hdrT.filter(function (t) {
+        var nx = colsX.reduce(function (m, c) { return Math.abs(c - t.x) < Math.abs(m - t.x) ? c : m; }, colsX[0]);
+        return nx === x && Math.abs(t.x - x) < hh * 6;
+      });
+      var cn = near.filter(function (t) { return /[一-鿿]/.test(t.s) && !/^(廠\s*商|型\s*號|區\s*域|備\s*註|數\s*量|品\s*牌)$/.test(t.s); }).sort(function (p, q) { return p.y - q.y; });
+      var model = near.filter(function (t) { return !/[一-鿿]/.test(t.s) && !/^(Philips|PHILIPS|Lutron|Panasonic)$/i.test(t.s.trim()); })[0];
+      return { x: x, name: cn.length ? cn[0].s.replace(/\s+/g, " ").replace(/^(\S+) (\S+)$/, function (m, p, q) { return /[一-鿿]$/.test(p) && /^[一-鿿]/.test(q) ? p + q : m; }).trim() : "", model: model ? model.s.trim() : "" };
+    });
+    cols = cols.filter(function (c) { return c.name; });
+    if (!cols.length) return;
+    function colOf(t) { var b = null, bd = hh * 2; cols.forEach(function (c) { var dd = Math.abs(c.x - t.x); if (dd < bd) { bd = dd; b = c; } }); return b; }
+    /* 列 → 樓層：左側文字中最接近的樓層字（合併儲存格的樓層字會在兩列之間） */
+    var flLabels = labelX.filter(function (t) { return t.x < firstColX - hh * 0.5 && isFloorKey(cnFloor(t.s.replace(/\s/g, ""))); });
+    var lim = (gap || hh * 2) * 0.8;
+    var ctx = T.filter(function (t) { return Math.abs(t.x - a.x) < hh * 400 && Math.abs(t.y - a.y) < hh * 400 && /燈控|照明|電驛|調光|Dynalite|DyNet/i.test(t.s); }).length;
+    var sysK = ctx ? "lighting" : null;
+    var byFloor = {}, order = [];
+    data.forEach(function (r) {
+      var fb = null, fd = Infinity;
+      flLabels.forEach(function (t) { var dd = Math.abs(t.y - r.y); if (dd <= lim && dd < fd) { fd = dd; fb = t; } });
+      var fk = fb ? cnFloor(fb.s.replace(/\s/g, "")) : "";
+      var key = fk || "未分層";
+      if (!byFloor[key]) { byFloor[key] = { key: key, floors: fk ? floorsOf(fk) : [], q: {}, panels: [] }; order.push(key); }
+      var g = byFloor[key];
+      g.panels.push(r.labels.map(function (t) { return t.s.replace(/\s/g, ""); }).filter(function (s) { return s !== fk; }).join("/"));
+      r.cells.forEach(function (c) { var col = colOf(c); if (col) g.q[col.name] = (g.q[col.name] || 0) + (+c.s); });
+    });
+    order.forEach(function (k) {
+      var g = byFloor[k];
+      var tb = { key: g.key === "未分層" ? "未分層（" + g.panels.join("、") + "）" : g.key, floors: g.floors.length ? g.floors : [g.key === "未分層" ? "未分層" : g.key], needFloor: false, x: a.x, y: a.y, box: [a.x - hh * 3, (tot || data[data.length - 1]).y - hh, colsX[colsX.length - 1] + hh * 4, a.y + hh * 4], rows: [], transposed: true };
+      cols.forEach(function (c) { if (g.q[c.name]) tb.rows.push({ name: c.name, qty: g.q[c.name], raw: String(g.q[c.name]), y: a.y, block: null, dev: true, sys: sysK, model: c.model }); });
+      if (tb.rows.length) tables.push(tb);
+    });
+    if (tot) cols.forEach(function (c) {
+      var tc = tot.cells.filter(function (t) { return colOf(t) === c; })[0], sum = 0;
+      order.forEach(function (k) { sum += byFloor[k].q[c.name] || 0; });
+      if (tc && +tc.s !== sum) warnings.push("數量表的「" + c.name + "」各列加總 " + sum + "，與表上合計 " + tc.s + " 不同，請確認");
+    });
+  });
   function buildTable(h, dh, qh, keyRaw, legend, multi) {
     var hh = h.h || 50;
     var top = multi ? multi.top : Math.min(qh.y, dh.y);
@@ -515,8 +605,9 @@ function analyze(text, opt) {
   tables.forEach(function (tb) {
     var byBlock = {};
     tb.rows.forEach(function (r) {
-      if (!r.block && (!r.raw || (!knownName[r.name] && sysOf(r.name, opt.rules) === "other"))) return;   /* 不像設備列（圖面註記、地名等） */
-      var it = items[r.name] = items[r.name] || { name: r.name, sys: sysOf(r.name, opt.rules), block: r.block, total: 0, floors: {} };
+      if (!r.block && !r.dev && (!r.raw || (!knownName[r.name] && sysOf(r.name, opt.rules) === "other"))) return;   /* 不像設備列（圖面註記、地名等） */
+      var it = items[r.name] = items[r.name] || { name: r.name, sys: r.sys || sysOf(r.name, opt.rules), block: r.block, total: 0, floors: {} };
+      if (r.model && !it.model) it.model = r.model;
       tb.floors.forEach(function (f) { it.floors[f] = (it.floors[f] || 0) + r.qty; it.total += r.qty; floors[f] = 1; });
       if (r.block) byBlock[r.block] = (byBlock[r.block] || 0) + r.qty;
     });
@@ -553,11 +644,21 @@ function analyze(text, opt) {
       warnings.push("平面圖「" + t.s + "」附近找不到數量表，圖上也沒有可辨識的設備符號");
     }
   });
+  if (tables.some(function (tb) { return tb.transposed; })) warnings = warnings.filter(function (w) { return !/讀不到欄位標題/.test(w); });
+  var legendInfo = null;
+  if (!tables.length && !opt.noLegend) {   /* 沒有數量表：依圖例數符號 */
+    legendInfo = legendCount(T, d.inserts, opt, d.blocks, d.segs);
+    if (legendInfo) {
+      legendInfo.items.forEach(function (it) { if (!items[it.name]) items[it.name] = it; });
+      legendInfo.floors.forEach(function (f) { floors[f] = 1; });
+      warnings = warnings.filter(function (w) { return !/附近找不到數量表|沒有數量表，已改用圖上符號計數/.test(w); }).concat(legendInfo.warnings);
+    }
+  }
   var floorList = Object.keys(floors).sort(function (a, b) { return floorRank(a) - floorRank(b); });
   var list = Object.keys(items).map(function (k) { return items[k]; }).sort(function (a, b) { return a.sys < b.sys ? -1 : a.sys > b.sys ? 1 : b.total - a.total; });
   if (noCheck.length) warnings.push("以下數量表的平面圖上找不到可核對的設備符號（符號可能畫在戶型等圖塊裡），數量以表為準，未逐項核對圖面：" + noCheck.join("、"));
   tables.forEach(function (tb) { if (tb.needFloor) warnings.push("數量表「" + tb.key + "」看不出是哪一層，數量未計入樓層"); });
-  if (!tables.length) {
+  if (!tables.length && !legendInfo) {
     var seen = T.filter(function (t) { return /數\s*量/.test(t.s); }).map(function (t) { return t.s.slice(0, 20); });
     seen = seen.filter(function (x, i) { return seen.indexOf(x) === i; }).slice(0, 8);
     warnings.push("圖面中找不到「數量表」。請確認平面圖有附「XF 監控設備數量表」。" + (seen.length ? "（圖上含「數量」的文字：" + seen.join("、") + "）" : "（圖上沒有任何含「數量」的文字，數量表可能是圖片、外部參考或 OLE 物件）"));
@@ -569,6 +670,209 @@ function analyze(text, opt) {
     unitM: guessUnit(plans), planVer: 2,
     stats: { frames: frames.length, inserts: d.inserts.length, texts: T.length, blocks: Object.keys(d.blocks).length, titles: titles.map(function (t) { return t.s + "→" + (t.table ? t.table.key : "?"); }) }
   };
+}
+
+/* ---------- 沒有數量表的圖面：依「圖例」數圖上符號（行動強波等格式） ----------
+   1. 圖例表：「圖例｜說明」，每列左邊是符號（圖塊或「2W」「DC」這類代號文字），右邊是設備名稱；沒有符號的列（線材）略過。
+   2. 圖紙：標題（含模型空間的圖框屬性）「地下五層」＋「強波器配置平面圖」／「…昇位圖」，依圖紙排列間距劃分範圍。
+   3. 數量以各層平面圖為準（可分樓層）；只畫在昇位圖的設備才用昇位圖數量。昇位圖排版常與平面圖不同，只作核對提示。 */
+/** 圖塊外形簽章：圖元種類＋正規化座標（不同名稱但畫法相同的圖塊視為同一符號） */
+function blockSig(blocks, name) {
+  var es = blocks[name]; if (!es || !es.length || es.length > 60) return null;
+  var pts = [];
+  es.forEach(function (e) {
+    if (e.t === "INSERT") return;
+    e.pts.forEach(function (p) { pts.push([e.t, p[0], p[1]]); });
+    if (e.p2) pts.push([e.t + "2", e.p2[0], e.p2[1]]);
+    if (e.t === "CIRCLE" && e.pts[0]) pts.push(["R", e.pts[0][0] + (+e.v["40"] || 0), e.pts[0][1]]);
+  });
+  if (pts.length < 2) return null;
+  var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  pts.forEach(function (p) { x0 = Math.min(x0, p[1]); y0 = Math.min(y0, p[2]); x1 = Math.max(x1, p[1]); y1 = Math.max(y1, p[2]); });
+  var sz = Math.max(x1 - x0, y1 - y0); if (!sz) return null;
+  return es.map(function (e) { return e.t; }).sort().join(",") + "|" + pts.map(function (p) { return p[0] + ":" + Math.round((p[1] - x0) / sz * 20) + "," + Math.round((p[2] - y0) / sz * 20); }).sort().join(";");
+}
+function legendCount(T, inserts, opt, blocks, segs) {
+  var warnings = [];
+  /* 圖例表頭：「圖例」或分開寫的「圖」「例」 */
+  var heads = [];
+  T.forEach(function (t) {
+    var hh = t.h || 50;
+    if (/^圖\s*例$/.test(t.s)) heads.push(t);
+    else if (t.s === "圖" && T.some(function (o) { return o.s === "例" && Math.abs(o.y - t.y) < hh * 0.5 && o.x > t.x && o.x - t.x < hh * 4; })) heads.push(t);
+  });
+  var legend = [];
+  heads.forEach(function (g) {
+    var hh = g.h || 50;
+    var ds = T.filter(function (t) { return (/^說\s*明$/.test(t.s) || t.s === "說") && Math.abs(t.y - g.y) < hh * 0.6 && t.x > g.x && t.x < g.x + hh * 30; })[0];
+    if (!ds) return;
+    var nm = T.filter(function (t) { return t.y < g.y - hh * 0.6 && t.y > g.y - hh * 80 && t.x > g.x + hh * 1.5 && t.x < ds.x + hh * 4 && /[一-鿿]/.test(t.s) && t.s.length >= 2 && t.s.length <= 40 && !/^\(|^（|^\d+[.、]/.test(t.s); })
+      .sort(function (a, b) { return b.y - a.y; });
+    var rows = [], last = g.y, gap = 0;
+    for (var i = 0; i < nm.length; i++) {
+      var dy = last - nm[i].y;
+      if (rows.length && Math.abs(nm[i].y - rows[rows.length - 1].y) < hh * 0.5) continue;
+      if (rows.length >= 2 && gap && dy > gap * 3) break;
+      if (rows.length === 1) gap = dy;
+      rows.push(nm[i]); last = nm[i].y;
+    }
+    var rh = gap || hh * 2;
+    rows.forEach(function (r) {
+      var code = T.filter(function (t) { return t !== r && Math.abs(t.y - r.y) < rh * 0.45 && t.x < r.x && t.x > g.x - hh * 3 && /^[A-Za-z0-9\-]{1,5}$/.test(t.s.trim()); })[0];
+      var blk = inserts.filter(function (s) { return Math.abs(s.y - r.y) < rh * 0.6 && s.x < r.x + hh && s.x > g.x - hh * 3; })[0];
+      if (!code && !blk) return;
+      legend.push({ name: r.s.replace(/\s+/g, " ").trim(), code: code ? code.s.trim() : null, block: blk ? blk.name : null, box: [g.x - hh * 4, r.y - rh * 0.6, ds.x + hh * 30, g.y + hh] });
+    });
+  });
+  if (!legend.length) return null;
+  var lboxes = legend.map(function (l) { return l.box; });
+  function inLegend(x, y) { return lboxes.some(function (b) { return x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]; }); }
+  /* 圖紙標題 */
+  var kinds = T.filter(function (t) { return /(配置平面圖|設備平面圖|平面圖|昇位圖|升位圖|系統圖)$/.test(t.s.trim()) && t.s.length <= 30; });
+  var titles = [];
+  kinds.forEach(function (t) {
+    var hh = t.h || 50, s = t.s.trim(), fl = "";
+    var fm = /^(.*?[層樓F])\s*(?:\S{0,8})?(配置平面圖|設備平面圖|平面圖)$/.exec(s);
+    if (fm) fl = fm[1];
+    else if (/平面圖$/.test(s)) {   /* 樓層寫在上一行（圖框屬性「地下五層」） */
+      var up = T.filter(function (o) { return o !== t && Math.abs(o.x - t.x) < hh && o.y > t.y && o.y - t.y < hh * 2.5 && /層|樓|^[BR]?\d+F$/.test(o.s) && o.s.length <= 10; })[0];
+      if (up) fl = up.s.trim();
+    }
+    titles.push({ t: t, x: t.x, y: t.y, h: hh, s: (fl && s.indexOf(fl) < 0 ? fl : "") + s, riser: /昇位圖|升位圖|系統圖/.test(s), floor: fl });
+  });
+  /* 去掉圖紙目錄一行行列出的圖名：同一欄、行距小於 4 字高、連續 3 行以上 */
+  var idx = [];
+  titles.forEach(function (a) {
+    var grp = [a], grew = true;
+    while (grew) { grew = false; titles.forEach(function (o) { if (grp.indexOf(o) < 0 && grp.some(function (g) { return Math.abs(o.x - g.x) < a.h && Math.abs(o.y - g.y) < a.h * 4; })) { grp.push(o); grew = true; } }); }
+    if (grp.length >= 3) idx.push(a);
+  });
+  titles = titles.filter(function (a) { return idx.indexOf(a) < 0 && (a.riser || a.floor); });
+  var isMobile = legend.some(function (l) { return /強波|天線|分路器|同軸/.test(l.name); });
+  if (isMobile && titles.some(function (t) { return /強波|行動/.test(t.s); })) titles = titles.filter(function (t) { return /強波|行動/.test(t.s); });   /* 綜合弱電圖：只看本系統的圖紙 */
+  var hMax = titles.reduce(function (m, t) { return Math.max(m, t.h); }, 0);
+  titles = titles.filter(function (t) { return t.h >= hMax * 0.8; });   /* 圖紙內的小字註記（「電信系統詳昇位圖」）不是圖紙標題 */
+  if (!titles.length) return null;
+  /* 圖紙間距（圖紙排成格狀時，標題在每張圖紙的同一個位置） */
+  var W = Infinity, H = Infinity;
+  titles.forEach(function (a) { titles.forEach(function (b) {
+    var dx = b.x - a.x, dy = b.y - a.y;
+    if (dx > a.h * 20 && Math.abs(dy) < a.h * 2) W = Math.min(W, dx);
+    if (dy > a.h * 20 && Math.abs(dx) < a.h * 2) H = Math.min(H, dy);
+  }); });
+  if (!isFinite(W)) W = isFinite(H) ? H * 1.414 : Infinity;
+  if (!isFinite(H)) H = isFinite(W) ? W / 1.414 : Infinity;
+  /* 每張圖紙的範圍：找標題右方最近的長直線（圖框右緣）與下方最近的長橫線（圖框下緣）；找不到就用估計值 */
+  titles.forEach(function (t) {
+    var R = Infinity, B = -Infinity;
+    if (isFinite(W) && isFinite(H) && segs) segs.forEach(function (g) {
+      var vx = Math.abs(g[1] - g[3]) < t.h * 0.2, hz = Math.abs(g[2] - g[4]) < t.h * 0.2;
+      if (vx && Math.abs(g[2] - g[4]) > H * 0.7 && g[1] > t.x && g[1] < t.x + W * 0.3 && Math.min(g[2], g[4]) < t.y && Math.max(g[2], g[4]) > t.y) R = Math.min(R, g[1]);
+      if (hz && Math.abs(g[1] - g[3]) > W * 0.7 && g[2] < t.y && g[2] > t.y - H * 0.3 && Math.min(g[1], g[3]) < t.x && Math.max(g[1], g[3]) > t.x) B = Math.max(B, g[2]);
+    });
+    t.R = isFinite(R) ? R : t.x + W * 0.12; t.B = isFinite(B) ? B : t.y - H * 0.15;
+  });
+  function sheetOf(x, y) {
+    if (titles.length === 1) return titles[0];
+    var best = null;
+    titles.forEach(function (t) { if (!best && x <= t.R && x >= t.R - W && y >= t.B && y <= t.B + H) best = t; });
+    return best;
+  }
+  /* 圖例的圖塊在平面圖上沒出現時，找外形相同的其他圖塊（複製時被改成匿名圖塊） */
+  var used = {}; inserts.forEach(function (s) { if (!inLegend(s.cx !== undefined ? s.cx : s.x, s.cy !== undefined ? s.cy : s.y)) used[s.name] = (used[s.name] || 0) + 1; });
+  var sigCache = {};
+  function sigOf(n) { if (!(n in sigCache)) sigCache[n] = blocks ? blockSig(blocks, n) : null; return sigCache[n]; }
+  var taken = {}; legend.forEach(function (l) { if (l.block) taken[l.block] = 1; });
+  legend.forEach(function (l) {
+    l.blocks = l.block ? [l.block] : [];
+    if (!l.block || used[l.block]) return;
+    var sg = sigOf(l.block); if (!sg) return;
+    Object.keys(used).forEach(function (n) { if (!taken[n] && sigOf(n) === sg) { l.blocks.push(n); taken[n] = 1; } });
+  });
+  /* 數符號 */
+  var cnt = {};   /* name -> sheetIdx -> n */
+  function add(l, x, y) { if (inLegend(x, y)) return; var sh = sheetOf(x, y); if (!sh) return; var k = titles.indexOf(sh); var c = cnt[l.name] = cnt[l.name] || {}; c[k] = (c[k] || 0) + 1; }
+  legend.forEach(function (l) {
+    if (l.blocks.length) inserts.forEach(function (s) { if (l.blocks.indexOf(s.name) >= 0) add(l, s.cx !== undefined ? s.cx : s.x, s.cy !== undefined ? s.cy : s.y); });
+    if (l.code) T.forEach(function (t) { if (!t.att && t.s.trim() === l.code) add(l, t.x, t.y); });
+  });
+  var anyRiser = titles.some(function (t) { return t.riser; });
+  var items = [], floors = {}, mism = [], onlyRiser = [];
+  legend.forEach(function (l) {
+    var c = cnt[l.name]; if (!c) return;
+    var rTot = 0, pTot = 0, pf = {};
+    Object.keys(c).forEach(function (k) {
+      var t = titles[k];
+      if (t.riser) rTot += c[k];
+      else { pTot += c[k]; var f = cnFloor(t.floor.replace(/\s/g, "")); f = /夾層/.test(t.floor) ? cnFloor(t.floor.replace(/夾層/, "")) + "夾層" : f; pf[f] = (pf[f] || 0) + c[k]; }
+    });
+    var it = { name: l.name, sys: isMobile ? "mobile" : sysOf(l.name, opt && opt.rules), block: l.block, total: 0, floors: {}, fromLegend: true };
+    if (pTot) { it.total = pTot; it.floors = pf; if (rTot && rTot !== pTot) mism.push(l.name + "（平面圖 " + pTot + "、昇位圖 " + rTot + "）"); }
+    else if (rTot) { it.total = rTot; it.floors = { "昇位圖": rTot }; onlyRiser.push(l.name); }
+    if (!it.total) return;
+    Object.keys(it.floors).forEach(function (f) { floors[f] = 1; });
+    items.push(it);
+  });
+  if (!items.length) return null;
+  warnings.push("圖面沒有數量表，已依「圖例」符號數各層平面圖（" + items.length + " 種設備）。線材長度、接頭請依圖面另計，數量請工務複核");
+  if (onlyRiser.length) warnings.push("以下設備只畫在昇位圖，以昇位圖數量列入、不分樓層：" + onlyRiser.join("、"));
+  return { items: items, floors: Object.keys(floors), warnings: warnings, legend: legend, sheets: titles.map(function (t) { return t.s; }) };
+}
+
+/* ---------- 圖面內嵌 Excel 的設備數量表（Philips 燈控「材料表」格式） ----------
+   表頭：樓層｜盤名｜(受控迴路)｜12迴路電驛模組｜4迴路電驛模組…；樓層是合併儲存格（只填第一列）；最後一列「總計」。
+   讀到就把數量併入 r.items / r.floors（圖面文字已有同名設備時不重複加）。回傳併入的設備數。 */
+function mergeSheetTables(r, sheets) {
+  var added = 0, LABEL = /樓\s*層|盤\s*名|區\s*域|受控迴路|迴路數|備\s*註|編\s*號|項\s*次/, TOT = /^(總\s*計|合\s*計|小\s*計)$/;
+  (sheets || []).forEach(function (sh) {
+    var rows = sh.rows || [], hi = -1;
+    if (rows.slice(0, 10).some(function (rw) { return (rw || []).some(function (v) { return /點數表/.test(String(v || "")); }); })) return;   /* I/O 管理點數表交給設計・編表 */
+    for (var i = 0; i < Math.min(rows.length, 15); i++) {
+      var rw = (rows[i] || []).map(function (v) { return String(v === null || v === undefined ? "" : v).replace(/\s+/g, ""); });
+      if (rw.some(function (v) { return /^樓層|樓層$|^區域/.test(v); }) && rw.filter(function (v) { return /[一-鿿]/.test(v) && !LABEL.test(v); }).length >= 2) { hi = i; break; }
+    }
+    if (hi < 0) return;
+    var head = rows[hi].map(function (v) { return String(v === null || v === undefined ? "" : v).replace(/\s+/g, " ").trim(); });
+    var fc = head.findIndex(function (v) { return /樓\s*層|區\s*域/.test(v) && !/盤\s*名/.test(v); });
+    var dev = [];
+    head.forEach(function (v, j) { if (v && /[一-鿿]/.test(v) && !LABEL.test(v)) dev.push(j); });
+    if (!dev.length) return;
+    var sysK = head.some(function (v) { return /電驛|燈控|照明|情境|調光|DyNet/i.test(v); }) ? "lighting" : null;
+    var floor = "", got = {}, tot = null, tables = [];
+    for (var k = hi + 1; k < rows.length; k++) {
+      var row = rows[k] || [], first = String(row[0] === null || row[0] === undefined ? "" : row[0]).replace(/\s+/g, "");
+      if (TOT.test(first) || (fc >= 0 && TOT.test(String(row[fc] || "").replace(/\s+/g, "")))) { tot = row; break; }
+      if (!row.some(function (v) { return v !== null && v !== undefined && v !== ""; })) continue;
+      if (fc >= 0 && row[fc] !== null && row[fc] !== undefined && String(row[fc]).trim()) floor = cnFloor(String(row[fc]).replace(/\s+/g, ""));
+      var fk = floor && floorsOf(floor).length ? floor : "未分層";
+      dev.forEach(function (j) { var n = Number(row[j]); if (n > 0) { var g = got[fk] = got[fk] || {}; g[head[j]] = (g[head[j]] || 0) + n; } });
+    }
+    var have = {}; (r.items || []).forEach(function (it) { have[it.name] = it; });
+    var fls = {}; (r.floors || []).forEach(function (f) { fls[f] = 1; });
+    var sum = {};
+    Object.keys(got).forEach(function (fk) {
+      var ff = fk === "未分層" ? ["未分層"] : floorsOf(fk);
+      Object.keys(got[fk]).forEach(function (name) {
+        var q = got[fk][name]; sum[name] = (sum[name] || 0) + q;
+        var it = have[name];
+        if (it && !it.fromSheet) return;   /* 圖面文字已讀到同名設備 */
+        if (!it) { it = have[name] = { name: name, sys: sysK || sysOf(name), block: null, total: 0, floors: {}, fromSheet: true }; r.items.push(it); added++; }
+        ff.forEach(function (f) { it.floors[f] = (it.floors[f] || 0) + q; it.total += q; fls[f] = 1; });
+      });
+      tables.push({ key: fk, floors: ff, rows: Object.keys(got[fk]).map(function (n) { return { name: n, qty: got[fk][n], raw: String(got[fk][n]), block: null }; }), source: "embedded" });
+    });
+    if (tot) dev.forEach(function (j) { var t = Number(tot[j]); if (t && sum[head[j]] !== undefined && t !== sum[head[j]]) (r.warnings = r.warnings || []).push("圖面內嵌數量表的「" + head[j] + "」各列加總 " + sum[head[j]] + "，與表上總計 " + t + " 不同，請確認"); });
+    if (tables.length) {
+      r.tables = (r.tables || []).concat(tables);
+      r.floors = Object.keys(fls).sort(function (a, b) { return floorRank(a) - floorRank(b); });
+    }
+  });
+  if (added) {
+    r.warnings = (r.warnings || []).filter(function (w) { return !/找不到「數量表」|讀不到欄位標題/.test(w); });
+    r.warnings.push("設備數量取自圖面內嵌的 Excel 數量表（" + added + " 種設備）");
+    r.items.sort(function (a, b) { return a.sys < b.sys ? -1 : a.sys > b.sys ? 1 : b.total - a.total; });
+  }
+  return added;
 }
 
 /* ---------- 平面圖（佈線圖用）：各層簡化線條與設備位置 ---------- */
@@ -637,7 +941,7 @@ function guessUnit(plans) {
   return w > 20000 ? 0.001 : w > 200 ? 0.01 : 1;
 }
 
-var api = { decode: decode, parse: parse, analyze: analyze, floorsOf: floorsOf, floorRank: floorRank, sysOf: sysOf, SYS_RULES: SYS_RULES, cnNum: cnNum };
+var api = { decode: decode, parse: parse, analyze: analyze, mergeSheetTables: mergeSheetTables, floorsOf: floorsOf, floorRank: floorRank, sysOf: sysOf, SYS_RULES: SYS_RULES, cnNum: cnNum };
 if (typeof module === "object" && module.exports) module.exports = api;
 else root.DXF = api;
 })(typeof self !== "undefined" ? self : this);

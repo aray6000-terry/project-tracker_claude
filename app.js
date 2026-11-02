@@ -63,6 +63,8 @@ var SYSTEMS = [
 ];
 var SYS_KEYS=[], SYS_NAME={};
 SYSTEMS.forEach(function(s){ if(s.sub) s.sub.forEach(function(x){ var k=s.k+"."+x[0]; SYS_KEYS.push(k); SYS_NAME[k]=s.n.replace("系統","")+"－"+x[1]; }); else { SYS_KEYS.push(s.k); SYS_NAME[s.k]=s.n; } });
+/* 只出現在圖面分析／報價的系統（不是專案建置系統，不送後端） */
+SYS_NAME.lighting="燈控"; SYS_NAME.mobile="行動強波";
 function sysName(p,k){ return k==="other" ? "其它"+(p&&p.otherName?"："+p.otherName:"") : (SYS_NAME[k]||k); }
 /* 廠牌：常見品牌建議清單（可直接輸入其他品牌）；其他專案用過的品牌也會加入建議 */
 var BRAND_HINTS = {

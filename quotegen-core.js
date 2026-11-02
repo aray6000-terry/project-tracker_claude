@@ -173,22 +173,40 @@ function applyDrawing(q, drawing, mapping) {
   });
   return unmatched;
 }
-/** 線材、工資等「一式」項目：依設備金額相對範本的比例調整 */
+/* 以長度計價的線材、管材（「1/2"同軸電纜 米」）：圖面沒有長度，依設備規模估算 */
+var LENGTH_UNIT = /^(米|M|m|公尺|捲|卷|箱|條|尺)$/;
+var LENGTH_NAME = /電纜|纜線|線材|網路線|光纖|同軸|控制線|電源線|訊號線|CAT\.?\s*\d|配管|線槽|EMT|PVC/i;
+/* 不隨規模變動的固定費用 */
+var FIXED_FEE = /授權|申請|教育訓練|設計費|美工|建檔|保固|運費|管理費/;
+var ACCESSORY = /接頭|夾具|吊架|固定架|支架|伸縮架|端子|標示/;
+/** 線材、工資、設定測試等項目：依設備數量相對範本的比例調整（以圖面對到的設備計；上限 10 倍，超過 3 倍時提示）。
+    用數量而不用金額：一台高價主機會讓金額比例失真（耕薪行動強波以數量估算，線長、工資與實際報價差 5% 內） */
 function scaleLumps(q) {
   q.sections.forEach(function (s) {
     var t = 0, n = 0;
-    s.items.forEach(function (it) { if (it.kind === "device") { t += it.tqty * it.price; n += it.qty * it.price; } });
+    s.items.forEach(function (it) { if (it.kind === "device" && !isLength(it) && /^圖面/.test(it.flag || "")) { t += it.tqty; n += it.qty; } });
+    if (!t) s.items.forEach(function (it) { if (it.kind === "device" && !isLength(it)) { t += it.tqty * it.price; n += it.qty * it.price; } });
     if (!t) return;
-    var r = Math.max(0.3, Math.min(3, n / t));
+    var raw = n / t, r = Math.max(0.1, Math.min(10, raw));
     if (Math.abs(r - 1) < 0.02) return;
+    var tag = "（×" + (Math.round(r * 100) / 100) + (raw > 10 ? "，已達上限" : "") + "）";
     s.items.forEach(function (it) {
-      if ((it.kind === "material" || it.kind === "labor") && lumpOf(it) && it.qty === 1 && it.price) {
+      if (FIXED_FEE.test(it.name)) return;
+      if ((it.kind === "material" || it.kind === "labor" || it.kind === "service") && lumpOf(it) && it.qty === 1 && it.price) {
         it.price = Math.round(it.price * r / 100) * 100; it.cost = Math.round(it.cost * r / 100) * 100;
-        it.flag = "依設備金額比例調整（×" + (Math.round(r * 100) / 100) + "）";
+        it.flag = "依設備規模比例調整" + tag;
+      } else if (isLength(it) && !/^圖面/.test(it.flag || "") && it.tqty) {
+        it.qty = Math.max(1, Math.round(it.tqty * r));
+        it.flag = "長度依設備規模估算" + tag + "，請依圖面計算";
+      } else if (it.kind === "device" && ACCESSORY.test(it.name) && !/^圖面/.test(it.flag || "") && it.tqty > 2) {
+        it.qty = Math.max(1, Math.round(it.tqty * r));
+        it.flag = "配件依設備規模估算" + tag;
       }
     });
+    if (r > 3) s.scaleNote = "本系統設備數量為範本的 " + (Math.round(raw * 10) / 10) + " 倍，線材、工資、設定測試已依比例放大" + (raw > 10 ? "（以 10 倍計）" : "") + "，請依本案複核";
   });
 }
+function isLength(it) { return LENGTH_UNIT.test(str(it.unit)) && (LENGTH_NAME.test(it.name) || it.kind === "material"); }
 function notesFor(opt, lib) {
   var notes = null;
   (lib || []).forEach(function (t) { var n = t.data.meta && t.data.meta.notes; if (n && n.length && (!notes || n.length > notes.length)) notes = n; });

@@ -7,10 +7,10 @@ var DXF = root.DXF || (typeof require === "function" ? require("./dxf-core.js") 
 
 function norm(s) { return String(s || "").replace(/%%[cC]/g, "φ").replace(/%%[oOuUdDpP]/g, "").replace(/\\P/g, " ").replace(/∮/g, "φ").replace(/\s+/g, " ").trim(); }
 var CTRL = /^(MS|MC|T\.?M\.?|C\.?S\.?|PB|PL|ATS\w*|RCSW|M|SS|COS|OL|THR)$/;
-var NOT_NAME = /^(MS|MC|PB|PL|GB|NB|KS|TM|CS|ELB|ELCB\w*|NFB\w*|MCCB|ATS\w*|CT\w*|DPM|APFR|SC|CU|BUS|PVC|EMT|SPARE|SPACE|TOTAL|M|N|E|R|S|T|NO|NC)$/;
+var NOT_NAME = /^([A-Z]{2}\d{2}[A-Z]\d[A-Z]\d{2}|\d+(\.\d+)?(HP|KW|KVA|VA|W|A|AF|AT|mA|MA)|LED.*|SST|MS|MC|PB|PL|GB|NB|KS|TM|CS|ELB|ELCB\w*|NFB\w*|MCCB|ATS\w*|CT\w*|DPM|APFR|SC|CU|BUS|PVC|EMT|SPARE|SPACE|TOTAL|M|N|E|R|S|T|NO|NC)$/;
 var NAME_RE = /^[A-Z0-9][A-Za-z0-9\-]{0,14}$/;
 /* 住戶（宅內）、表箱、充電車的單線圖：不屬中央監控範圍，只列出不計點 */
-var UNIT_SHEET = /住宅|住戶|表箱|充電車/;
+var UNIT_SHEET = /住宅|住戶|各戶|表箱|錶箱|充電車/;
 
 /* 負載 → 監控方式（依公司點位規則：只有 IO 整合的才佔 DI/DO；電表、消防、空調、電梯屬通訊整合） */
 var LOAD_RULES = [
@@ -41,14 +41,24 @@ function analyze(texts, opt) {
   var T = texts.map(function (t) { return { s: norm(t.s), x: t.x, y: t.y, h: t.h || 0 }; }).filter(function (t) { return t.s; });
   var warnings = [];
   /* 1. 單線圖圖紙（標題含「單線圖」） */
-  var sheets = T.filter(function (t) { return /單線圖[一二三四五六七八九十\d]*$/.test(t.s) && t.s.length <= 30 && t.h >= 40 && !/~|～/.test(t.s); });
+  var sheets = T.filter(function (t) { return /單線圖\s*[(（]?[一二三四五六七八九十\d]*[)）]?$/.test(t.s) && t.s.length <= 30 && t.h >= 40 && !/~|～/.test(t.s); });
   var hmax = sheets.reduce(function (m, t) { return Math.max(m, t.h); }, 0);
   sheets = sheets.filter(function (t) { return t.h >= hmax * 0.8; });
   var sheetW = 9000, sheetH = 6400;
+  var groupMode = false;
   function sheetOf(x, y) {
+    if (groupMode) {   /* 大字的分組標題（「大公動力單線圖」「錶箱單線圖」）畫在一排圖紙左側：取左側高度最接近的標題 */
+      var best = null, bd = Infinity;
+      sheets.forEach(function (t) { if (t.x > x) return; var dd = Math.abs(y - t.y); if (dd < bd) { bd = dd; best = t; } });
+      return best;
+    }
     for (var i = 0; i < sheets.length; i++) { var t = sheets[i]; if (x > t.x - sheetW && x < t.x + 700 && y > t.y - 400 && y < t.y + sheetH) return t; }
     return null;
   }
+  (function () {
+    var tt = T.filter(function (t) { return /^TOTAL$/i.test(t.s); });
+    if (sheets.length && tt.length && tt.filter(function (t) { return sheetOf(t.x, t.y); }).length < tt.length * 0.3) groupMode = true;
+  })();
   /* 2. 盤名：「FROM "上游"」正下方 */
   var froms = T.filter(function (t) { return /^FROM\s*"/.test(t.s); });
   var names = [];
@@ -60,16 +70,41 @@ function analyze(texts, opt) {
   /* 3. 負載表（CKT NO. … TOTAL） */
   var ck = T.filter(function (t) { return /^CKT\s*NO\.?$/i.test(t.s); });
   var tot = T.filter(function (t) { return /^TOTAL$/i.test(t.s); });
+  /* 沒有「CKT NO.」欄名的負載表：TOTAL 左邊同一列是迴路編號 …3、2、1，以編號 1 左側當作表頭位置 */
+  tot.forEach(function (t) {
+    var hh = t.h || 30;
+    if (ck.some(function (c) { return Math.abs(c.y - t.y) < hh * 0.6 && c.x < t.x && t.x - c.x < hh * 200; })) return;
+    var row = T.filter(function (o) { return Math.abs(o.y - t.y) < hh * 0.6 && o.x < t.x && o.x > t.x - hh * 200 && /^\d{1,3}$/.test(o.s); }).sort(function (a, b) { return b.x - a.x; });
+    var run = [], prevX = t.x;
+    for (var i = 0; i < row.length; i++) {
+      var v = +row[i].s;
+      if (run.length && v !== +run[run.length - 1].s - 1) break;
+      if (prevX - row[i].x > hh * 20) break;
+      run.push(row[i]); prevX = row[i].x;
+      if (v === 1) break;
+    }
+    if (!run.length || +run[run.length - 1].s !== 1) return;
+    var first = run[run.length - 1], step = run.length > 1 ? (run[run.length - 2].x - first.x) : hh * 7;
+    ck.push({ s: "CKT NO.", x: first.x - Math.min(step * 0.5, hh * 3), y: t.y, h: hh, virtual: true });
+  });
   var panels = [];
   ck.forEach(function (c) {
     var hh = c.h || 30;
-    if (tot.some(function (t) { return Math.abs(t.y - c.y) < hh * 0.6 && c.x - t.x > 0 && c.x - t.x < hh * 16; })) return;   /* 表格右側的欄名 */
+    if (!c.virtual && tot.some(function (t) { return Math.abs(t.y - c.y) < hh * 0.6 && c.x - t.x > 0 && c.x - t.x < hh * 16; })) return;   /* 表格右側的欄名 */
     if (sheets.length && !sheetOf(c.x, c.y)) return;
     var end = tot.filter(function (t) { return Math.abs(t.y - c.y) < hh * 0.6 && t.x > c.x; }).sort(function (a, b) { return a.x - b.x; })[0];
     if (!end) return;
     var cols = T.filter(function (t) { return Math.abs(t.y - c.y) < hh * 0.6 && t.x > c.x && t.x < end.x && /^\d{1,3}$/.test(t.s); }).sort(function (a, b) { return a.x - b.x; });
     if (!cols.length) return;
     var nm = names.filter(function (n) { return Math.abs(n.x - c.x) < hh * 9 && n.y > c.y + hh * 10 && n.y < c.y + hh * 130; }).sort(function (a, b) { return a.y - b.y; })[0];
+    if (!nm) {   /* 盤名寫成「"PNG"」放在表格左上方，上一行較小的「"MP"」是上游盤（太武安居格式） */
+      var q = T.filter(function (t) { return /^"[A-Za-z0-9\-]{1,14}"$/.test(t.s) && t.y > c.y + hh * 30 && t.y < c.y + hh * 90 && t.x > c.x - hh * 12 && t.x < c.x + hh * 40; })
+        .sort(function (a, b) { return b.h - a.h || a.y - b.y; });
+      if (q.length) {
+        var up = q.filter(function (t) { return t !== q[0] && t.y > q[0].y && t.y < q[0].y + hh * 12; }).sort(function (a, b) { return a.y - b.y; })[0];
+        nm = { s: q[0].s.replace(/"/g, ""), from: up ? up.s.replace(/"/g, "") : "", x: q[0].x, y: q[0].y };
+      }
+    }
     if (!nm) {   /* 沒有 FROM 標示：取表格正上方的代號 */
       var alt = T.filter(function (t) { return t.y > c.y + hh * 20 && t.y < c.y + hh * 110 && Math.abs(t.x - c.x) < hh * 6 && NAME_RE.test(t.s) && !NOT_NAME.test(t.s) && !/^\d+$|AF$|AT$/.test(t.s); }).sort(function (a, b) { return a.y - b.y; })[0];
       if (alt) nm = { s: alt.s, from: "", x: alt.x, y: alt.y };

@@ -8,7 +8,7 @@ var st={pid:null, lib:null, canEdit:false, loading:false, opt:null, q:null, tab:
 var FULL={"宗亞":"宗亞資訊工業股份有限公司","宗友":"宗友資訊股份有限公司"};
 var SMART_LABEL={none:"一般（非智慧建築）","2016":"智慧建築 2016 年版","2024":"智慧建築 2024 年版",smart:"智慧建築（未標版本）"};
 /* 專案建置系統 → 報價系統 */
-var FROM_PROJECT={access:"access",cctv:"cctv",intercom:"intercom",bms:"bms",parking:"parking",visitor:"visitor",media:"media","energy.meter":"energy","energy.water":"energy","energy.solar":"energy"};
+var FROM_PROJECT={access:"access",cctv:"cctv",intercom:"intercom",bms:"bms",parking:"parking",visitor:"visitor",media:"media","energy.meter":"energy","energy.water":"energy","energy.solar":"energy",lighting:"lighting",mobile:"mobile"};
 
 function ls(k,v){ try{ if(v===undefined) return JSON.parse(localStorage.getItem(k)||"null"); localStorage.setItem(k,JSON.stringify(v)); }catch(e){ return null; } }
 function rocToday(){ var d=new Date(); return (d.getFullYear()-1911)+"/"+("0"+(d.getMonth()+1)).slice(-2)+"/"+("0"+d.getDate()).slice(-2); }
@@ -72,6 +72,8 @@ function outHtml(cur){
   var flagged=0; q.sections.forEach(function(s){ s.items.forEach(function(it){ if(/請/.test(it.flag)) flagged++; }); });
   var h='<div class="kpis">'+kpi(money(t.price),"未稅總價")+kpi(money(t.gross),"含稅總價（5%）")+kpi(money(t.cost),"成本")+kpi(pct(t.margin),"毛利率",t.margin!==null&&t.margin<0.35?"warn":"")+kpi(flagged,"待確認數量",flagged?"warn":"")+'</div>';
   if(q.missing.length) h+='<div class="tipbox"><b>範本庫沒有</b>'+esc(q.missing.join("、"))+'，這些系統只列出空白段落，請手動新增項目或先上傳含這些系統的範本。</div>';
+  var big=q.sections.filter(function(s){ return s.scaleNote; });
+  if(big.length) h+='<div class="tipbox"><b>規模放大</b>'+big.map(function(s){ return esc(s.no+" "+s.name+"："+s.scaleNote); }).join("<br>")+'</div>';
   if(q.unmatched.length) h+='<details class="mxwrap"'+(q.unmatched.length?" open":"")+'><summary>圖面有、報價單沒對到的設備（'+q.unmatched.length+'）</summary><p class="meta">可能是範本沒有的設備，或屬於配管、箱體等不在報價範圍內的項目。需要報價的請選擇段落後加入。</p><div class="tblwrap"><table class="items"><thead><tr><th>圖面設備</th><th>數量</th><th>加到段落</th><th></th></tr></thead><tbody>'
     +q.unmatched.map(function(u,i){ return '<tr><td>'+esc(u.name)+'</td><td>'+u.qty+'</td><td><select class="fld" data-qg-addsec="'+i+'">'+q.sections.map(function(s,j){ return '<option value="'+j+'"'+(s.sys===mapSys(u.sys)?" selected":"")+'>'+esc(s.no+" "+s.name)+'</option>'; }).join("")+'</select></td><td><button class="btn small" type="button" data-qg-add="'+i+'">加入</button></td></tr>'; }).join("")+'</tbody></table></div></details>';
   h+='<div class="tools" style="margin:10px 0"><button class="btn primary small" id="qgXls" type="button">下載報價單（Excel）</button><button class="btn small" id="qgXlsInt" type="button">下載內部成本版（Excel）</button>'

@@ -1,5 +1,5 @@
 /* 在背景執行緒分析 DXF，避免大檔讓畫面卡住 */
-importScripts("xlsx-lite.js?v=2.9.3", "xls-lite.js?v=2.9.3", "dxf-core.js?v=2.9.3", "sld-core.js?v=2.9.3");
+importScripts("xlsx-lite.js?v=2.9.4", "xls-lite.js?v=2.9.4", "dxf-core.js?v=2.9.4", "sld-core.js?v=2.9.4");
 self.onmessage = function (ev) {
   var buf = ev.data.buf, name = String(ev.data.name || "").toLowerCase();
   var send = function (m) { self.postMessage(m); };
@@ -30,6 +30,9 @@ self.onmessage = function (ev) {
       return XLSX_LITE.read(p.pkg).then(function (sh) {
         r.embedded.push({ x: p.x, y: p.y, sheets: sh.filter(function (x) { return x.rows.length; }) });
       }, function (e) { r.warnings.push("圖面內嵌的 Excel 表（.xlsx）無法讀取：" + (e && e.message ? e.message : e)); });
-    })).then(function () { send({ type: "done", result: r }); });
+    })).then(function () {
+      (r.embedded || []).forEach(function (e) { DXF.mergeSheetTables(r, e.sheets); });   /* 內嵌 Excel 的設備數量表（燈控材料表） */
+      send({ type: "done", result: r });
+    });
   }).catch(function (e) { send({ type: "error", message: e && e.message ? e.message : String(e) }); });
 };
