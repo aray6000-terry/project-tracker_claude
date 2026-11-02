@@ -119,7 +119,7 @@ function compareHtml(dr,q,edit){
 }
 
 /* ---------- 設備型號對應與送審型錄 ---------- */
-var MST={chosen:["已確認","st-shipped"],auto:["自動配對","st-confirmed"],suggest:["請選擇","st-billed"],none:["資料庫沒有","st-rejected"],skip:["不送審","st-cancelled"]};
+var MST={chosen:["已確認","st-shipped"],auto:["自動配對","st-confirmed"],prefill:["預填・請確認","st-billed"],suggest:["請選擇","st-billed"],none:["資料庫沒有","st-rejected"],skip:["不送審","st-cancelled"]};
 var SEED=(window.CATALOG_SEED&&window.CATALOG_SEED.items)||[];
 var CAT_MAX=20*1024*1024;
 function canEditDb(){ return ["admin","ceo","sales_mgr","purchase","eng_mgr"].indexOf(T.session.me.role)>=0; }
@@ -170,12 +170,15 @@ function nameOk(n,sn){
   if(a.length&&b.length&&!a.some(function(x){ return b.indexOf(x)>=0; })) return false;
   var tail=core.slice(-3); return !tail||String(sn).replace(/\s/g,"").indexOf(tail)>=0;
 }
+/* 預填：設備資料庫有候選的一律先帶最接近的一筆（廠牌相符優先），有錯再改；資料庫沒有的先空著（型錄庫只放在選單裡供挑選） */
 function matchRows(q){
   var rows=QUOTE.matchModels(q,st.db,st.models);
   rows.forEach(function(r){
-    if(r.status!=="none") return;
-    var sn=seedByName(r).filter(function(x){ return brandOk(r,x.s)&&nameOk(r.name,x.s.name); });
-    if(sn.length&&sn[0].sc>=0.75&&(!sn[1]||sn[1].sc<=sn[0].sc-0.1)){ var s=sn[0].s; r.pick={name:s.name,brand:s.brand,model:s.model,link:"",files:s.files.slice(),src:"seed"}; r.status="auto"; }
+    if(r.status!=="suggest"||!r.candidates.length) return;
+    /* 名稱相似度 0.6 以上，且規格數字不衝突（18DI≠10DI）、品名主體相同（陽極鎖≠陽極鎖電源供應器） */
+    var ok=r.candidates.filter(function(x){ return x.sim>=0.6&&nameOk(r.name,x.d.name); });
+    var c=ok.filter(function(x){ return x.brandOk; })[0]||ok[0];
+    if(c){ r.pick=c.d; r.status="prefill"; }
   });
   return rows;
 }
@@ -216,15 +219,15 @@ function sealHtml(edit){
 }
 function modelsHtml(q,edit){
   var h='<section class="panel" id="mdlPanel"><div class="row" style="flex-wrap:wrap"><h3>設備型號對應與送審型錄</h3>'+(st.db?'<div class="tools">'+(edit?'<button class="btn small" id="btnMdlSave" type="button">儲存型號</button><button class="btn small" id="btnSubmittal" type="button">產生送審資料</button>':'')+'<button class="btn small primary" id="btnSubPdf" type="button">輸出送審型錄 PDF</button><button class="btn small" id="btnSubPrint" type="button">列印送審清單</button></div>':'')+'</div>'
-    +'<p class="meta">依估價項目的廠牌，從「設備單價資料庫」與「型錄庫」找出對應型號與原廠型錄。每一項都可以從選單改選其他型號，或選「手動輸入型號…」；型錄可按「更換」改選或上傳（PDF／JPG／PNG），上傳的型錄會存進公司型錄庫，下次其他專案也能選用。送審章上傳一次即可（建議 PNG，可自動去白底），輸出時每頁右下角加蓋。確認後按「輸出送審型錄 PDF」，依估價單項次排成「封面 → 送審目錄 → 送審資料表＋原廠型錄」一份 PDF；型錄上會自動框選型號、以箭頭標示對應項次（可在 Acrobat 移動調整），同一份型錄只附一次並標示所有共用項次，每頁加紅色頁碼。</p>';
+    +'<p class="meta">依估價項目的品名與廠牌，從「設備單價資料庫」預填最接近的型號與原廠型錄（標「預填・請確認」，有錯再從選單改）；資料庫沒有的項目先空著。每一項都可以從選單改選其他型號，或選「手動輸入型號…」；型錄可按「更換」改選或上傳（PDF／JPG／PNG），上傳的型錄會存進公司型錄庫，下次其他專案也能選用。送審章上傳一次即可（建議 PNG，可自動去白底），輸出時每頁右下角加蓋。確認後按「輸出送審型錄 PDF」，依估價單項次排成「封面 → 送審目錄 → 送審資料表＋原廠型錄」一份 PDF；型錄上會自動框選型號、以箭頭標示對應項次（可在 Acrobat 移動調整），同一份型錄只附一次並標示所有共用項次，每頁加紅色頁碼。</p>';
   if(!st.db) return h+'<button class="btn small" id="btnLoadDb" type="button">載入設備資料庫並配對</button></section>';
   if(st.catlibErr) h+='<div class="tipbox"><b>型錄庫無法讀取</b>'+esc(st.catlibErr)+'</div>';
   h+=sealHtml(edit);
   var rows=matchRows(q), f=st.mf||"todo";
   var cnt={}, nocat=0; rows.forEach(function(r){ cnt[r.status]=(cnt[r.status]||0)+1; if(r.pick&&r.pick.model!=="-"&&!catOf(r.pick).files.length) nocat++; });
-  h+='<div class="filters"><div class="seg">'+[["todo","需處理（"+((cnt.suggest||0)+(cnt.none||0))+"）"],["nocat","缺型錄（"+nocat+"）"],["all","全部（"+rows.length+"）"]].map(function(x){ return '<button type="button" data-mf="'+x[0]+'" class="'+(f===x[0]?"on":"")+'">'+x[1]+'</button>'; }).join("")+'</div>'
+  h+='<div class="filters"><div class="seg">'+[["todo","需確認（"+((cnt.prefill||0)+(cnt.suggest||0)+(cnt.none||0))+"）"],["nocat","缺型錄（"+nocat+"）"],["all","全部（"+rows.length+"）"]].map(function(x){ return '<button type="button" data-mf="'+x[0]+'" class="'+(f===x[0]?"on":"")+'">'+x[1]+'</button>'; }).join("")+'</div>'
     +'<span class="meta">'+Object.keys(MST).filter(function(k){return cnt[k];}).map(function(k){ return MST[k][0]+" "+cnt[k]; }).join("｜")+'</span></div>';
-  var shown=f==="all"?rows:f==="nocat"?rows.filter(function(r){ return r.pick&&r.pick.model!=="-"&&!catOf(r.pick).files.length; }):rows.filter(function(r){ return r.status==="suggest"||r.status==="none"; });
+  var shown=f==="all"?rows:f==="nocat"?rows.filter(function(r){ return r.pick&&r.pick.model!=="-"&&!catOf(r.pick).files.length; }):rows.filter(function(r){ return r.status==="prefill"||r.status==="suggest"||r.status==="none"; });
   var showPrice=caps().quote;
   h+='<div class="tblwrap"><table><thead><tr><th>估價項目</th><th>數量</th><th>估價廠牌</th><th>送審型號</th>'+(showPrice?'<th>資料庫業務價</th>':'')+'<th>原廠型錄</th><th>狀態</th></tr></thead><tbody>'
     +shown.map(function(r){
@@ -393,11 +396,14 @@ function bindModels(cur,el){
       box().scrollIntoView({block:"nearest"});
     }
   }; });
-  if($("btnMdlSave")) $("btnMdlSave").onclick=function(){ api("analysisSave",{id:cur.id,kind:"models",data:st.models}).then(function(){ toast("已儲存型號對應"); }).catch(fail); };
+  if($("btnMdlSave")) $("btnMdlSave").onclick=function(){
+    /* 儲存時把自動配對／預填的型號一起存下來，之後資料庫變動也不會跑掉 */
+    rows.forEach(function(r){ if(!st.models[r.key]&&r.pick&&r.pick.model!=="-") st.models[r.key]=r.pick.src?Object.assign({},r.pick):pickOf(r.pick); });
+    api("analysisSave",{id:cur.id,kind:"models",data:st.models}).then(function(){ toast("已儲存型號對應"); }).catch(fail); };
   function chosenRows(){ return rows.filter(function(r){ return r.pick&&r.pick.model!=="-"; }); }
   function picked(){ return chosenRows().map(function(r){ var c=catOf(r.pick); return {sys:T.sysName({},r.sys),name:r.pick.name||r.name,brand:r.pick.brand,model:r.pick.model,qty:r.qty,unit:r.unit,link:r.pick.link||(c.files[0]?driveUrl(c.files[0].id):"")}; }); }
   if($("btnSubmittal")) $("btnSubmittal").onclick=function(){
-    var items=picked(), todo=rows.filter(function(r){ return r.status==="suggest"||r.status==="none"; }).length;
+    var items=picked(), todo=rows.filter(function(r){ return !r.pick; }).length;
     if(!items.length){ toast("還沒有選定任何型號"); return; }
     if(todo&&!confirm("還有 "+todo+" 項未選型號，要先用已選的 "+items.length+" 項產生送審資料嗎？")) return;
     api("analysisSave",{id:cur.id,kind:"models",data:st.models}).then(function(){ return api("submittalBuild",{id:cur.id,items:items}); }).then(function(r){
@@ -407,10 +413,10 @@ function bindModels(cur,el){
   /* 輸出送審型錄 PDF：依估價單項次，瀏覽器端合併 */
   if($("btnSubPdf")) $("btnSubPdf").onclick=function(){
     if(!window.SUBMITTAL_PDF||!window.PDFLib){ toast("PDF 元件未載入，請重新整理頁面"); return; }
-    var list=chosenRows(), todo=rows.filter(function(r){ return r.status==="suggest"||r.status==="none"; }).length;
+    var list=chosenRows(), todo=rows.filter(function(r){ return !r.pick; }).length, pre=rows.filter(function(r){ return r.status==="prefill"; }).length;
     if(!list.length){ toast("還沒有選定任何型號"); return; }
     var withCat=list.filter(function(r){ return catOf(r.pick).files.length; }).length;
-    if(!confirm("輸出送審型錄 PDF：\n・送審 "+list.length+" 項（已附型錄 "+withCat+" 項，待附 "+(list.length-withCat)+" 項）"+(todo?"\n・還有 "+todo+" 項未選型號，不會列入":"")+"\n\n確定輸出？")) return;
+    if(!confirm("輸出送審型錄 PDF：\n・送審 "+list.length+" 項（已附型錄 "+withCat+" 項，待附 "+(list.length-withCat)+" 項）"+(pre?"\n・其中 "+pre+" 項是預填型號，尚未確認":"")+(todo?"\n・還有 "+todo+" 項資料庫沒有、未選型號，不會列入":"")+"\n\n確定輸出？")) return;
     var btn=this, msg=$("subPdfMsg"), say=function(t){ if(msg) msg.textContent=t; };
     btn.disabled=true; st.fcache=st.fcache||{};
     var ids=[], backendOld=false, errs={};
@@ -462,7 +468,7 @@ function bind(cur,el){
     if(!/\.(dxf|zip)$/i.test(f.name)){ toast("請選擇 .dxf 或 .zip"); return; }
     var msg=$("dxfMsg"); msg.textContent="讀取檔案…"; $("btnDxf").disabled=true;
     f.arrayBuffer().then(function(buf){
-      var w=new Worker("dxf-worker.js?v=2.9.2");
+      var w=new Worker("dxf-worker.js?v=2.9.3");
       w.onmessage=function(ev){
         var m=ev.data;
         if(m.type==="progress"){ msg.textContent=m.text; return; }
