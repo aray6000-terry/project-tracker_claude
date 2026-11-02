@@ -326,6 +326,230 @@ function plan(dr, params) {
   return { params: P, io: io, net: { core: net.core, dist: net.dist, access: net.access, server: net.server, floors: net.floors, byFloor: net.byFloor }, ip: ip, cables: cb, wiring: wr };
 }
 
-var api = { wiring: wiring, cableClass: cableClass, plan: plan, DEFAULTS: DEFAULTS, IO_RULES: IO_RULES, COMM_RULES: COMM_RULES, ruleOf: ruleOf, IP_RULES: IP_RULES, VLANS: VLANS, CABLE: CABLE, floorRank: floorRank };
+/* ---------- 設備昇位圖：各樓層設備依系統分組 ---------- */
+/* 四個昇位系統：key、名稱、昇位主幹接到的主機 */
+var RISER_SYS = [
+  ["bms", "中央監控", "中央監控主機"],
+  ["access", "門禁", "門禁控制主機"],
+  ["cctv", "攝影系統", "NVR 錄影主機"],
+  ["intercom", "對講保全系統", "對講管理主機"]
+];
+var PUBLIC_RE = /公共|公設|安全梯|梯廳|店鋪|店舖|社福|機房|管委|大廳|門廳|停車|車道|屋頂|地下/;
+/** 設備歸到哪個昇位系統。停車、能源、環境、佈告欄等其他子系統都整合進中央監控；
+ *  住戶的磁簧、求救鈕、瓦斯偵測接戶內對講保全主機，歸對講保全；公共區的接 IO，歸中央監控。 */
+function riserSysOf(name, sys) {
+  name = String(name || ""); sys = sys || "";
+  var pub = PUBLIC_RE.test(name);
+  /* 先看設備名稱（圖面分析的系統分類較粗，例如「液位開關(監視高液位)」會因「監視」被歸成攝影） */
+  if (sys === "parking" || /車牌|車道|柵欄|E-?TAG|感應線圈|紅綠燈|旋轉警示燈|繳費機|車位計數|滿車/i.test(name)) return "bms";
+  if (/攝影機|錄影|NVR|監視器|CCTV|鏡頭/i.test(name)) return "cctv";
+  if (/讀卡機|讀頭|讀碼機/.test(name)) return "access";   /* 含「整合於大門口機內」的讀頭 */
+  if (/對講|門口機|門口子機|防盜|宅內箱|智慧家庭|交換機|話機|CMS/i.test(name)) return "intercom";
+  if (/電子鎖|電子門鎖/.test(name) && !pub) return "intercom";   /* 住戶電子鎖接戶內對講機 */
+  if (/讀卡機|讀頭|讀碼機|陽極|電鎖|電子鎖|門鎖|開門按鈕|出門按鈕|門禁|自動開門|Smart ?Key/i.test(name)) return "access";
+  if (/磁簧|求救|押扣|壓扣|瓦斯|保全/.test(name) && !pub) return "intercom";
+  if (/液位|水位|油位|水箱|一氧化碳|偵測|感知器|感測器|配電箱|接線盒|出線口|開關|泵|風機|監控/.test(name)) return "bms";
+  if (sys === "cctv" || sys === "access" || sys === "intercom") return sys;
+  return "bms";
+}
+/** 昇位圖資料：floors 由下往上；cells[樓層][系統] = [{name,n}]；totals[樓層][系統] = 台數 */
+function riser(dr, opt) {
+  opt = opt || {};
+  var fset = {}, cells = {}, totals = {}, sysTotal = {}, extra = opt.extra || [];
+  (dr.floors || []).forEach(function (f) { fset[f] = 1; });
+  var src = (dr.items || []).map(function (it) { return { name: it.name, sys: it.sys, floors: it.floors || {} }; });
+  extra.forEach(function (x) { if (x && x.name && x.floor && +x.n > 0) { var o = {}; o[x.floor] = +x.n; src.push({ name: x.name, sys: "", floors: o }); } });
+  src.forEach(function (it) {
+    var s = riserSysOf(it.name, it.sys);
+    Object.keys(it.floors).forEach(function (f) {
+      var n = +it.floors[f] || 0; if (n <= 0) return;
+      fset[f] = 1;
+      var c = (cells[f] = cells[f] || {}); (c[s] = c[s] || []).push({ name: it.name, n: n });
+      var t = (totals[f] = totals[f] || {}); t[s] = (t[s] || 0) + n;
+      sysTotal[s] = (sysTotal[s] || 0) + n;
+    });
+  });
+  var floors = Object.keys(fset).sort(function (a, b) { return floorRank(a) - floorRank(b); });
+  var core = opt.coreFloor && fset[opt.coreFloor] ? opt.coreFloor : (fset["1F"] ? "1F" : floors[0]);
+  return { floors: floors, cells: cells, totals: totals, sysTotal: sysTotal, core: core, systems: RISER_SYS };
+}
+
+/* ---------- 設備昇位圖：版面（單位 mm，Y 向下）→ 畫面 SVG 與 DXF 共用 ---------- */
+var RISER_LAYER = { bms: ["RISER-BMS", 5], access: ["RISER-ACCESS", 3], cctv: ["RISER-CCTV", 30], intercom: ["RISER-INTERCOM", 6], all: ["RISER-ALL", 5] };
+var RISER_TRUNK = { bms: "主幹：CAT.6 UTP（IO 模組經樓層交換器）", access: "主幹：CAT.6 UTP（讀卡機經樓層交換器）", cctv: "主幹：6C 單模光纖（PoE 交換器上連）", intercom: "主幹：CAT.6 UTP（對講經樓層交換器）", all: "主幹：6C 單模光纖／CAT.6 UTP（經樓層交換器至中央監控室）" };
+/* 圖例符號：[規則, 代號, 形狀] ；圓形＝感知／偵測／按鈕／攝影，方形＝主機／箱體／讀卡機／對講機 */
+var RISER_SYM = [
+  [/配電箱/, "P", "rect"], [/出線口/, "WS", "rect"], [/副控/, "SUB", "rect"], [/接線盒/, "J", "rect"],
+  [/液位.*高低|高低液位/, "LW", "circle"], [/液位|水位/, "LH", "circle"], [/水箱蓋/, "TC", "circle"], [/油位/, "OL", "circle"],
+  [/一氧化碳/, "CO", "circle"], [/瓦斯/, "G", "circle"], [/多功能感應/, "MS", "circle"], [/磁簧/, "M", "circle"], [/求救|押扣|壓扣/, "E", "circle"],
+  [/車牌辨識.*攝影/, "LPR", "circle"], [/全功/, "PTZ", "circle"], [/紅外線/, "IR", "circle"], [/攝影.*電梯|電梯.*攝影/, "EC", "circle"], [/半球/, "D", "circle"], [/吊桿/, "BC", "circle"], [/攝影機/, "C", "circle"],
+  [/E-?tag/i, "ET", "rect"], [/讀卡機|讀頭|讀碼機/, "R", "rect"], [/開門按鈕|出門按鈕/, "PB", "circle"], [/陽極鎖|電鎖/, "EL", "rect"], [/電子鎖|電子門鎖/, "DL", "rect"], [/自動開門/, "AD", "circle"],
+  [/宅內箱/, "HB", "rect"], [/防盜主機|室內機|室內對講/, "IDU", "rect"], [/門口子機/, "ODU", "rect"], [/大門口機/, "MD", "rect"], [/緊急對講/, "EI", "rect"],
+  [/管理總機|CMS/, "MC", "rect"], [/交換機主機/, "PBX", "rect"], [/話機/, "T", "circle"],
+  [/檢知器/, "LD", "rect"], [/感應線圈/, "LP", "circle"], [/紅綠燈/, "TL", "rect"], [/警示燈/, "WL", "circle"], [/柵欄/, "BG", "rect"], [/車道控制/, "LC", "rect"], [/車牌辨識/, "LPR", "rect"],
+  [/繳費/, "PS", "rect"], [/計數器/, "CNT", "rect"], [/滿車/, "FL", "rect"], [/佈告欄|布告欄/, "SIG", "rect"], [/水錶|水表/, "WM", "circle"], [/電錶|電表/, "KWH", "circle"],
+  [/投影機/, "PJ", "rect"], [/布幕/, "SCR", "rect"], [/安全島/, "SI", "rect"]
+];
+/** 每種設備的圖例：代號重複時加序號（E、E2、E3…），全案一致 */
+function riserLegend(R) {
+  var names = [], seen = {}, out = {}, used = {};
+  R.systems.forEach(function (s) { R.floors.forEach(function (f) { ((R.cells[f] || {})[s[0]] || []).forEach(function (e) { if (!seen[e.name]) { seen[e.name] = 1; names.push({ name: e.name, sys: s[0] }); } }); }); });
+  /* 名稱較單純的（沒有括號註記）先取得基本代號 */
+  names.slice().sort(function (a, b) { return (/[()（）]/.test(a.name) ? 1 : 0) - (/[()（）]/.test(b.name) ? 1 : 0) || a.name.length - b.name.length; }).forEach(function (x) {
+    var sym = null; for (var i = 0; i < RISER_SYM.length; i++) if (RISER_SYM[i][0].test(x.name)) { sym = RISER_SYM[i]; break; }
+    var code = sym ? sym[1] : "X", shape = sym ? sym[2] : "circle", c = code, k = 1;
+    while (used[c]) c = code + (++k);
+    used[c] = 1; out[x.name] = { code: c, shape: shape, sys: x.sys };
+  });
+  var ordered = {}; names.forEach(function (x) { ordered[x.name] = out[x.name]; });
+  return ordered;
+}
+function riserCable(name, P) {
+  if (/宅內箱|配線箱/.test(name)) return "—（箱體，不另配線）";
+  var c = cableClass(name, P || DEFAULTS);
+  return c ? CABLE_OF[c] : "—（箱體，不另配線）";
+}
+function shortCable(s) { return String(s).replace(/（.*?）/g, "").replace(/\s+遮蔽線/, " 遮蔽").trim(); }
+/** 某樓層某欄的設備；key 為 "all" 時依系統順序合併 */
+function riserEntries(R, f, key) {
+  var c = R.cells[f] || {};
+  if (key !== "all") return (c[key] || []).slice();
+  var list = []; R.systems.forEach(function (s) { (c[s[0]] || []).forEach(function (e) { list.push(e); }); });
+  return list;
+}
+/** sel：null＝不分系統（一欄全部設備）；陣列＝分系統時勾選的系統 key */
+function riserCols(R, sel) {
+  if (!sel) return [{ key: "all", name: "全部設備", host: "中央監控室" }];
+  return R.systems.filter(function (s) { return sel.indexOf(s[0]) >= 0; }).map(function (s) { return { key: s[0], name: s[1], host: s[2] }; });
+}
+/** 版面：prims 為 line／circle／rect／text（a: "l" 靠左基線、"m" 置中），座標 mm、Y 向下 */
+function riserLayout(R, sel, P, opt) {
+  opt = opt || {};
+  var cols = riserCols(R, sel), legend = riserLegend(R), prims = [];
+  var SLOT = 15, SYM = 3.2, LINE = 15, LW = 34, PAD = 16, CAP = sel ? 8 : 24;
+  function L(x1, y1, x2, y2, ly, w) { prims.push({ t: "line", x1: x1, y1: y1, x2: x2, y2: y2, ly: ly, w: w || 0 }); }
+  function C(x, y, r, ly) { prims.push({ t: "circle", x: x, y: y, r: r, ly: ly }); }
+  function B(x, y, w, h, ly, fill) { prims.push({ t: "rect", x: x, y: y, w: w, h: h, ly: ly, fill: !!fill }); }
+  function T(x, y, h, s, ly, a, cls) { prims.push({ t: "text", x: x, y: y, h: h, s: String(s), ly: ly, a: a || "l", cls: cls || "" }); }
+  function fit(s, w, h) { s = String(s); var acc = 0, out = ""; for (var i = 0; i < s.length; i++) { var cw = (s.charCodeAt(i) > 255 ? 1 : 0.62) * h; if (acc + cw > w) return out + "…"; acc += cw; out += s[i]; } return out; }
+  function sym(x, y, lg, ly) {
+    if (lg.shape === "rect") B(x - SYM, y - SYM, SYM * 2, SYM * 2, ly); else C(x, y, SYM, ly);
+    T(x, y, lg.code.length > 2 ? 1.5 : 2, lg.code, ly, "m");
+  }
+  var sumOf = function (f, key) { return riserEntries(R, f, key).reduce(function (a, e) { return a + e.n; }, 0); };
+  var hostW = function (c) { return Math.max(22, c.host.length * 3 + 6); };
+  /* 欄寬：依最多設備的樓層決定每列放幾個符號 */
+  cols.forEach(function (c) {
+    var most = 1; R.floors.forEach(function (f) { most = Math.max(most, riserEntries(R, f, c.key).length + (f === R.core ? Math.ceil((hostW(c) + 4) / SLOT) : 0)); });
+    c.per = Math.min(most, Math.max(CAP, Math.ceil(most / 3))); c.lines = Math.ceil(most / c.per); c.w = PAD + c.per * SLOT + SLOT / 2 + 6;   /* 最多 3 排，錯開排列讓支線從符號間通過 */
+  });
+  var top = 34, x = LW; cols.forEach(function (c) { c.x = x; c.rx = x + 8; x += c.w; });
+  var W0 = x;
+  T(0, 8, 6, opt.title || "各樓層設備昇位圖" + (sel ? "（分系統）" : ""), "RISER-TEXT", "l", "ttl");
+  T(0, 15, 2.8, "昇位主幹接到 " + R.core + " " + (sel ? "各系統主機" : "中央監控室") + "；符號旁 ×N 為該層數量，各層支線下方標示配置線材" + (opt.source ? "；來源：" + opt.source : ""), "RISER-TEXT");
+  T(2, top - 3, 3, "樓層", "RISER-TEXT");
+  cols.forEach(function (c) {
+    var ly = RISER_LAYER[c.key][0], tot = R.floors.reduce(function (a, f) { return a + sumOf(f, c.key); }, 0);
+    B(c.x + 2, top - 14, c.w - 4, 12, ly); T(c.x + 5, top - 8.6, 3.5, fit(c.name + "　共 " + tot + " 台", c.w - 10, 3.5), ly, "l", "hd");
+    T(c.x + 5, top - 4, 2, fit(RISER_TRUNK[c.key], c.w - 10, 2), ly);
+  });
+  var rows = [], y = top;
+  R.floors.slice().reverse().forEach(function (f) {
+    var lines = 1; cols.forEach(function (c) { var n = riserEntries(R, f, c.key).length + (f === R.core ? Math.ceil((hostW(c) + 4) / SLOT) : 0); lines = Math.max(lines, Math.ceil(n / c.per)); });
+    var h = 12 + lines * LINE + 6; rows.push({ f: f, y: y, h: h, bus: y + h - 7 }); y += h;
+  });
+  var bottom = y;
+  rows.forEach(function (r) {
+    var ft = cols.reduce(function (a, c) { return a + sumOf(r.f, c.key); }, 0);
+    L(0, r.y, W0, r.y, "RISER-FLOOR"); T(3, r.y + 7, 4, r.f, "RISER-FLOOR", "l", "fl"); T(3, r.y + 12, 2.5, ft ? ft + " 台" : "—", "RISER-FLOOR");
+  });
+  L(0, bottom, W0, bottom, "RISER-FLOOR"); L(LW - 1, top - 16, LW - 1, bottom, "RISER-FLOOR");
+  cols.forEach(function (c) {
+    var ly = RISER_LAYER[c.key][0], rx = c.rx;
+    var used = rows.filter(function (r) { return r.f === R.core || riserEntries(R, r.f, c.key).length; });
+    if (used.length > 1) { L(rx - 0.6, used[0].bus, rx - 0.6, used[used.length - 1].bus, ly, 1); L(rx + 0.6, used[0].bus, rx + 0.6, used[used.length - 1].bus, ly, 1); }
+    rows.forEach(function (r) {
+      var es = riserEntries(R, r.f, c.key), core = r.f === R.core;
+      if (!es.length && !core) return;
+      /* 樓層監控箱（斜線方塊）在主幹上，支線匯流到箱 */
+      B(rx - 4, r.bus - 2.5, 8, 5, ly); L(rx - 4, r.bus + 2.5, rx + 4, r.bus - 2.5, ly);
+      var skip = 0;
+      if (core) { var hw = hostW(c); B(rx + 8, r.y + 4, hw, 7, ly, true); T(rx + 8 + hw / 2, r.y + 7.5, 2.8, c.host, ly, "m", "host"); L(rx + 8, r.y + 7.5, rx, r.y + 7.5, ly); L(rx, r.y + 7.5, rx, r.bus - 2.5, ly); skip = Math.ceil((hw + 4) / SLOT); }
+      var lastX = rx + 4, cables = {};
+      es.forEach(function (e, k) {
+        var i = k + skip, li = Math.floor(i / c.per), sx = rx + PAD + (i % c.per) * SLOT + li * SLOT / 3, sy = r.y + 12 + li * LINE, lg = legend[e.name];
+        sym(sx, sy, lg, ly); T(sx + SYM + 0.6, sy - SYM - 0.3, 2, "×" + e.n, ly, "l", "qty");
+        L(sx, sy + SYM, sx, r.bus, ly); lastX = Math.max(lastX, sx);
+        var cb = shortCable(riserCable(e.name, P)); if (!/^—/.test(cb)) cables[cb] = (cables[cb] || 0) + e.n;
+      });
+      if (es.length) L(rx + 4, r.bus, lastX, r.bus, ly);
+      var ctxt = Object.keys(cables).map(function (k) { return k + "×" + cables[k]; }).join("；");
+      if (ctxt) T(rx + 6, r.bus + 4.2, 1.8, fit("線材：" + ctxt, c.w - 12, 1.8), ly, "l", "cab");
+    });
+  });
+  /* 圖例表 */
+  var lx = W0 + 10, cw = [14, 62, 56, 16], LH = 8, ly0 = top - 14, tw = cw.reduce(function (a, b) { return a + b; }, 0);
+  T(lx, ly0 - 3, 4, "圖例", "RISER-LEGEND", "l", "hd");
+  var hdr = ["圖例", "說明", "配置線材", "數量"], yy = ly0, cx = [lx]; cw.forEach(function (w, i) { cx.push(cx[i] + w); });
+  function rowLine(yv) { L(lx, yv, lx + tw, yv, "RISER-LEGEND"); }
+  rowLine(yy); hdr.forEach(function (h, i) { T(cx[i] + cw[i] / 2, yy + LH / 2, 2.6, h, "RISER-LEGEND", "m", "hd"); }); yy += LH; rowLine(yy);
+  var start = ly0, shownKeys = cols.map(function (c) { return c.key; });
+  R.systems.forEach(function (s) {
+    if (shownKeys.indexOf("all") < 0 && shownKeys.indexOf(s[0]) < 0) return;
+    var items = Object.keys(legend).filter(function (n) { return legend[n].sys === s[0]; }); if (!items.length) return;
+    var ly = RISER_LAYER[s[0]][0];
+    T(lx + 2, yy + LH / 2 + 1, 2.6, s[1], ly, "l", "hd"); yy += LH; rowLine(yy);
+    items.forEach(function (n) {
+      var lg = legend[n], tot = R.floors.reduce(function (a, f) { return a + (((R.cells[f] || {})[s[0]] || []).filter(function (e) { return e.name === n; }).reduce(function (a2, e) { return a2 + e.n; }, 0)); }, 0);
+      sym(cx[0] + cw[0] / 2, yy + LH / 2, lg, ly);
+      T(cx[1] + 1.5, yy + LH / 2 + 1, 2.2, fit(n, cw[1] - 3, 2.2), "RISER-LEGEND");
+      T(cx[2] + 1.5, yy + LH / 2 + 1, 2, fit(riserCable(n, P), cw[2] - 3, 2), "RISER-LEGEND");
+      T(cx[3] + cw[3] / 2, yy + LH / 2, 2.2, tot, "RISER-LEGEND", "m");
+      yy += LH; rowLine(yy);
+    });
+  });
+  cx.forEach(function (xv, i) { if (i === 1 || i === 2 || i === 3) L(xv, start, xv, yy, "RISER-LEGEND"); });
+  L(lx, start, lx, yy, "RISER-LEGEND"); L(lx + tw, start, lx + tw, yy, "RISER-LEGEND");
+  T(lx, yy + 5, 2, "符號旁 ×N 為該層數量；配置線材依平台「線材」規則（可在參數調整）。", "RISER-LEGEND");
+  var W = lx + tw + 4, H = Math.max(bottom, yy + 8) + 4;
+  B(-4, -2, W + 8, H + 4, "RISER-FRAME");
+  return { W: W, H: H, prims: prims, legend: legend, cols: cols };
+}
+function dxfStr(s) {
+  return String(s).replace(/[\r\n]+/g, " ").replace(/[^\x20-\x7e]/g, function (ch) { var h = ch.charCodeAt(0).toString(16).toUpperCase(); while (h.length < 4) h = "0" + h; return "\\U+" + h; });
+}
+/** AutoCAD R12 ASCII DXF；單位 mm；中文以 \U+XXXX 寫入，不受字碼頁影響 */
+function riserDxf(R, sel, opt) {
+  opt = opt || {};
+  var Lo = riserLayout(R, sel, opt.params, opt), E = [];
+  var num = function (v) { return (Math.round(v * 1000) / 1000).toString(); };
+  var Y = function (y) { return -y; };
+  function line(x1, y1, x2, y2, ly) { E.push("0\nLINE\n8\n" + ly + "\n10\n" + num(x1) + "\n20\n" + num(Y(y1)) + "\n30\n0\n11\n" + num(x2) + "\n21\n" + num(Y(y2)) + "\n31\n0"); }
+  Lo.prims.forEach(function (p) {
+    if (p.t === "line") line(p.x1, p.y1, p.x2, p.y2, p.ly);
+    else if (p.t === "rect") { line(p.x, p.y, p.x + p.w, p.y, p.ly); line(p.x + p.w, p.y, p.x + p.w, p.y + p.h, p.ly); line(p.x + p.w, p.y + p.h, p.x, p.y + p.h, p.ly); line(p.x, p.y + p.h, p.x, p.y, p.ly); }
+    else if (p.t === "circle") E.push("0\nCIRCLE\n8\n" + p.ly + "\n10\n" + num(p.x) + "\n20\n" + num(Y(p.y)) + "\n30\n0\n40\n" + num(p.r));
+    else if (p.t === "text") {
+      var s = "0\nTEXT\n8\n" + p.ly + "\n10\n" + num(p.x) + "\n20\n" + num(Y(p.y)) + "\n30\n0\n40\n" + num(p.h) + "\n1\n" + dxfStr(p.s) + "\n7\nCHT";
+      if (p.a === "m") s += "\n72\n1\n11\n" + num(p.x) + "\n21\n" + num(Y(p.y)) + "\n31\n0\n73\n2";
+      E.push(s);
+    }
+  });
+  var layers = [["0", 7], ["RISER-TEXT", 7], ["RISER-FLOOR", 8], ["RISER-FRAME", 7], ["RISER-LEGEND", 7]].concat(Lo.cols.map(function (c) { return RISER_LAYER[c.key]; }));
+  if (!sel) Object.keys(RISER_LAYER).forEach(function (k) { if (k !== "all" && layers.every(function (l) { return l[0] !== RISER_LAYER[k][0]; })) layers.push(RISER_LAYER[k]); });
+  var out = [
+    "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1009\n9\n$DWGCODEPAGE\n3\nANSI_950\n9\n$INSBASE\n10\n0\n20\n0\n30\n0\n9\n$EXTMIN\n10\n-4\n20\n" + num(-Lo.H - 2) + "\n30\n0\n9\n$EXTMAX\n10\n" + num(Lo.W + 4) + "\n20\n2\n30\n0\n0\nENDSEC",
+    "0\nSECTION\n2\nTABLES",
+    "0\nTABLE\n2\nLTYPE\n70\n1\n0\nLTYPE\n2\nCONTINUOUS\n70\n0\n3\nSolid line\n72\n65\n73\n0\n40\n0.0\n0\nENDTAB",
+    "0\nTABLE\n2\nLAYER\n70\n" + layers.length + "\n" + layers.map(function (l) { return "0\nLAYER\n2\n" + l[0] + "\n70\n0\n62\n" + l[1] + "\n6\nCONTINUOUS"; }).join("\n") + "\n0\nENDTAB",
+    "0\nTABLE\n2\nSTYLE\n70\n1\n0\nSTYLE\n2\nCHT\n70\n0\n40\n0.0\n41\n1.0\n50\n0.0\n71\n0\n42\n2.5\n3\nmsjh.ttc\n4\n\n0\nENDTAB",
+    "0\nENDSEC",
+    "0\nSECTION\n2\nENTITIES\n" + E.join("\n") + "\n0\nENDSEC",
+    "0\nEOF\n"
+  ];
+  return out.join("\n").replace(/\n/g, "\r\n");
+}
+
+var api = { riser: riser, riserSysOf: riserSysOf, riserDxf: riserDxf, riserLayout: riserLayout, riserLegend: riserLegend, riserEntries: riserEntries, riserCols: riserCols, RISER_SYS: RISER_SYS, wiring: wiring, cableClass: cableClass, plan: plan, DEFAULTS: DEFAULTS, IO_RULES: IO_RULES, COMM_RULES: COMM_RULES, ruleOf: ruleOf, IP_RULES: IP_RULES, VLANS: VLANS, CABLE: CABLE, floorRank: floorRank };
 if (typeof module === "object" && module.exports) module.exports = api; else root.DESIGN = api;
 })(typeof self !== "undefined" ? self : this);

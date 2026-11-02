@@ -5,7 +5,7 @@ var T=window.TR; if(!T||!window.DESIGN) return;
 var esc=T.esc, api=T.api, toast=T.toast, fail=T.fail;
 var $=function(id){ return document.getElementById(id); };
 var st={pid:null, dr:null, params:{}, sub:"net", floor:null};
-var SUBS=[["net","網路架構"],["io","IO 模組表"],["ip","IP 編表"],["sw","交換器"],["route","佈線圖"],["cable","線材"],["wire","配線系統圖"],["rule","參數與點位規則"]];
+var SUBS=[["net","網路架構"],["riser","設備昇位圖"],["io","IO 模組表"],["ip","IP 編表"],["sw","交換器"],["route","佈線圖"],["cable","線材"],["wire","配線系統圖"],["rule","參數與點位規則"]];
 var VNAME={}; DESIGN.VLANS.forEach(function(v){ VNAME[v[0]]=v[2]; });
 
 function csv(name, rows){
@@ -111,6 +111,7 @@ function render(cur,el){
 function body(P,cur){
   var s=st.sub;
   if(s==="net") return netView(P);
+  if(s==="riser") return riserView(P);
   if(s==="io") return ioView(P);
   if(s==="ip") return ipView(P);
   if(s==="sw") return swView(P);
@@ -155,6 +156,57 @@ function netView(P){
     +'<h4 style="margin:14px 0 6px">VLAN／網段規劃</h4><div class="tblwrap"><table><thead><tr><th>VLAN</th><th>用途</th><th>網段</th><th>子網路遮罩</th><th>預設閘道</th><th>可用範圍</th><th>廣播位址</th><th>設備數</th><th>可用位址</th></tr></thead><tbody>'
     +subs.map(function(s){ var p=String(s.cidr).split('/')[1], rg=ipRange(s.cidr)||{}; return '<tr><td>'+s.vlan+'</td><td>'+esc(s.name)+'</td><td class="mono">'+esc(s.cidr)+'</td><td class="mono">'+maskOf(p)+'</td><td class="mono">'+esc(s.gateway)+'</td><td class="mono">'+esc((rg.first||'')+' ～ '+(rg.last||''))+'</td><td class="mono">'+esc(rg.bc||'')+'</td><td>'+s.hosts+'</td><td>'+s.capacity+'</td></tr>'; }).join("")+'</tbody></table></div>'
     +'<div class="tipbox"><b>資安建議</b><br>1. 各系統分 VLAN，核心交換器設 ACL：預設禁止 VLAN 互通，只允許管理電腦與整合主機（中央監控、對講伺服器）存取必要網段與埠號。<br>2. 交換器管理介面只在 VLAN 10，關閉 Telnet／HTTP，改用 SSH／HTTPS，並更改預設密碼。<br>3. 未使用的交換器埠關閉，接取埠可啟用 Port Security（限制 MAC 數）。<br>4. 戶外與公共區設備（攝影機、緊急對講）的埠啟用 802.1X 或 MAC 綁定，避免被拔線接入。<br>5. 需要遠端維護時走 VPN，不直接把設備開到網際網路。</div>';
+}
+
+/* ---------- 設備昇位圖（各樓層設備，可分系統） ---------- */
+var RS_KEY="riserOpt", RS=(function(){ var d={split:false,on:{bms:true,access:true,cctv:true,intercom:true}};
+  try{ var v=JSON.parse(localStorage.getItem(RS_KEY)||"null"); if(v&&typeof v==="object"){ d.split=!!v.split; if(v.on) Object.keys(d.on).forEach(function(k){ if(k in v.on) d.on[k]=!!v.on[k]; }); } }catch(e){}
+  return d; })();
+function rsSave(){ try{ localStorage.setItem(RS_KEY,JSON.stringify(RS)); }catch(e){} }
+var RS_CLS={bms:"rs-bms",access:"rs-acc",cctv:"rs-cam",intercom:"rs-int",all:"rs-all"};
+function riserData(P){ return DESIGN.riser(st.dr,{coreFloor:P.params.coreFloor,extra:st.params.extraIo||[]}); }
+/** 要畫的欄：分系統時為勾選的系統，不分系統時一欄「全部設備」 */
+function riserCols(R){
+  if(!RS.split) return [{key:"all",name:"全部設備",host:"中央監控室"}];
+  return R.systems.filter(function(s){ return RS.on[s[0]]; }).map(function(s){ return {key:s[0],name:s[1],host:s[2]}; });
+}
+function riserEntries(R,f,key){
+  var c=R.cells[f]||{}, list=[];
+  if(key==="all") R.systems.forEach(function(s){ (c[s[0]]||[]).forEach(function(e){ list.push(e); }); });
+  else list=(c[key]||[]).slice();
+  return list;
+}
+function rsSel(R){ return RS.split?R.systems.map(function(x){ return x[0]; }).filter(function(k){ return RS.on[k]; }):null; }
+var RS_LY={"RISER-BMS":"rs-bms","RISER-ACCESS":"rs-acc","RISER-CCTV":"rs-cam","RISER-INTERCOM":"rs-int","RISER-ALL":"rs-all"};
+/** 與 DXF 同一份版面（mm）畫成 SVG：1 mm ＝ 2.4 px */
+function riserSvg(P,R){
+  var Lo=DESIGN.riserLayout(R,rsSel(R),P.params,{}), k=2.4, g='', f=function(v){ return Math.round(v*k*10)/10; };
+  Lo.prims.forEach(function(p){
+    var c=RS_LY[p.ly]||"rs-ink";
+    if(p.t==="line") g+='<line x1="'+f(p.x1)+'" y1="'+f(p.y1)+'" x2="'+f(p.x2)+'" y2="'+f(p.y2)+'" class="rs-l '+c+(p.w?' rs-trunk':'')+'"/>';
+    else if(p.t==="rect") g+='<rect x="'+f(p.x)+'" y="'+f(p.y)+'" width="'+f(p.w)+'" height="'+f(p.h)+'" class="rs-l '+c+(p.fill?' rs-hostbox':' rs-box')+'"/>';
+    else if(p.t==="circle") g+='<circle cx="'+f(p.x)+'" cy="'+f(p.y)+'" r="'+f(p.r)+'" class="rs-l rs-box '+c+'"/>';
+    else g+='<text x="'+f(p.x)+'" y="'+f(p.y)+'" font-size="'+(Math.round(p.h*k*1.15*10)/10)+'" class="rs-t '+c+(p.cls?' rs-'+p.cls:'')+'"'+(p.a==="m"?' text-anchor="middle" dominant-baseline="central"':'')+'>'+svgEsc(p.s)+'</text>';
+  });
+  return {g:g,W:f(Lo.W+8),H:f(Lo.H+6),vb:f(-4)+' '+f(-3)};
+}
+function riserView(P){
+  var R=riserData(P), cols=riserCols(R);
+  var h='<div class="row" style="flex-wrap:wrap"><h3>設備昇位圖</h3><div class="tools">'+(cols.length?expBtns()+'<button class="btn small" id="dxfRiser" type="button">匯出 DXF</button>':'')+'<button class="btn small" id="csvRiser" type="button">下載昇位清單（CSV）</button></div></div>'
+    +'<p class="meta">依圖面分析的各樓層設備數量，由上而下排列樓層，昇位主幹接到 '+esc(R.core)+'（核心機房樓層，可在「參數與點位規則」修改）。分系統時，停車、能源、環境、佈告欄等子系統併入中央監控；住戶的磁簧、求救鈕、瓦斯偵測接戶內對講保全主機，歸對講保全系統。</p>'
+    +'<div class="rs-opts"><label class="rs-chk"><input type="checkbox" id="rsSplit"'+(RS.split?" checked":"")+'> 分系統顯示</label>';
+  if(RS.split) h+='<span class="rs-sep-v"></span>'+R.systems.map(function(s){ return '<label class="rs-chk"><input type="checkbox" data-rs="'+s[0]+'"'+(RS.on[s[0]]?" checked":"")+'><span class="lgw-sys '+RS_CLS[s[0]]+'"></span>'+esc(s[1])+'（'+(R.sysTotal[s[0]]||0)+'）</label>'; }).join("");
+  h+='</div>';
+  if(!cols.length) return h+'<div class="empty">請至少勾選一個系統。</div>';
+  if(!R.floors.length) return h+'<div class="empty">圖面分析沒有樓層設備數量。</div>';
+  var x=riserSvg(P,R);
+  h+='<div class="netwrap"><svg class="netsvg rssvg" viewBox="'+x.vb+' '+x.W+' '+x.H+'" role="img" aria-label="各樓層設備昇位圖">'+x.g+'</svg></div>';
+  h+='<h4 style="margin:14px 0 6px">各樓層設備數量</h4><div class="tblwrap"><table><thead><tr><th>樓層</th>'+cols.map(function(c){ return '<th>'+esc(c.name)+'</th>'; }).join("")+(cols.length>1?'<th>合計</th>':'')+'</tr></thead><tbody>';
+  var colTot=cols.map(function(){ return 0; });
+  R.floors.slice().reverse().forEach(function(f){ var sum=0;
+    h+='<tr><td>'+esc(f)+(f===R.core?' <span class="hint">主機</span>':'')+'</td>'+cols.map(function(c,i){ var n=riserEntries(R,f,c.key).reduce(function(a,e){ return a+e.n; },0); sum+=n; colTot[i]+=n; return '<td>'+(n||"—")+'</td>'; }).join("")+(cols.length>1?'<td><b>'+(sum||"—")+'</b></td>':'')+'</tr>'; });
+  h+='<tr class="grp"><td><b>合計</b></td>'+colTot.map(function(n){ return '<td><b>'+n+'</b></td>'; }).join("")+(cols.length>1?'<td><b>'+colTot.reduce(function(a,b){ return a+b; },0)+'</b></td>':'')+'</tr></tbody></table></div>';
+  return h;
 }
 
 /* ---------- IO ---------- */
@@ -364,8 +416,18 @@ function bind(P,cur,el){
   var name=(cur.project.name||"專案");
   el.querySelectorAll("[data-expall]").forEach(function(b){ b.onclick=function(){ exportAllWire(P,name,b.dataset.expall); }; });
   el.querySelectorAll("[data-exp]").forEach(function(b){ b.onclick=function(){
-    var svg=el.querySelector("#dsBody svg.netsvg"), lbl={net:"網路架構",wire:"設備配置配線圖_"+(st.floor&&P.net.floors.indexOf(st.floor)>=0?st.floor:P.net.floors[0]),route:"佈線圖_"+((P.wiring.plans[Math.min(st.plan||0,P.wiring.plans.length-1)]||{}).title||"")}[st.sub]||"圖";
+    var svg=el.querySelector("#dsBody svg.netsvg"), lbl={net:"網路架構",riser:"設備昇位圖"+(RS.split?"_分系統":""),wire:"設備配置配線圖_"+(st.floor&&P.net.floors.indexOf(st.floor)>=0?st.floor:P.net.floors[0]),route:"佈線圖_"+((P.wiring.plans[Math.min(st.plan||0,P.wiring.plans.length-1)]||{}).title||"")}[st.sub]||"圖";
     exportSvg(svg,name+"_"+lbl,b.dataset.exp); }; });
+  if($("rsSplit")) $("rsSplit").onchange=function(){ RS.split=this.checked; rsSave(); re(); };
+  el.querySelectorAll("[data-rs]").forEach(function(c){ c.onchange=function(){ RS.on[c.dataset.rs]=c.checked; rsSave(); re(); }; });
+  if($("dxfRiser")) $("dxfRiser").onclick=function(){
+    var R=riserData(P), sel=rsSel(R);
+    var txt=DESIGN.riserDxf(R,sel,{params:P.params,title:name+"　各樓層設備昇位圖"+(sel?"（分系統）":""),source:st.dr.fileName||""});
+    saveBlob(new Blob([txt],{type:"application/dxf"}),name.replace(/[\\/:*?"<>|]/g,"_")+"_設備昇位圖"+(sel?"_分系統":"")+".dxf");
+    toast("已匯出 DXF（圖層：RISER-BMS／ACCESS／CCTV／INTERCOM，單位 mm）"); };
+  if($("csvRiser")) $("csvRiser").onclick=function(){ var R=riserData(P), sn={}; R.systems.forEach(function(s){ sn[s[0]]=s[1]; });
+    var rows=[["樓層","系統","設備","數量"]]; R.floors.slice().reverse().forEach(function(f){ R.systems.forEach(function(s){ if(RS.split&&!RS.on[s[0]]) return; ((R.cells[f]||{})[s[0]]||[]).forEach(function(e){ rows.push([f,sn[s[0]],e.name,e.n]); }); }); });
+    csv(name+"_設備昇位清單.csv",rows); };
   if($("csvIoTable")) $("csvIoTable").onclick=function(){
     var tb=P.io.table, cols=tb.columns, gname={di:"數位輸入",ai:"類比輸入",do:"數位輸出",comm:"通信協定",sys:"系統設定"};
     var rows=[["項目","設備名稱","位置","通訊格式","數量"].concat(cols.map(function(c){ return gname[c.group]+"－"+c.label; }))];

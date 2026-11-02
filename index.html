@@ -11,20 +11,20 @@
 <style>
 :root{
   --bg:#f5f4ef;--surface:#ffffff;--surface-2:#efede6;--ink:#1d2433;--ink-2:#5a6474;--line:#dedad0;
-  --accent:#1f5fa8;--accent-soft:#e3edf8;--ok:#2e7d4f;--ok-soft:#e3f2e8;--warn:#b5651d;--warn-soft:#fbeedd;
+  --accent:#1f5fa8;--accent-soft:#e3edf8;--ok:#2e7d4f;--ok-soft:#e3f2e8;--warn:#b5651d;--warn-soft:#fbeedd;--sys-int:#8b3d8f;
   --bad:#b3261e;--bad-soft:#fbe4e2;--idle:#8a93a2;--on-accent:#ffffff;--shadow:0 1px 2px rgba(20,30,50,.06),0 4px 16px rgba(20,30,50,.05);
   color-scheme:light;
 }
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
     --bg:#14181f;--surface:#1c222c;--surface-2:#242b37;--ink:#e8ebf0;--ink-2:#a3adbd;--line:#323b49;
-    --accent:#6fa8ef;--accent-soft:#1f3150;--ok:#5fc48a;--ok-soft:#1d3528;--warn:#e8a25c;--warn-soft:#3a2c1b;
+    --accent:#6fa8ef;--accent-soft:#1f3150;--ok:#5fc48a;--ok-soft:#1d3528;--warn:#e8a25c;--warn-soft:#3a2c1b;--sys-int:#d48fd8;
     --bad:#f08a80;--bad-soft:#3d2321;--idle:#7b8596;--on-accent:#0f1622;--shadow:none;color-scheme:dark;
   }
 }
 :root[data-theme="dark"]{
   --bg:#14181f;--surface:#1c222c;--surface-2:#242b37;--ink:#e8ebf0;--ink-2:#a3adbd;--line:#323b49;
-  --accent:#6fa8ef;--accent-soft:#1f3150;--ok:#5fc48a;--ok-soft:#1d3528;--warn:#e8a25c;--warn-soft:#3a2c1b;
+  --accent:#6fa8ef;--accent-soft:#1f3150;--ok:#5fc48a;--ok-soft:#1d3528;--warn:#e8a25c;--warn-soft:#3a2c1b;--sys-int:#d48fd8;
   --bad:#f08a80;--bad-soft:#3d2321;--idle:#7b8596;--on-accent:#0f1622;--shadow:none;color-scheme:dark;
 }
 *{box-sizing:border-box}
@@ -215,6 +215,14 @@ table.pstat td,table.pstat th{white-space:nowrap}
 .netsvg .ln-f{fill:none;stroke:var(--ink-2);stroke-width:1;opacity:.6}.netsvg .ln-c{fill:none;stroke:var(--accent);stroke-width:2}
 .legend{display:flex;gap:6px 14px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--ink-2);margin:8px 0}.legend .lg{display:inline-block;width:14px;height:10px;border-radius:3px;border:1.5px solid var(--accent);margin-right:-8px}
 .legend .lg.cam{border-color:var(--warn)}.legend .lg.dist{background:var(--accent-soft)}.legend .lg.core{background:var(--accent)}
+.rs-opts{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;margin:8px 0 10px;font-size:13px}.rs-chk{display:inline-flex;gap:6px;align-items:center;cursor:pointer}.rs-chk input{width:16px;height:16px;accent-color:var(--accent)}.rs-sep-v{width:1px;height:18px;background:var(--line)}
+.lgw-sys{display:inline-block;width:14px;height:4px;border-radius:2px;background:var(--c)}.rs-bms{--c:var(--accent)}.rs-acc{--c:var(--ok)}.rs-cam{--c:var(--warn)}.rs-int{--c:var(--sys-int)}.rs-all{--c:var(--accent)}
+.netsvg .t-r{font-size:11px;fill:var(--ink)}.netsvg .rs-n{font-weight:700;fill:var(--ink)}.netsvg .rs-sep{stroke:var(--line);stroke-width:1}
+.netsvg .rs-head{fill:var(--surface);stroke:var(--c);stroke-width:1.5}.netsvg .rs-ht{font-weight:700}
+.netsvg .rs-line{stroke:var(--c);stroke-width:3;stroke-linecap:round}.netsvg .rs-stub{stroke:var(--c);stroke-width:1.5}.netsvg .rs-node{fill:var(--surface);stroke:var(--c);stroke-width:2}
+.netsvg .rs-host{fill:var(--c);stroke:var(--c)}.netsvg .rs-hostt{fill:var(--surface);font-weight:700}
+.rssvg{min-width:1100px}.rssvg .rs-l{stroke:var(--c,var(--ink-2));stroke-width:1;fill:none}.rssvg .rs-ink{--c:var(--ink-2)}.rssvg .rs-trunk{stroke-width:1.4}
+.rssvg .rs-box{fill:none}.rssvg .rs-hostbox{fill:var(--surface);stroke-width:1.6}.rssvg .rs-t{fill:var(--c,var(--ink))}.rssvg .rs-t.rs-ink{fill:var(--ink)}.rssvg .rs-ttl,.rssvg .rs-hd,.rssvg .rs-fl,.rssvg .rs-host{font-weight:700}.rssvg .rs-cab{fill:var(--ink-2)}
 tr.muted td{color:var(--ink-2);opacity:.7}
 #printAll{display:none}
 @media print{body.printing>*:not(#printAll){display:none!important}body.printing #printAll{display:block}#printAll .print-page{break-after:page;page-break-after:always}#printAll .print-page:last-child{break-after:auto;page-break-after:auto}#printAll .netsvg{min-width:0;width:100%;max-height:25cm}#printAll .print-title{font-size:14pt;margin:0 0 8pt}}
@@ -369,25 +377,25 @@ footer{margin-top:32px;color:var(--ink-2);font-size:12px;text-align:center}
 </dialog>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<script src="config.js?v=2.8.0"></script>
-<script src="app.js?v=2.8.0"></script>
-<script src="ops.js?v=2.8.0"></script>
-<script src="xlsx-lite.js?v=2.8.0"></script>
-<script src="xls-lite.js?v=2.8.0"></script>
-<script src="quote-core.js?v=2.8.0"></script>
-<script src="xlsx-write.js?v=2.8.0"></script>
-<script src="quotegen-core.js?v=2.8.0"></script>
-<script src="quotegen.js?v=2.8.0"></script>
-<script src="pdf-lib.min.js?v=2.8.0"></script>
-<script src="catalog-seed.js?v=2.8.0"></script>
-<script src="submittal-pdf.js?v=2.8.0"></script>
-<script src="analysis.js?v=2.8.0"></script>
-<script src="io-core.js?v=2.8.0"></script>
-<script src="design-core.js?v=2.8.0"></script>
-<script src="design.js?v=2.8.0"></script>
-<script src="dxf-core.js?v=2.8.0"></script>
-<script src="sld-core.js?v=2.8.0"></script>
-<script src="sld.js?v=2.8.0"></script>
+<script src="config.js?v=2.9.0"></script>
+<script src="app.js?v=2.9.0"></script>
+<script src="ops.js?v=2.9.0"></script>
+<script src="xlsx-lite.js?v=2.9.0"></script>
+<script src="xls-lite.js?v=2.9.0"></script>
+<script src="quote-core.js?v=2.9.0"></script>
+<script src="xlsx-write.js?v=2.9.0"></script>
+<script src="quotegen-core.js?v=2.9.0"></script>
+<script src="quotegen.js?v=2.9.0"></script>
+<script src="pdf-lib.min.js?v=2.9.0"></script>
+<script src="catalog-seed.js?v=2.9.0"></script>
+<script src="submittal-pdf.js?v=2.9.0"></script>
+<script src="analysis.js?v=2.9.0"></script>
+<script src="io-core.js?v=2.9.0"></script>
+<script src="design-core.js?v=2.9.0"></script>
+<script src="design.js?v=2.9.0"></script>
+<script src="dxf-core.js?v=2.9.0"></script>
+<script src="sld-core.js?v=2.9.0"></script>
+<script src="sld.js?v=2.9.0"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </body>
 </html>
