@@ -411,14 +411,15 @@ function writeStandalone(ann, opt) {
   return { bytes: ascii(out.join(NL) + NL), count: ann.labels.length, layers: ls, version: "AC1009" };
 }
 /** 標註檢查：每種有 IP 的設備「編表台數／圖上符號／已標」，判斷是沒算到還是沒標到 */
-function check(dr, P, ann) {
+function check(dr, P, ann, want) {
   var lab = {}; (ann.labels || []).forEach(function (l) { lab[l.x + "," + l.y] = 1; });
-  var ipN = {}; ((P.ip && P.ip.rows) || []).forEach(function (r) { if (/交換器|IO 模組|伺服器|主機\(機房\)/.test(r.device)) return; ipN[r.device] = (ipN[r.device] || 0) + 1; });
+  var ipN = {}, keyOf = {}; ((P.ip && P.ip.rows) || []).forEach(function (r) { if (/交換器|IO 模組|伺服器|主機\(機房\)/.test(r.device)) return; ipN[r.device] = (ipN[r.device] || 0) + 1; keyOf[r.device] = r.key; });
   var sym = {}, labd = {};
   (dr.plans || []).forEach(function (pl) { var m = (pl.floors || []).length || 1; (pl.devs || []).forEach(function (d) { String(d.n).split("／").forEach(function (n) { sym[n] = (sym[n] || 0) + m; if (lab[d.x + "," + d.y]) labd[n] = (labd[n] || 0) + m; }); }); });
   var rows = Object.keys(ipN).map(function (n) {
     var a = ipN[n], s = sym[n] || 0, l = Math.min(labd[n] || 0, a), why;
-    if (l >= a) why = "已全部標上";
+    if (want && !want[keyOf[n]]) why = "沒標：上方「要標註的系統」沒有勾選這個系統";
+    else if (l >= a) why = "已全部標上";
     else if (!s) why = "沒標到：平面圖上沒有這個設備符號，IP 列在待配置";
     else if (s < a) why = "沒標到：圖上符號 " + s + " 個比編表少 " + (a - s) + " 台，多的列在待配置";
     else why = "部分沒對到位置，列在待配置";

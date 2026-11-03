@@ -720,7 +720,16 @@ function analyze(text, opt) {
     if (!best) {
     var fr = frames.length ? frameOf(s.cx, s.cy) : -1;
     var own = fr >= 0 ? titles.filter(function (t) { return t.frame === fr && bldFloors(t.s); }) : [];
+    if (own.length > 1) {   /* 同一張圖紙上有兩個同樓層標題（「地下貳層中央監控系統平面圖」＋建築底圖自帶的「地下貳層平面圖」）：視為同一張平面圖 */
+      var main = own.filter(function (t) { return t.table; }).sort(function (a, b) { return b.s.length - a.s.length; })[0];
+      var mf = main ? floorsOf(cnFloor(main.s)) : [];   /* 樓層有重疊就算同一張（「屋突參層平面圖」＋「屋突參層至屋頂中央監控系統平面圖」） */
+      if (mf.length && own.every(function (t) { return t === main || floorsOf(cnFloor(t.s)).some(function (f) { return mf.indexOf(f) >= 0; }); })) own = [main];
+    }
     if (own.length === 1) best = own[0];   /* 一張圖紙只有一個平面圖：圖紙內的符號都歸它（平面圖可能比標題寬很多） */
+    else if (own.length > 1 && own[0].table && own.every(function (t) { return t.table === own[0].table; })) own.forEach(function (t) {   /* 一張圖紙幾個平面圖共用一張數量表（「屋突參層」＋「屋頂」）：圖紙內的符號一定屬於其中一個，取最近的標題 */
+      var dx = Math.abs(s.cx - t.x), dy = s.cy - t.y, sc = dx + 0.5 * Math.max(dy, 0) + 3 * Math.max(-dy, 0);
+      if (sc < bs) { bs = sc; best = t; }
+    });
     else titles.forEach(function (t) {
       if (fr >= 0 && t.frame >= 0 && t.frame !== fr) return;
       var dx = Math.abs(s.cx - t.x), dy = s.cy - t.y;
@@ -1182,7 +1191,7 @@ function guessUnit(plans) {
 }
 
 /* 圖面辨識規則版本：規則有改時加一，舊的分析結果會提示重新分析 */
-var CORE_VERSION = 12;
+var CORE_VERSION = 13;
 var api = { CORE_VERSION: CORE_VERSION, decode: decode, parse: parse, analyze: analyze, mergeSheetTables: mergeSheetTables, floorsOf: floorsOf, floorRank: floorRank, sysOf: sysOf, SYS_RULES: SYS_RULES, cnNum: cnNum };
 if (typeof module === "object" && module.exports) module.exports = api;
 else root.DXF = api;
