@@ -132,17 +132,25 @@ function analyze(texts, opt) {
   });
   var panelNames = {}; panels.forEach(function (p) { panelNames[p.name] = 1; });
   /* 4. 盤體所在樓層：在電力幹線／電氣配佈平面圖上找盤名 */
-  var plans = T.filter(function (t) { return /(電力幹線|電氣|動力|電燈)配佈平面圖$|(電力|電氣)平面圖$/.test(t.s) && t.h >= 40; });
+  /* 各種平面圖標題都可以（電力幹線、電氣、動力、給排水、消防、弱電…），只要讀得出樓層；電力幹線圖權重最高 */
+  var PLAN_RE = /(配佈|配置|配線|設備|系統)?平面圖$|配置圖$/;
+  var plans = T.filter(function (t) {
+    if (!PLAN_RE.test(t.s) || t.h < 30 || /單線|昇位|系統圖|詳圖/.test(t.s)) return false;
+    var fk = DXF ? DXF.floorsOf(planFloorKey(t.s)) : [];
+    return fk && fk.length && fk.every(function (f) { return /^(B|R)?\d+F$|^RF$/.test(f); });
+  });
+  function planFloorKey(s) { return s.replace(/(電力幹線|電氣|動力|電燈|給排水|給水|排水|消防|空調|弱電|中央監控|監控|機電)?(系統)?(配佈|配置|配線|設備)?(平面圖|配置圖)$/, ""); }
+  var normName = function (s) { return String(s).trim().replace(/^[("'「（]+|[)"'」）]+$/g, "").replace(/\s*盤$/, "").toUpperCase().replace(/[-_\s]/g, ""); };
   function floorOf(name) {
     var votes = {};
     T.forEach(function (t) {
-      if (t.s !== name && t.s !== name + "盤" && t.s !== '"' + name + '"') return;
+      if (t.s !== name && normName(t.s) !== normName(name)) return;
       var best = null, bd = Infinity;
       plans.forEach(function (pt) { var dx = t.x - pt.x, dy = t.y - pt.y; if (dx < -sheetW || dx > 800 || dy < -400 || dy > sheetH) return; var d = Math.abs(dx) + Math.abs(dy); if (d < bd) { bd = d; best = pt; } });
       if (!best) return;
-      var key = best.s.replace(/(電力幹線|電氣|動力|電燈)?配佈平面圖$|(電力|電氣)平面圖$/, "");
+      var key = planFloorKey(best.s);
       var fk = DXF ? DXF.floorsOf(key).join("~") : key;
-      votes[fk] = (votes[fk] || 0) + (/電力幹線/.test(best.s) ? 3 : 1);
+      votes[fk] = (votes[fk] || 0) + (/電力幹線/.test(best.s) ? 3 : /電氣|動力|電燈/.test(best.s) ? 2 : 1);
     });
     var ks = Object.keys(votes).sort(function (a, b) { return votes[b] - votes[a]; });
     return ks[0] || "";

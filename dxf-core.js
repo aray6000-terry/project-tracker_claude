@@ -836,7 +836,26 @@ function analyze(text, opt) {
     warnings.push("圖面中找不到「數量表」。請確認平面圖有附「XF 監控設備數量表」。" + (seen.length ? "（圖上含「數量」的文字：" + seen.join("、") + "）" : "（圖上沒有任何含「數量」的文字，數量表可能是圖片、外部參考或 OLE 物件）"));
   }
   var plans = opt.noPlans ? [] : buildPlans(titles, d.segs, blockNames, frames);
+  /* 平面圖上標的盤名（「PWA」「PS-1盤」「(PEFB1)」）→ 所在樓層：IO 點數表位置欄寫盤名時，用來判斷接到哪一層的監控箱。
+     文字在哪張平面圖範圍內就是哪一層；不在平面圖範圍、但所在圖紙只有同一樓層的標題，也算該層。 */
+  var panelTags = {};
+  (function () {
+    var fl = titles.map(function (t) { var b = bldFloors(t.s); return b ? { t: t, floors: b.floors } : null; }).filter(Boolean);
+    T.forEach(function (t) {
+      var k = panelKey(t.s); if (!k) return;
+      var fs = null;
+      for (var i = 0; i < plans.length && !fs; i++) { var b = plans[i].box; if (t.x >= b[0] && t.x <= b[2] && t.y >= b[1] && t.y <= b[3]) fs = plans[i].floors; }
+      if (!fs && frames.length) {
+        var fr = frameOf(t.x, t.y);
+        if (fr >= 0) { var own = fl.filter(function (o) { return o.t.frame === fr; }); if (own.length && own.every(function (o) { return o.floors.join() === own[0].floors.join(); })) fs = own[0].floors; }
+      }
+      if (!fs || fs.length !== 1) return;   /* 標準層（多層共用）的盤名無法確定在哪一層 */
+      var v = panelTags[k] = panelTags[k] || {}; v[fs[0]] = (v[fs[0]] || 0) + 1;
+    });
+    Object.keys(panelTags).forEach(function (k) { var v = panelTags[k]; panelTags[k] = Object.keys(v).sort(function (a, b) { return v[b] - v[a]; })[0]; });
+  })();
   return {
+    panelTags: panelTags,
     tables: tables.map(function (t) { return { key: t.key, floors: t.floors, rows: t.rows.map(function (r) { return { name: r.name, qty: r.qty, raw: r.raw, block: r.block }; }) }; }),
     floors: floorList, items: list, checks: checks, warnings: warnings, embedded: embedded, pendingXlsx: pendingXlsx, plans: plans,
     unitM: guessUnit(plans), planVer: 2,
@@ -1124,6 +1143,14 @@ function mergeSheetTables(r, sheets) {
   return added;
 }
 
+/** 盤名代號正規化：「PS-1盤」「(PWA)」「pefb1」→「PS1」「PWA」「PEFB1」；不像盤名的回傳空字串 */
+function panelKey(str) {
+  var s = String(str || "").trim().replace(/^[("'「（]+|[)"'」）]+$/g, "").replace(/\s*(盤|配電盤|控制盤|動力盤)$/, "").trim().toUpperCase();
+  if (!/^[A-Z]{1,5}[A-Z0-9]{0,4}([-_][A-Z0-9]{1,3})?$/.test(s) || s.length < 2 || s.length > 9) return "";
+  if (/^(UP|DN|EL|FL|CL|GL|RF|BF|TV|NO|OK|AC|DC|PVC|EMT|IMC|PE|SA|CAM|IP|IO|DI|DO|AI|AO|COM|LAN|POE|NVR|HUB|SW)$/.test(s)) return "";
+  return s.replace(/[-_]/g, "");
+}
+
 /* ---------- 平面圖（佈線圖用）：各層簡化線條與設備位置 ---------- */
 var SKIP_LAYER = /TEXT|TXET|DIM|標註|尺寸|HATCH|填充|圖框|傢配|家具|門窗編號|戶編|文字|中心線|軸線|AXIS|DEFPOINTS/i;
 function buildPlans(titles, segs, blockNames, frames) {
@@ -1191,8 +1218,8 @@ function guessUnit(plans) {
 }
 
 /* 圖面辨識規則版本：規則有改時加一，舊的分析結果會提示重新分析 */
-var CORE_VERSION = 13;
-var api = { CORE_VERSION: CORE_VERSION, decode: decode, parse: parse, analyze: analyze, mergeSheetTables: mergeSheetTables, floorsOf: floorsOf, floorRank: floorRank, sysOf: sysOf, SYS_RULES: SYS_RULES, cnNum: cnNum };
+var CORE_VERSION = 14;
+var api = { panelKey: panelKey, CORE_VERSION: CORE_VERSION, decode: decode, parse: parse, analyze: analyze, mergeSheetTables: mergeSheetTables, floorsOf: floorsOf, floorRank: floorRank, sysOf: sysOf, SYS_RULES: SYS_RULES, cnNum: cnNum };
 if (typeof module === "object" && module.exports) module.exports = api;
 else root.DXF = api;
 })(typeof self !== "undefined" ? self : this);

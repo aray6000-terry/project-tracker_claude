@@ -85,7 +85,8 @@ function mergeSame(rows) {
 /** 位置欄的盤名（「PS-1」「PWA,PWB」）→ 單線圖分析得到的盤所在樓層 */
 function panelFloors(loc, map) {
   var out = []; if (!loc || !map) return out;
-  String(loc).split(/[,，、.\/\s]+/).forEach(function (k) { k = k.trim().toUpperCase(); var f = k && map[k]; if (f && out.indexOf(f) < 0) out.push(f); });
+  var norm = {}; Object.keys(map).forEach(function (k) { norm[String(k).toUpperCase().replace(/[-_\s]/g, "").replace(/盤$/, "")] = map[k]; });   /* 「PS-1」與「PS1」視為同一盤 */
+  String(loc).split(/[,，、.\/\s]+/).forEach(function (k) { k = k.trim().toUpperCase().replace(/[-_]/g, "").replace(/盤$/, ""); var f = k && (map[k] || norm[k]); if (f && out.indexOf(f) < 0) out.push(f); });
   return out;
 }
 /** 沒有任何樓層資訊時，依設備種類推定：泵浦、水池在最底層地下室；發電機、ATS 在地下一層電氣室；屋頂水箱在最高的屋突層 */
@@ -112,7 +113,8 @@ function distribute(t, dr, P, floorsKnown) {
     if (fs.length) by = "手動指定";
     if (!fs.length) { fs = floorsFromLoc(r.loc, floorsKnown); if (fs.length) by = "位置欄"; }
     if (!fs.length) { fs = floorsFromLoc(r.name, floorsKnown).filter(function (f) { return floorsKnown.indexOf(f) >= 0; }); if (fs.length) by = "設備名稱"; }   /* 「R2F水箱」 */
-    if (!fs.length) { fs = panelFloors(r.loc, P.panelFloors); if (fs.length) by = "單線圖盤位"; }                                      /* 位置寫盤名（PS-1、PWA）→ 單線圖上該盤的樓層 */
+    if (!fs.length) { fs = panelFloors(r.loc, P.panelFloors); if (fs.length) by = "單線圖盤位"; }
+    if (!fs.length) { fs = panelFloors(r.loc, P.panelTags); if (fs.length) by = "平面圖盤名"; }                                          /* 平面圖（弱電或機電）上標的盤名所在樓層 */                                      /* 位置寫盤名（PS-1、PWA）→ 單線圖上該盤的樓層 */
     if (fs.length) fs.forEach(function (f) { share[f] = 1; tot++; });
     if (!tot && m.length) { m.forEach(function (it) { Object.keys(it.floors).forEach(function (f) { if (!(it.floors[f] > 0)) return; share[f] = (share[f] || 0) + it.floors[f]; tot += it.floors[f]; }); }); if (tot) by = "圖面數量"; }
     if (!tot) { var g = guessFloor(r.name, floorsKnown); if (g) { share[g.floor] = 1; tot = 1; by = "推定（" + g.why + "）"; } }
@@ -205,6 +207,6 @@ function toTemplate(t) {
   }) }; }) };
 }
 
-var api = { isUnit: isUnit, parse: parse, build: build, distribute: distribute, toTemplate: toTemplate, setTemplate: setTemplate, drawMatch: drawMatch, floorsFromLoc: floorsFromLoc };
+var api = { isUnit: isUnit, parse: parse, build: build, distribute: distribute, toTemplate: toTemplate, setTemplate: setTemplate, drawMatch: drawMatch, floorsFromLoc: floorsFromLoc, panelFloors: panelFloors };
 if (typeof module === "object" && module.exports) module.exports = api; else root.IOCORE = api;
 })(typeof self !== "undefined" ? self : this);

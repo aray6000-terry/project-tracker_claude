@@ -382,6 +382,7 @@ function plan(dr, params) {
   if (params) { P.unitM = params.unitM; P.drop = params.drop; }
   P.separateCctv = P.separateCctv === true || P.separateCctv === "true";
   if (params) { P.ioRules = params.ioRules; P.ipRules = params.ipRules; P.extraIo = params.extraIo || []; P.systems = params.systems || []; P.ioQty = params.ioQty || {}; P.ioFloor = params.ioFloor || {}; P.ioMove = params.ioMove || {}; P.ioExtraMods = params.ioExtraMods || []; P.ipNet = params.ipNet || {}; P.panelFloors = params.panelFloors || {}; }
+  P.panelTags = (dr && dr.panelTags) || {};
   var io = ioPlan(dr, P); io.comm = commPlan(dr, P);
   var net = network(dr, P, io), ip = ipPlan(dr, P, io, net), cb = cables(dr, P, io, net);
   var ipOf = {}; ip.rows.forEach(function (r) { if (/^IO-/.test(r.name)) ipOf[r.name] = r; });   /* IO 模組 IP（與 IP 編表同名） */
