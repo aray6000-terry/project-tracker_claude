@@ -151,7 +151,7 @@ function projectStatsPanel(list){
   var rows=show.map(function(p){
     var pct=p.total?Math.round(p.done/p.total*100):0;
     var stage=p.closed?'已結案':p.next>=0&&T.NODES[p.next]?'結點'+(p.next+1)+' '+T.NODES[p.next].name+(p.nextTarget?'（預計 '+fmt(p.nextTarget)+'）':''):'全部完成';
-    var late=!p.closed&&p.nextTarget&&p.nextTarget<new Date().toISOString().slice(0,10);
+    var late=!p.closed&&p.nextTarget&&p.nextTarget<T.today();
     var rq=p.reqs||{};
     return '<tr><td><a href="#p='+esc(p.id)+'">'+esc(p.name)+'</a></td><td><div class="bar"><span style="width:'+pct+'%"></span></div><span class="meta">'+p.done+'/'+p.total+'</span></td><td'+(late?' class="bad"':'')+'>'+esc(stage)+(late?'（逾期）':'')+'</td>'
       +'<td>'+n(rq.approval)+'</td><td>'+n((rq.submitted||0)+(rq.confirmed||0))+'</td><td>'+n(rq.shipped)+'</td><td>'+n(p.issues)+'</td>'
@@ -173,6 +173,7 @@ T.views.projectTab=function(tab,el){
   if(tab==="qty" && T.views.qtyTab) return T.views.qtyTab(cur,el);
   if(tab==="design" && T.views.designTab) return T.views.designTab(cur,el);
   if(tab==="site") return siteTab(cur,el);
+  if(tab==="qa" && T.views.qaTab) return T.views.qaTab(cur,el);
   if(tab==="reqs") return reqsView(el,cur);
   if(tab==="bills") return billsTab(cur,el);
   if(tab==="brands") return brandsTab(cur,el);
@@ -653,4 +654,6 @@ function logTab(cur,el){
         return '<tr><td data-label="時間" style="white-space:nowrap">'+fmtTime(x.at)+'</td><td data-label="編輯者">'+esc(x.name||T.userName(x.email))+'</td><td data-label="更新事項">'+esc(describe(x))+'</td></tr>'; }).join("")+'</tbody></table></div>':'<p class="meta">尚無紀錄。</p>')+'</section>';
   }).catch(function(e){ el.innerHTML='<div class="empty">'+esc(e.message)+'</div>'; });
 }
+/* 給 qa.js（品管・缺失）共用 */
+T.opsUtil={uploadFiles:uploadFiles,lightbox:lightbox,printHtml:printHtml,chip:chip,thumbHtml:thumbHtml,bindFiles:bindFiles,nodeName:nodeName,loading:loading};
 })();

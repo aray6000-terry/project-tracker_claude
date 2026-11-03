@@ -13,6 +13,7 @@
 | --- | --- |
 | `index.html` | 畫面與樣式（含 Content-Security-Policy） |
 | `app.js` | 登入、專案列表、專案頁、分享、權限管理、舊資料匯入 |
+| `qa.js` | 品管・缺失：缺失管制表（改善前／後照片、期限、結案）與自主檢查表（各結點×系統檢查項目、主管抽查） |
 | `config.js` | `CLIENT_ID`（Google OAuth 用戶端 ID）、`API_URL`（Apps Script 網址） |
 | `submittal-pdf.js` | 送審型錄 PDF 合併（封面、送審目錄、送審資料表＋原廠型錄，瀏覽器端產生） |
 | `catalog-seed.js` | 內建型錄庫清單（雲端「廠牌型號」資料夾的型錄檔 ID 與型號關鍵字） |
@@ -24,3 +25,15 @@
 ## 修改結點內容
 
 結點名稱與勾選項目定義在 `app.js` 的 `NODES` 陣列；建議日期推算天數在 `OFFSETS`（以交屋日為 0）。後端 `Code.gs` 的 `NODE_COUNT` 需與結點數一致。
+
+## 部署檢查表（每一版都要做）
+
+前端（本儲存庫）與後端（Apps Script）要同時更新，否則畫面會出現「後端尚未部署「xxx」功能」。
+
+1. 前端：推送到 GitHub，`index.html` 內所有 `?v=` 改成新版本號（`dxf-worker.js`、`analysis.js`、`sld.js` 內的 Worker 網址也要改）。
+2. 後端：Apps Script「弱電專案進度追蹤-後端」貼上新版 .gs 檔（順序：Code → Analysis → Catalog → QA），「管理部署作業 → 編輯 → 建立新版本 → 部署」。
+3. 備份：在雲端「弱電專案平台_程式版本」建立 `v版本號_日期（說明）` 資料夾，放入本版變更的前端檔與**全部** .gs 檔（Code.gs、Analysis.gs、Catalog.gs、QA.gs）與部署說明。
+4. 驗證：登入後打開一個專案，各分頁不應出現「後端尚未部署」。
+
+前端目前會呼叫的後端操作（後端 ACTIONS 需全部存在）：
+`adminAudit`、`adminSaveCompanies`、`adminSaveUser`、`adminUsers`、`analysisGet`、`analysisOne`、`analysisSave`、`billAct`、`billTermsSave`、`bills`、`catalogFile`、`catalogList`、`catalogUpload`、`changes`、`create`、`dashboard`、`dealGet`、`deviceAdd`、`devices`、`fileDelete`、`fileGet`、`files`、`get`、`inspectReview`、`inspectSave`、`issueSave`、`issues`、`list`、`me`、`punchSave`、`qaGet`、`quoteLibGet`、`quoteLibSave`、`remove`、`reqAct`、`reqCreate`、`reqs`、`save`、`setOwner`、`share`、`standardGet`、`standardSave`、`submittalBuild`、`upload`

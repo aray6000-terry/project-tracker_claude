@@ -116,9 +116,19 @@ var lastActive = Date.now();
 var $ = function(id){ return document.getElementById(id); };
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];}); }
 function pad(n){ return n<10?"0"+n:""+n; }
-function today(){ var d=new Date(); return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()); }
+/* 日期一律以台北時間（UTC+8）判斷，避免台北 00:00–08:00 之間少算一天 */
+function twDate(d){ return new Date(d.getTime()+8*3600000).toISOString().slice(0,10); }
+function today(){ return twDate(new Date()); }
+/** 試算表日期可能是「2026-11-21」「2026-11-21 00:00:00」或 UTC「2026-11-27T16:00:00.000Z」：統一成台北日期 yyyy-mm-dd */
+function normDate(v){
+  if(!v) return "";
+  var s=String(v).trim();
+  if(/^\d{4}-\d{2}-\d{2}T.*(Z|[+-]\d{2}:?\d{2})$/.test(s)){ var d=new Date(s); if(!isNaN(d.getTime())) return twDate(d); }
+  var m=/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/.exec(s);
+  return m ? m[1]+"-"+pad(+m[2])+"-"+pad(+m[3]) : s.slice(0,10);
+}
 function addDays(iso,n){ var d=new Date(iso+"T00:00:00"); d.setDate(d.getDate()+n); return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()); }
-function fmt(iso){ return iso ? String(iso).slice(0,10).replace(/-/g,"/") : "未設定"; }
+function fmt(iso){ return iso ? normDate(iso).replace(/-/g,"/") : "未設定"; }
 function fmtTime(iso){ if(!iso) return "—"; var d=new Date(iso); if(isNaN(d)) return esc(iso); return d.getFullYear()+"/"+pad(d.getMonth()+1)+"/"+pad(d.getDate())+" "+pad(d.getHours())+":"+pad(d.getMinutes()); }
 function toast(msg){ var t=$("toast"); t.textContent=msg; t.classList.add("on"); clearTimeout(toast._t); toast._t=setTimeout(function(){t.classList.remove("on");},2800); }
 function userName(email){ for(var i=0;i<data.users.length;i++) if(data.users[i].email===email) return data.users[i].name||email; return email; }
@@ -175,6 +185,8 @@ function api(action,payload){
   .then(function(res){
     if(res && res.ok) return res.data;
     var e=new ApiError((res&&res.code)||"SERVER",(res&&res.message)||"伺服器錯誤",res&&res.data);
+    /* 後端還沒部署這個功能（前端已更新、Apps Script 未更新）：明確告知，方便管理員對照 README 的部署檢查表 */
+    if(e.code==="INVALID" && /不支援的操作/.test(e.message)){ e.code="NOT_DEPLOYED"; e.message="後端尚未部署「"+action+"」功能，請管理員依 README「部署檢查表」更新 Apps Script"; }
     throw e;
   }).catch(function(e){
     if(!(e instanceof ApiError)) e=new ApiError("SERVER","回應格式錯誤");
@@ -467,12 +479,14 @@ function renderDetail(keepNode){
   bindDetail();
 }
 function info(k,v){ return '<div><b>'+k+'</b>'+esc(v||"—")+'</div>'; }
-var PTABS=[["progress","施工進度"],["files","圖面檔案"],["qty","數量・報價"],["design","設計・編表"],["site","現場照片・問題"],["reqs","領料"],["bills","請款"],["brands","廠牌確認表"],["log","變更紀錄"]];
+/* 簽核領料異常單的角色（權限表「簽核領料異常單」）：沒有領料權限也要看得到專案的領料頁 */
+var REQ_SIGNERS={admin:1,ceo:1,eng_mgr:1,sales_mgr:1};
+var PTABS=[["progress","施工進度"],["files","圖面檔案"],["qty","數量・報價"],["design","設計・編表"],["site","現場照片・問題"],["qa","品管・缺失"],["reqs","領料"],["bills","請款"],["brands","廠牌確認表"],["log","變更紀錄"]];
 function projectTabs(){
   var caps=session.me.caps||{};
   return '<nav class="ptabs" aria-label="專案功能">'+PTABS.filter(function(t){
     if(t[0]==="bills") return caps.billView;
-    if(t[0]==="reqs") return caps.reqCreate||caps.reqViewAll||caps.reqConfirm||caps.reqShip||true;
+    if(t[0]==="reqs") return !!(caps.reqCreate||caps.reqViewAll||caps.reqConfirm||caps.reqShip||REQ_SIGNERS[session.me.role]);
     return true;
   }).map(function(t){ return '<button type="button" data-ptab="'+t[0]+'" class="'+((view.tab||"progress")===t[0]?"on":"")+'">'+t[1]+'</button>'; }).join("")+'</nav>';
 }
@@ -542,6 +556,15 @@ function bindDetail(){
   document.querySelectorAll('input[type=checkbox][data-id]').forEach(function(cb){
     cb.onchange=function(){
       var i=+cb.dataset.n, node=p.nodes[i];
+      /* 「缺失依管制表逐項結案」：缺失管制表還有未結案項目時不能勾 */
+      if(cb.checked && i===7 && cb.dataset.id==="gate0" && TR.qaOpenPunch){
+        cb.checked=false;
+        TR.qaOpenPunch(cur.id).then(function(n){
+          if(n>0){ toast("缺失管制表還有 "+n+" 項未結案，請先到「品管・缺失」逐項結案"); return; }
+          node.checks.gate0=true; afterNodeChange(p,i,false); queueSave(); rerender(i);
+        });
+        return;
+      }
       if(cb.checked) node.checks[cb.dataset.id]=true; else delete node.checks[cb.dataset.id];
       afterNodeChange(p,i,!cb.checked);
       queueSave(); rerender(i);
@@ -620,6 +643,8 @@ function openForm(existing){
   var coOpts=(session.me.companyOptions||[]).slice(); if(p&&p.company&&coOpts.indexOf(p.company)<0) coOpts.unshift(p.company);
   $("companySel").innerHTML=(session.me.companyScoped?'':'<option value="">（未指定）</option>')+coOpts.map(function(c){ return '<option>'+esc(c)+'</option>'; }).join("");
   $("companySel").required=!!session.me.companyScoped;
+  /* 新增專案時業主、案場必填（專案摘要與報表都會用到）；舊專案編輯時不強制，避免卡住 */
+  f.elements.client.required=!existing; f.elements.site.required=!existing;
   FIELDS.forEach(function(k){ f.elements[k].value=p?(p[k]||""):(k==="salesRep"&&session.me.role==="sales"?session.me.email:""); });
   if(!p && session.me.companyScoped && coOpts.length) f.elements.company.value=coOpts[0];
   var chosen=sysList(p);
@@ -683,6 +708,8 @@ $("frm").addEventListener("submit",function(e){
     }
     queueSave(); renderDetail(); toast("已更新專案資料");
   }else{
+    if(!d.client||!d.site){ e.preventDefault(); toast("請填寫業主／營造與案場地點"); return; }
+    if(!d.handover && !confirm("尚未填「預計驗屋交屋日」，8 個結點的建議日期會是空白。\n要先建立，之後在「編輯專案資料」補交屋日再自動帶入嗎？")){ e.preventDefault(); return; }
     var proj={closed:false,nodes:newNodes(d.handover),systems:picked,otherName:otherName,brands:brands};
     FIELDS.forEach(function(k){ proj[k]=d[k]; });
     var payload={project:proj};
@@ -738,14 +765,14 @@ function renderAdmin(){
     h+='<section class="panel"><h3>公司清單</h3><p class="meta">CEO 只看得到「管理公司」內的專案；專案在新增／編輯時選擇所屬公司。移除公司不會改動已設定的專案，但之後無法再選。</p>'
       +'<div class="cochips">'+cos.map(function(c,i){ return '<span class="cochip">'+esc(c)+'<button type="button" data-corm="'+i+'" aria-label="移除 '+esc(c)+'">×</button></span>'; }).join("")+'</div>'
       +'<div class="tools" style="margin-top:8px"><input id="coNew" maxlength="20" placeholder="新公司名稱"><button class="btn small primary" type="button" id="btnCoAdd">新增公司</button></div></section>';
-    h+='<section class="panel"><h3>使用者與權限</h3><p class="meta">只有名單中「啟用」的帳號可以登入。角色決定看得到哪些頁面與資料（見上方權限表）；工務另勾「可建立專案」才能自行開案。</p>'
+    h+='<section class="panel"><h3>使用者與權限</h3><p class="meta">只有名單中「啟用」的帳號可以登入。角色決定看得到哪些頁面與資料（見上方權限表）；CEO、業務主管、工務主管依角色本來就可以建立專案（顯示「依角色 ✓」）；業務、工務需另勾「可建立專案」才能自行開案。</p>'
       +'<div class="tblwrap"><table class="cards"><thead><tr><th>Google 帳號</th><th>姓名</th><th>角色</th><th>可建立專案</th><th>啟用</th><th>管理公司</th><th>備註</th><th></th></tr></thead><tbody>';
     users.forEach(function(u,i){
       var locked=fixed.indexOf(u.email)>=0;
       h+='<tr data-u="'+i+'"><td class="mono" data-label="帳號">'+esc(u.email)+(locked?'<br><span class="meta">（系統管理員）</span>':'')+'</td>'
         +'<td data-label="姓名"><input type="text" maxlength="30" data-k="name" value="'+esc(u.name)+'"></td>'
         +'<td data-label="角色"><select data-k="role"'+(locked?' disabled':'')+'>'+roleOptions(u.role)+'</select></td>'
-        +'<td class="c" data-label="可建立專案"><input type="checkbox" data-k="canCreate"'+(u.canCreate?" checked":"")+(locked?' disabled':'')+'></td>'
+        +'<td class="c" data-label="可建立專案">'+createCell(u.role,u.canCreate,locked,'data-k="canCreate"')+'</td>'
         +'<td class="c" data-label="啟用"><input type="checkbox" data-k="enabled"'+(u.enabled?" checked":"")+(locked?' disabled':'')+'></td>'
         +'<td data-label="管理公司">'+coPicker(cos,u.companies||[],u.role)+'</td>'
         +'<td data-label="備註"><input type="text" maxlength="100" data-k="memo" value="'+esc(u.memo)+'"></td>'
@@ -754,7 +781,7 @@ function renderAdmin(){
     h+='<tr id="newUserRow"><td class="newhead">新增使用者</td><td data-label="帳號"><input type="email" maxlength="254" id="nuEmail" placeholder="新同事的 Google 帳號"></td>'
       +'<td data-label="姓名"><input type="text" maxlength="30" id="nuName" placeholder="姓名"></td>'
       +'<td data-label="角色"><select id="nuRole">'+roleOptions("eng")+'</select></td>'
-      +'<td class="c" data-label="可建立專案"><input type="checkbox" id="nuCreate"></td><td class="c" data-label="啟用"><input type="checkbox" id="nuEnabled" checked></td>'
+      +'<td class="c" data-label="可建立專案">'+createCell("eng",false,false,'id="nuCreate"')+'</td><td class="c" data-label="啟用"><input type="checkbox" id="nuEnabled" checked></td>'
       +'<td data-label="管理公司" id="nuCo">'+coPicker(cos,[],"eng")+'</td>'
       +'<td data-label="備註"><input type="text" maxlength="100" id="nuMemo" placeholder="例：工務部"></td>'
       +'<td class="act"><button class="btn small primary" type="button" id="btnAddUser">新增</button></td></tr>';
@@ -769,7 +796,8 @@ function renderAdmin(){
     $("btnCoAdd").onclick=function(){ var v=$("coNew").value.replace(/[,，、;；]/g,"").trim(); if(!v) return; if(cos.indexOf(v)>=0){ toast("已有這家公司"); return; } saveCos(cos.concat([v]),"已新增「"+v+"」"); };
     $("coNew").onkeydown=function(e){ if(e.key==="Enter"){ e.preventDefault(); $("btnCoAdd").click(); } };
     document.querySelectorAll("[data-corm]").forEach(function(b){ b.onclick=function(){ var c=cos[+b.dataset.corm]; if(!confirm("從清單移除「"+c+"」？\n已設定這家公司的專案與 CEO 不受影響，但之後無法再選。")) return; saveCos(cos.filter(function(x){ return x!==c; }),"已移除「"+c+"」"); }; });
-    document.querySelectorAll("select[data-k=role],#nuRole").forEach(function(sel){ sel.addEventListener("change",function(){ var td=sel.closest("tr").querySelector("details.copick"); if(td) td.classList.toggle("dim",sel.value!=="ceo"); }); });
+    document.querySelectorAll("select[data-k=role],#nuRole").forEach(function(sel){ sel.addEventListener("change",function(){ var tr=sel.closest("tr"), td=tr.querySelector("details.copick"); if(td) td.classList.toggle("dim",sel.value!=="ceo");
+      var cb=tr.querySelector('[data-k="canCreate"],#nuCreate'); if(cb) cb.closest("td").innerHTML=createCell(sel.value,cb.checked,false,cb.id?'id="'+cb.id+'"':'data-k="canCreate"'); }); });
     document.querySelectorAll("[data-save]").forEach(function(b){
       b.onclick=function(){
         var tr=b.closest("tr"), u=users[+b.dataset.save];
@@ -791,6 +819,14 @@ function coPicker(cos,sel,role){
   return '<details class="copick'+(role==="ceo"?"":" dim")+'"><summary>'+(sel.length?esc(sel.length>3?sel.slice(0,3).join("、")+" 等 "+sel.length+" 家":sel.join("、")):'（未設定）')+'</summary>'
     +'<div class="cogrid"><label class="coall"><input type="checkbox" data-coall>全選</label>'+all.map(function(c){ return '<label><input type="checkbox" data-co="'+esc(c)+'"'+(sel.indexOf(c)>=0?" checked":"")+'>'+esc(c)+'</label>'; }).join("")+'</div>'
     +'<div class="hint">只對 CEO 生效</div></details>';
+}
+/* 「可建立專案」欄：管理職角色本來就可以建立（見權限表），只有業務、工務需另外勾選 */
+var CREATE_BY_ROLE={admin:1,ceo:1,sales_mgr:1,eng_mgr:1}, CREATE_BY_FLAG={sales:1,eng:1};
+function createCell(role,checked,locked,attr){
+  var cb='<input type="checkbox" '+attr+(checked?" checked":"")+(locked?' disabled':'');
+  if(CREATE_BY_ROLE[role]) return '<span class="meta" title="此角色依權限表本來就可以建立專案">依角色 ✓</span>'+cb+' hidden>';
+  if(!CREATE_BY_FLAG[role]) return '<span class="meta" title="此角色不能建立專案">—</span>'+cb+' hidden>';
+  return cb+'>';
 }
 function pickedCos(tr){ return Array.prototype.map.call(tr.querySelectorAll("input[data-co]:checked"),function(i){ return i.dataset.co; }); }
 document.addEventListener("change",function(e){ var t=e.target; if(t && t.hasAttribute && t.hasAttribute("data-coall")){ t.closest(".cogrid").querySelectorAll("input[data-co]").forEach(function(i){ i.checked=t.checked; }); } });
@@ -915,7 +951,7 @@ function saveProjectNow(){
 /* 版本：取自載入 app.js 的 ?v= 參數（每次發佈時更新），顯示在頁面最下方 */
 var APP_VERSION=(function(){ var sc=document.querySelector('script[src*="app.js"]'), m=sc&&/[?&]v=([\w.]+)/.exec(sc.getAttribute("src")); return m?m[1]:""; })();
 (function(){ var v=document.getElementById("appVer"); if(v&&APP_VERSION) v.textContent="版本 v"+APP_VERSION; })();
-window.TR={views:{}, saveProject:saveProjectNow, api:api, esc:esc, toast:toast, fmt:fmt, fmtTime:fmtTime, fail:fail, userName:userName, userLabel:userLabel,
+window.TR={views:{}, saveProject:saveProjectNow, api:api, esc:esc, toast:toast, fmt:fmt, normDate:normDate, fmtTime:fmtTime, fail:fail, userName:userName, userLabel:userLabel,
   session:session, data:data, NODES:NODES, SYS_KEYS:SYS_KEYS, sysName:sysName, sysLabel:sysLabel, sysList:sysList, brandOf:brandOf,
   go:go, today:today, getCur:function(){ return cur; }, canEdit:canEdit, ROLE_NAME:ROLE_NAME, sumStat:sumStat, PST_LABEL:PST_LABEL,
   loadUsers:function(){ return data.users.length?Promise.resolve(data):api("list").then(function(d){ data.projects=d.projects||[]; data.users=d.users||[]; return data; }); }};
