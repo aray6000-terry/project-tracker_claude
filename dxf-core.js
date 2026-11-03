@@ -48,7 +48,7 @@ function parse(text, onProgress) {
     else if (e.t === "ACAD_TABLE") tableIns.push({ name: e.v["2"] || "", x: +e.v["10"] || 0, y: +e.v["20"] || 0, sx: 1, sy: 1, rot: 0 });
     else if (e.t === "TEXT" || e.t === "MTEXT" || e.t === "ATTRIB") {
       var s = e.t === "MTEXT" ? cleanMtext((e.v["3all"] || "") + (e.v["1"] || "")) : (e.v["1"] || "").trim();
-      if (s) texts.push({ s: s, x: +e.v["10"] || 0, y: +e.v["20"] || 0, h: +(e.v["40"] || 0) });
+      if (s) texts.push({ s: s, x: +e.v["10"] || 0, y: +e.v["20"] || 0, h: +(e.v["40"] || 0), attr: e.t === "ATTRIB" || undefined });
     }
     else if (e.t === "ATTDEF") {   /* 模型空間裡被炸開的圖框屬性：AutoCAD 顯示的是標籤（例：「地下五層」「強波器配置平面圖」） */
       var tg = (e.v["2"] || "").trim();
@@ -734,7 +734,7 @@ function legendCount(T, inserts, opt, blocks, segs, frames) {
       var code = T.filter(function (t) { return t !== r && Math.abs(t.y - r.y) < rh * 0.45 && t.x < r.x && t.x > g.x - hh * 3 && /^[A-Za-z0-9\-]{1,5}$/.test(t.s.trim()); })[0];
       var blk = inserts.filter(function (s) { return Math.abs(s.y - r.y) < rh * 0.6 && s.x < r.x + hh && s.x > g.x - hh * 3; })[0];
       if (!code && !blk) return;
-      legend.push({ name: r.s.replace(/\s+/g, " ").trim(), code: code ? code.s.trim() : null, block: blk ? blk.name : null, box: [g.x - hh * 4, r.y - rh * 0.6, ds.x + hh * 30, g.y + hh], gx: g.x, gy: g.y });
+      legend.push({ name: r.s.replace(/\s+/g, " ").trim(), code: code ? code.s.trim() : null, codeAt: code ? [code.x, code.y, rh] : null, block: blk ? blk.name : null, box: [g.x - hh * 4, r.y - rh * 0.6, ds.x + hh * 30, g.y + hh], gx: g.x, gy: g.y });
     });
   });
   if (!legend.length) return null;
@@ -832,21 +832,54 @@ function legendCount(T, inserts, opt, blocks, segs, frames) {
   var merged = [], byName = {};
   legend.forEach(function (l) {
     var m = byName[l.name];
-    if (!m) { m = byName[l.name] = { name: l.name, block: l.block, blocks: [], codes: [] }; merged.push(m); }
+    if (!m) { m = byName[l.name] = { name: l.name, block: l.block, blocks: [], codes: [], codeAt: {} }; merged.push(m); }
+    if (l.code && l.codeAt && !m.codeAt[l.code]) m.codeAt[l.code] = l.codeAt;
     l.blocks.forEach(function (b) { if (m.blocks.indexOf(b) < 0) m.blocks.push(b); });
     if (l.code && m.codes.indexOf(l.code) < 0) m.codes.push(l.code);
     if (!m.block && l.block) m.block = l.block;
   });
   legend = merged;
+  /* 圖例用「線條＋代號文字」畫、平面圖用「內含同樣代號文字的圖塊」畫（例：IC 室內機、D 讀卡機、K 電子門鎖） */
+  var codeBlk = {}, edgesOf = {}, legBlk = {};
+  legend.forEach(function (l) { l.blocks.forEach(function (b) { legBlk[b] = 1; }); });
+  if (blocks) Object.keys(blocks).forEach(function (n) {
+    var es = blocks[n]; if (!es || es.length > 8 || legBlk[n]) return;   /* 已是其他圖例列的圖塊不重複對應 */
+    var txt = [], bad = false, edges = 0;
+    es.forEach(function (e) {
+      if (e.t === "INSERT" || /電氣|給水|排水|消防|空調|通風/.test(e.v["8"] || "")) bad = true;   /* 巢狀圖塊、其他系統圖層 */
+      else if (e.t === "TEXT" || e.t === "MTEXT") txt.push(String(e.v["1"] || "").trim());
+      else if (e.t === "LINE") edges++;
+      else if (e.t === "LWPOLYLINE" && e.pts.length > 1) edges += e.pts.length - 1 + ((+e.v["70"] || 0) & 1);
+    });
+    if (bad || txt.length !== 1 || !txt[0]) return;   /* 只含一個代號文字的符號 */
+    (codeBlk[txt[0]] = codeBlk[txt[0]] || []).push(n); edgesOf[n] = edges;
+  });
+  legend.forEach(function (l) {
+    l.codeBlocks = [];
+    l.codes.forEach(function (c) {
+      var cand = isMobile ? [] : (codeBlk[c] || []).filter(function (n) { return used[n]; });   /* 行動強波圖維持原本以代號文字計數（已與亞泰報價核對） */
+      var at = l.codeAt[c];
+      if (cand.length > 1 && at && segs) {   /* 多個候選：挑線條數最接近圖例符號的 */
+        var rh = at[2], le = segs.filter(function (g) { return Math.min(g[1], g[3]) > at[0] - rh && Math.max(g[1], g[3]) < at[0] + rh * 1.2 && Math.min(g[2], g[4]) > at[1] - rh * 0.5 && Math.max(g[2], g[4]) < at[1] + rh * 0.6; }).length;
+        if (le <= 20) { var bd = Math.min.apply(null, cand.map(function (n) { return Math.abs(edgesOf[n] - le); })); cand = cand.filter(function (n) { return Math.abs(edgesOf[n] - le) === bd; }); }
+      }
+      cand.forEach(function (n) { if (l.blocks.indexOf(n) < 0 && l.codeBlocks.indexOf(n) < 0) l.codeBlocks.push(n); });
+    });
+  });
   /* 同一個圖塊被兩列圖例抓到（列距小、符號跨列）：有代號的列只用代號 */
   var claim = {}; legend.forEach(function (l) { l.blocks.forEach(function (b) { claim[b] = (claim[b] || 0) + 1; }); });
   legend.forEach(function (l) { if (l.codes.length) l.blocks = l.blocks.filter(function (b) { return claim[b] < 2; }); });
   /* 數符號 */
   var cnt = {};   /* name -> sheetIdx -> n */
-  function add(l, x, y) { if (inLegend(x, y)) return; var sh = sheetOf(x, y); if (!sh) return; var k = titles.indexOf(sh); var c = cnt[l.name] = cnt[l.name] || {}; c[k] = (c[k] || 0) + 1; }
+  /* 詳圖（「各戶 IC接線詳圖」）裡的示意符號不算：詳圖畫在標題上方 */
+  var details = T.filter(function (t) { return /(詳圖|大樣圖?)$/.test(t.s.trim()) && t.s.length <= 20; });
+  function inDetail(x, y) { for (var i = 0; i < details.length; i++) { var t = details[i], h2 = t.h || 50; if (x > t.x - h2 * 25 && x < t.x + h2 * 25 && y > t.y - h2 && y < t.y + h2 * 12) return true; } return false; }
+  function add(l, x, y) { if (inLegend(x, y) || inDetail(x, y)) return; var sh = sheetOf(x, y); if (!sh) return; var k = titles.indexOf(sh); var c = cnt[l.name] = cnt[l.name] || {}; c[k] = (c[k] || 0) + 1; }
   legend.forEach(function (l) {
     if (l.blocks.length) inserts.forEach(function (s) { if (l.blocks.indexOf(s.name) >= 0 && !inLegend(s.x, s.y)) add(l, s.cx !== undefined ? s.cx : s.x, s.cy !== undefined ? s.cy : s.y); });   /* 圖形中心偏離插入點的圖塊：插入點在圖例內也不算 */
-    if (l.codes.length) T.forEach(function (t) { if (!t.att && l.codes.indexOf(t.s.trim()) >= 0) add(l, t.x, t.y); });
+    if (l.codeBlocks.length) inserts.forEach(function (s) { if (l.codeBlocks.indexOf(s.name) >= 0 && !inLegend(s.x, s.y)) add(l, s.cx !== undefined ? s.cx : s.x, s.cy !== undefined ? s.cy : s.y); });
+    /* 代號已對應到平面圖上的圖塊時，散落的同字文字（標註、詳圖說明）不再重複數；圖塊屬性值（MP）不算 */
+    if (l.codes.length && !l.codeBlocks.length) T.forEach(function (t) { if (!t.att && !(t.attr && !isMobile) && l.codes.indexOf(t.s.trim()) >= 0) add(l, t.x, t.y); });
   });
   var anyRiser = titles.some(function (t) { return t.riser; });
   var items = [], floors = {}, mism = [], onlyRiser = [];
