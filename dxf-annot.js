@@ -22,6 +22,34 @@ var SYN = [
 ];
 function baseName(s) { return String(s || "").replace(/\s*#\d+$/, "").trim(); }
 function splitNames(n) { return String(n || "").split("／").map(function (x) { return x.trim(); }).filter(Boolean); }
+/* 標註文字避開重疊：每個標註估一個文字框，依序在設備周圍找沒被占用的位置（右上→右下→左上→左下→正上→正下，再往外擴），
+   引線接到文字框最近的邊。字寬：中文約 1 字高、英數約 0.6 字高。 */
+function textW(str, h) { var w = 0; for (var i = 0; i < str.length; i++) w += str.charCodeAt(i) > 255 ? 1 : 0.62; return w * h; }
+function spread(list) {
+  var placed = [], cell = 0;
+  list.forEach(function (l) { cell = Math.max(cell, l.h * 12); });
+  if (!cell) return;
+  var grid = {};
+  function keys(b) { var r = []; for (var i = Math.floor(b[0] / cell); i <= Math.floor(b[2] / cell); i++) for (var j = Math.floor(b[1] / cell); j <= Math.floor(b[3] / cell); j++) r.push(i + "," + j); return r; }
+  function hit(b) { var ks = keys(b); for (var k = 0; k < ks.length; k++) { var g = grid[ks[k]]; if (!g) continue; for (var m = 0; m < g.length; m++) { var o = g[m]; if (b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]) return true; } } return false; }
+  function add(b) { keys(b).forEach(function (k) { (grid[k] = grid[k] || []).push(b); }); }
+  list.slice().sort(readingOrder).forEach(function (l) {
+    var h = l.h, n = l.lines.length, W = Math.max.apply(null, l.lines.map(function (t) { return textW(String(t), h); })) + h * 0.3, H = h * (1.5 * (n - 1) + 1.4), g = h * 0.9;
+    var cands = [];
+    for (var ring = 0; ring < 8; ring++) {
+      var r = g + ring * h * 1.6;
+      cands.push([l.x + r, l.y + r * 0.6], [l.x + r, l.y - r * 0.6 - H], [l.x - r - W, l.y + r * 0.6], [l.x - r - W, l.y - r * 0.6 - H], [l.x - W / 2, l.y + r], [l.x - W / 2, l.y - r - H]);
+      if (ring) cands.push([l.x + r, l.y - H / 2], [l.x - r - W, l.y - H / 2]);
+    }
+    var pick = null;
+    for (var i = 0; i < cands.length; i++) { var c = cands[i], b = [c[0], c[1], c[0] + W, c[1] + H]; if (!hit(b)) { pick = b; break; } }
+    if (!pick) { var c0 = cands[0]; pick = [c0[0], c0[1], c0[0] + W, c0[1] + H]; }
+    add(pick);
+    var topBase = pick[3] - h * 1.1;
+    l.tx = pick[0] + h * 0.15; l.ty = topBase - h * 1.2 * n;
+    l.lx = Math.min(Math.max(l.x, pick[0]), pick[2]); l.ly = Math.min(Math.max(l.y, pick[1]), pick[3]);
+  });
+}
 function readingOrder(a, b) { return (b.y - a.y) || (a.x - b.x); }   /* 由上而下、由左而右 */
 function nameHit(devN, want) {
   var ns = splitNames(devN); if (ns.indexOf(want) >= 0) return 2;
@@ -140,6 +168,7 @@ function labels(dr, P, opt) {
       if (ioT.length) put("IO 接線編表", "io", ioT);
     }
   }
+  spread(out);
   /* 只留點位用：每張平面圖的外框、標題與所有設備位置 */
   var pts = plans.map(function (pl) { return { title: pl.title, box: pl.box, h: Math.max((pl.box[2] - pl.box[0]) / 220, 1) * (Number(opt.scale) || 1), devs: pl.devs.map(function (d) { return { n: d.n, x: d.x, y: d.y }; }) }; });
   return { labels: out, pending: pend, stat: stat, plans: pts };
@@ -278,7 +307,7 @@ function write(bytes, ann, opt) {
   ann.labels.forEach(function (l) {
     var L = layerOf(l.layer);
     circle(L, l.x, l.y, l.h * 0.6);
-    line(L, l.x, l.y, l.tx, l.ty);
+    line(L, l.x, l.y, l.lx !== undefined ? l.lx : l.tx, l.ly !== undefined ? l.ly : l.ty);
     mtext(L, l.tx, l.ty + l.h * 1.2 * l.lines.length, l.h, l.lines);
   });
   ann.pending.forEach(function (p) {
@@ -367,7 +396,7 @@ function writeStandalone(ann, opt) {
   ann.labels.forEach(function (l) {
     var L = layerOf(l.layer);
     ents.push(["CIRCLE", L, l.x, l.y, l.h * 0.6]);
-    ents.push(["LINE", L, l.x, l.y, l.tx, l.ty]);
+    ents.push(["LINE", L, l.x, l.y, l.lx !== undefined ? l.lx : l.tx, l.ly !== undefined ? l.ly : l.ty]);
     text(L, l.tx, l.ty + l.h * 1.2 * l.lines.length, l.h, l.lines);
   });
   ann.pending.forEach(function (p) {
