@@ -180,7 +180,7 @@ function write(bytes, ann, opt) {
     if (codeLine === "0" && (u8[e + 6] === 10 || u8[e + 6] === 13)) entEnd = ps; else from = e + 6;
   }
   if (entEnd === null) throw new Error("找不到 ENTITIES 段結尾");
-  var seed = null, layTab = null, layEnd = null, msOwner = null;
+  var seed = null, layTab = null, layEnd = null, msOwner = null, zeroRef = {};
   if (modern) {
     seed = scanPairs(u8, 0, function (c, v, at, nx) {
       if (c === "9" && v.trim() === "$HANDSEED") { var c2 = readLine(u8, nx), v2 = readLine(u8, c2.next); return { at: c2.next, end: v2.next, hex: v2.s.trim() }; }
@@ -195,7 +195,14 @@ function write(bytes, ann, opt) {
     });
     if (tabStart && !tabStart.none) {
       scanPairs(u8, tabStart.nx, function (c, v, at) { if (c === "5" && layTab === null) layTab = v.trim(); if (c === "0") return true; return null; });
-      layEnd = scanPairs(u8, tabStart.nx, function (c, v, at) { return c === "0" && v.trim() === "ENDTAB" ? at : null; });
+      /* 新圖層照抄圖層「0」的出圖樣式（390）、材質（347）等參照：AutoCAD 讀到缺這些參照的圖層會整份放棄載入 */
+      var inZero = false;
+      layEnd = scanPairs(u8, tabStart.nx, function (c, v, at) {
+        if (c === "0") { inZero = false; if (v.trim() === "ENDTAB") return at; }
+        if (c === "2") inZero = v.trim() === "0";
+        if (inZero && /^(390|347|348)$/.test(c)) zeroRef[c] = v.trim();
+        return null;
+      });
     }
     scanPairs(u8, 0, function (c, v, at, nx) {
       if (c === "0" && v.trim() === "BLOCK_RECORD") {
@@ -268,6 +275,7 @@ function write(bytes, ann, opt) {
     layRec += pair(0, "LAYER");
     if (modern) { layRec += pair(5, handle()); if (layTab) layRec += pair(330, layTab); layRec += pair(100, "AcDbSymbolTableRecord") + pair(100, "AcDbLayerTableRecord"); }
     layRec += pair(2, n) + pair(70, "0") + pair(62, String(L[1])) + pair(6, "Continuous");
+    if (modern) { layRec += pair(370, "-3"); ["390", "347", "348"].forEach(function (k) { if (zeroRef[k]) layRec += pair(+k, zeroRef[k]); }); }
   });
   var styRec = "";
   if (styEnd !== null && !hasStyle) {
