@@ -222,6 +222,7 @@ function cnNum(s) {
 }
 /** 「3F~5F」「B1F」「R2F」「6F～13F」→ 樓層清單 */
 function floorsOf(key) {
+  if (/[、,，\/]|及/.test(String(key))) { var lst = floorList(key); return lst || [key]; }   /* 「4、6F」「8、10、12F」「四層,六層」 */
   var k = cnFloor(key).replace(/\s/g, "").toUpperCase().replace(/[～〜至]/g, "~");
   if (k === "RF") return ["RF"];
   var m = /^(B|R|RF)?(\d+)F?(?:~(B|R|RF)?(\d+)F?)?$/.exec(k);
@@ -237,6 +238,7 @@ function floorList(s) {
   var out = [], parts = String(s).replace(/\s/g, "").split(/[、,，\/]|及/);
   for (var i = 0; i < parts.length; i++) {
     var p = parts[i].replace(/^-|-$/g, ""); if (!p) continue;
+    if (/^(B|R)?\d+$/i.test(p)) p += "F";   /* 「4、6F」的「4」沿用後面的 F */
     var toRoof = /^(.+?)(?:至|~|～)(?:屋頂層?|RF)$/i.exec(p);   /* 「屋突三層至屋頂層」 */
     if (toRoof) { var a0 = FLOOR_RE.test(toRoof[1].toUpperCase()) ? toRoof[1].toUpperCase() : cnFloor(toRoof[1]); if (!FLOOR_RE.test(a0)) return null; out.push(a0, "RF"); continue; }
     var c = FLOOR_RE.test(p.toUpperCase()) ? p.toUpperCase() : cnFloor(p);
@@ -438,7 +440,7 @@ function analyze(text, opt) {
   function buildTable(h, dh, qh, keyRaw, legend, multi) {
     var hh = h.h || 50;
     var top = multi ? multi.top : Math.min(qh.y, dh.y);
-    var col = T.filter(function (t) { return t.x > h.x + (dh.x - h.x) * (legend ? 0.25 : 0.5) && t.x < qh.x - hh && t.y < top - hh * 0.3 && t.y > top - hh * 120 && (!legend || !t.h || t.h >= dh.h * 0.75); })
+    var col = T.filter(function (t) { return t.x > h.x + (dh.x - h.x) * (legend ? 0.25 : 0.5) && t.x < qh.x - hh && t.y < top - hh * 0.3 && t.y > top - hh * 120 && (!legend || !t.h || t.h >= dh.h * 0.75) && !/^[-－—\d\s.]+$/.test(t.s) && !MULQ.test(t.s); })   /* 數量欄比樓層標題靠左時，數字不能算進品名 */
       .sort(function (a, b) { return b.y - a.y || a.x - b.x; });
     var rows = [], last = top, gap = 0;
     for (var i = 0; i < col.length; i++) {

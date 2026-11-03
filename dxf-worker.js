@@ -1,5 +1,6 @@
 /* 在背景執行緒分析 DXF，避免大檔讓畫面卡住 */
-importScripts("xlsx-lite.js?v=2.9.5", "xls-lite.js?v=2.9.5", "dxf-core.js?v=2.9.5", "sld-core.js?v=2.9.5");
+var V = (/[?&]v=([\w.]+)/.exec(self.location.search) || [])[1] || "0";   /* 跟著頁面版本號載入，避免瀏覽器用到舊版分析程式 */
+importScripts("xlsx-lite.js?v=" + V, "xls-lite.js?v=" + V, "dxf-core.js?v=" + V, "sld-core.js?v=" + V);
 self.onmessage = function (ev) {
   var buf = ev.data.buf, name = String(ev.data.name || "").toLowerCase();
   var send = function (m) { self.postMessage(m); };
