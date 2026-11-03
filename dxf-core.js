@@ -838,24 +838,29 @@ function analyze(text, opt) {
   var plans = opt.noPlans ? [] : buildPlans(titles, d.segs, blockNames, frames);
   /* 平面圖上標的盤名（「PWA」「PS-1盤」「(PEFB1)」）→ 所在樓層：IO 點數表位置欄寫盤名時，用來判斷接到哪一層的監控箱。
      文字在哪張平面圖範圍內就是哪一層；不在平面圖範圍、但所在圖紙只有同一樓層的標題，也算該層。 */
-  var panelTags = {};
+  var panelTags = {}, panelPos = {};
   (function () {
     var fl = titles.map(function (t) { var b = bldFloors(t.s); return b ? { t: t, floors: b.floors } : null; }).filter(Boolean);
+    /* 「TO PS」「TO」＋「PWA」是配管指向盤體的標示，不是盤體位置；盤體＝單獨寫盤名的文字 */
+    var tos = T.filter(function (t) { return /^\s*TO\s*$/i.test(t.s); });
+    var isRef = function (t) { return tos.some(function (o) { var hh = o.h || t.h || 30; return Math.abs(o.y - t.y) < hh * 0.8 && t.x - o.x > 0 && t.x - o.x < hh * 6; }); };
     T.forEach(function (t) {
-      var k = panelKey(t.s); if (!k) return;
+      var ref = /^\s*TO\s+/i.test(t.s), k = panelKey(ref ? t.s.replace(/^\s*TO\s+/i, "") : t.s); if (!k) return;
+      if (!ref) ref = isRef(t);
       var fs = null;
       for (var i = 0; i < plans.length && !fs; i++) { var b = plans[i].box; if (t.x >= b[0] && t.x <= b[2] && t.y >= b[1] && t.y <= b[3]) fs = plans[i].floors; }
       if (!fs && frames.length) {
         var fr = frameOf(t.x, t.y);
         if (fr >= 0) { var own = fl.filter(function (o) { return o.t.frame === fr; }); if (own.length && own.every(function (o) { return o.floors.join() === own[0].floors.join(); })) fs = own[0].floors; }
       }
+      if (!ref && fs) (panelPos[k] = panelPos[k] || []).push({ s: t.s.trim(), x: Math.round(t.x), y: Math.round(t.y), floors: fs });
       if (!fs || fs.length !== 1) return;   /* 標準層（多層共用）的盤名無法確定在哪一層 */
-      var v = panelTags[k] = panelTags[k] || {}; v[fs[0]] = (v[fs[0]] || 0) + 1;
+      var v = panelTags[k] = panelTags[k] || {}; v[fs[0]] = (v[fs[0]] || 0) + (ref ? 1 : 10);   /* 盤體位置優先，「TO 盤名」只當參考 */
     });
     Object.keys(panelTags).forEach(function (k) { var v = panelTags[k]; panelTags[k] = Object.keys(v).sort(function (a, b) { return v[b] - v[a]; })[0]; });
   })();
   return {
-    panelTags: panelTags,
+    panelTags: panelTags, panelPos: panelPos,
     tables: tables.map(function (t) { return { key: t.key, floors: t.floors, rows: t.rows.map(function (r) { return { name: r.name, qty: r.qty, raw: r.raw, block: r.block }; }) }; }),
     floors: floorList, items: list, checks: checks, warnings: warnings, embedded: embedded, pendingXlsx: pendingXlsx, plans: plans,
     unitM: guessUnit(plans), planVer: 2,
@@ -1218,7 +1223,7 @@ function guessUnit(plans) {
 }
 
 /* 圖面辨識規則版本：規則有改時加一，舊的分析結果會提示重新分析 */
-var CORE_VERSION = 14;
+var CORE_VERSION = 15;
 var api = { panelKey: panelKey, CORE_VERSION: CORE_VERSION, decode: decode, parse: parse, analyze: analyze, mergeSheetTables: mergeSheetTables, floorsOf: floorsOf, floorRank: floorRank, sysOf: sysOf, SYS_RULES: SYS_RULES, cnNum: cnNum };
 if (typeof module === "object" && module.exports) module.exports = api;
 else root.DXF = api;

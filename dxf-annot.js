@@ -51,6 +51,7 @@ function spread(list) {
   });
 }
 /* 同一個符號代表幾種設備（「隱藏式磁簧開關(住戶)／隱藏式磁簧開關(公共)」）：挑最符合點數表名稱的那個 */
+function pkey(s) { return String(s || "").trim().toUpperCase().replace(/[-_\s]/g, "").replace(/盤$/, ""); }
 function symName(n, base) {
   var ns = String(n).split("／");
   var hit = ns.filter(function (x) { return nameHit(x, base) === 2; })[0] || ns.filter(function (x) { return nameHit(x, base) === 1; })[0];
@@ -119,9 +120,33 @@ function labels(dr, P, opt) {
     }
     /* IO：同一台設備的點合成一個標註（模組端子＋點位內容） */
     if (fs.length && (!want || want.io)) {
+      /* 位置欄寫盤名（PS、PWA,PWB）的點：圖上「TO PS」只是指向，模組與點位標在盤體（圖上單獨寫盤名的位置） */
+      var inPl = function (q) { var bx = pl.box; return q.x >= bx[0] && q.x <= bx[2] && q.y >= bx[1] && q.y <= bx[3]; };
+      var panelAt = function (loc) {
+        var ks = String(loc || "").split(/[,，、\/\s]+/).map(pkey).filter(Boolean);
+        for (var i = 0; i < ks.length; i++) { var ps = (dr.panelPos || {})[ks[i]] || []; for (var j = 0; j < ps.length; j++) if (inPl(ps[j])) return { key: ks[i], name: ps[j].s, x: ps[j].x, y: ps[j].y }; }
+        return null;
+      };
+      var byPanel = {}, viaPanel = {};
+      ioRows.forEach(function (x) {
+        var kf = x.r.key.split("|")[0]; if (fs.indexOf(kf) < 0 || !x.r.loc) return;
+        var pa = panelAt(x.r.loc); if (!pa) return;
+        var g = byPanel[pa.key] = byPanel[pa.key] || { pa: pa, rows: [] }; g.rows.push(x.r); viaPanel[x.r.key + "#" + x.r.tag] = 1;
+      });
+      var modAt = {};   /* 模組 → 點最多的盤 */
+      Object.keys(byPanel).forEach(function (k) { byPanel[k].rows.forEach(function (r) { if (!r.mod) return; var m = modAt[r.mod] = modAt[r.mod] || {}; m[k] = (m[k] || 0) + 1; }); });
+      Object.keys(modAt).forEach(function (m) { var v = modAt[m]; modAt[m] = Object.keys(v).sort(function (a, b) { return v[b] - v[a]; })[0]; });
+      var modInfo = {}; ((P.io && P.io.panels) || []).forEach(function (pn) { pn.modules.forEach(function (m) { modInfo[m.id] = m; }); });
+      Object.keys(byPanel).forEach(function (k) {
+        var g = byPanel[k], tagOf = function (r) { return r.pending ? "待配置" : r.tag; };
+        var mods = Object.keys(modAt).filter(function (m) { return modAt[m] === k; }).map(function (m) { var mi = modInfo[m] || {}; return m + " " + (mi.type || "") + (mi.ip ? " " + mi.ip : ""); });
+        var max = 12, lines = [g.pa.name + " 盤"].concat(mods).concat(g.rows.slice(0, max).map(function (r) { return tagOf(r) + " 接 " + r.dev + " " + (r.point || ""); }));
+        if (g.rows.length > max) lines.push("…共 " + g.rows.length + " 點，詳 IO 接線編表");
+        addLabel({ x: g.pa.x, y: g.pa.y }, "io", lines); stat.io += g.rows.length;
+      });
       var devs = {};
       ioRows.forEach(function (x) {
-        var kf = x.r.key.split("|")[0]; if (fs.indexOf(kf) < 0) return;
+        var kf = x.r.key.split("|")[0]; if (fs.indexOf(kf) < 0 || viaPanel[x.r.key + "#" + x.r.tag]) return;
         var dk = x.r.dev; (devs[dk] = devs[dk] || {}); (devs[dk][kf] = devs[dk][kf] || []).push(x.r);
       });
       var seqOf = function (dev) { var m = /#(\d+)$/.exec(dev); return m ? +m[1] : 1; };
@@ -146,7 +171,9 @@ function labels(dr, P, opt) {
       ((P.io && P.io.panels) || []).forEach(function (pn) {
         if (fs.indexOf(pn.floor) < 0 || !pn.modules.length) return;
         var box = pl.devs.filter(function (d) { return /監控系統配電箱|監控箱/.test(d.n); }).sort(readingOrder)[0];
-        var lines = [pn.panel].concat(pn.modules.map(function (m) { return m.id + " " + m.type + (m.ip ? " " + m.ip : ""); }));
+        var rest = pn.modules.filter(function (m) { return !modAt[m.id]; });   /* 已標在盤體的模組不重複 */
+        if (!rest.length) return;
+        var lines = [pn.panel].concat(rest.map(function (m) { return m.id + " " + m.type + (m.ip ? " " + m.ip : ""); }));
         if (box) addLabel(box, "io", lines);
         else pendHere.push({ layer: "io", text: pn.panel + "（" + pn.modules.map(function (m) { return m.id; }).join("、") + "）：圖上找不到監控箱位置" });
       });
