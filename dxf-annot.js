@@ -164,6 +164,12 @@ function find(u8, str, from) {
   outer: for (var i = from || 0; i <= last; i++) { for (var j = 0; j < n; j++) if (u8[i + j] !== p[j]) continue outer; return i; }
   return -1;
 }
+/* 管線圖層名稱判斷（公司慣例 02-SA-L、SA-L；圖層名稱有管線、配管、線槽、線架、PIPE、CONDUIT）。名稱看不出是管線的（含外部參考綁定的建築圖層）一律不動 */
+var PIPE_RE = /^(?!.*(\$0\$|建築|ARCH)).*((^|[-_ ])SA[-_ ]?L$|管線|配管|管路|線槽|線架|PIPE|CONDUIT)/i;
+function decName(b) {
+  var t = b; if (t.length && t[t.length - 1] === 10) t = t.subarray(0, t.length - 1); if (t.length && t[t.length - 1] === 13) t = t.subarray(0, t.length - 1);
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(t); } catch (e) { try { return new TextDecoder("big5").decode(t); } catch (e2) { var s = ""; for (var i = 0; i < t.length; i++) s += String.fromCharCode(t[i]); return s; } }
+}
 function readLine(u8, i) { var e = i; while (e < u8.length && u8[e] !== 10) e++; var s = ""; for (var k = i; k < e; k++) s += String.fromCharCode(u8[k]); return { s: s.replace(/\r$/, ""), next: e + 1 }; }
 /** 從位置 i 開始讀 group code/value 配對，直到 pred 成立 */
 function scanPairs(u8, i, pred, limit) {
@@ -195,7 +201,9 @@ function write(bytes, ann, opt) {
     if (codeLine === "0" && (u8[e + 6] === 10 || u8[e + 6] === 13)) entEnd = ps; else from = e + 6;
   }
   if (entEnd === null) throw new Error("找不到 ENTITIES 段結尾");
-  var seed = null, layTab = null, layEnd = null, msOwner = null, zeroRef = {};
+  var seed = null, layTab = null, layEnd = null, msOwner = null, zeroRef = {}, layRecs = [];
+  var hd2 = ""; for (var q2 = 0; q2 < Math.min(u8.length, 40000); q2++) hd2 += String.fromCharCode(u8[q2]);
+  var cl = /\$CLAYER\s*\r?\n\s*8\s*\r?\n([^\r\n]*)/.exec(hd2), curLayerRaw = cl ? cl[1].trim() : "0";
   if (modern) {
     seed = scanPairs(u8, 0, function (c, v, at, nx) {
       if (c === "9" && v.trim() === "$HANDSEED") { var c2 = readLine(u8, nx), v2 = readLine(u8, c2.next); return { at: c2.next, end: v2.next, hex: v2.s.trim() }; }
@@ -211,9 +219,10 @@ function write(bytes, ann, opt) {
     if (tabStart && !tabStart.none) {
       scanPairs(u8, tabStart.nx, function (c, v, at) { if (c === "5" && layTab === null) layTab = v.trim(); if (c === "0") return true; return null; });
       /* 新圖層照抄圖層「0」的出圖樣式（390）、材質（347）等參照：AutoCAD 讀到缺這些參照的圖層會整份放棄載入 */
-      var inZero = false;
-      layEnd = scanPairs(u8, tabStart.nx, function (c, v, at) {
-        if (c === "0") { inZero = false; if (v.trim() === "ENDTAB") return at; }
+      var inZero = false, curRec = null;
+      layEnd = scanPairs(u8, tabStart.nx, function (c, v, at, nx) {
+        if (c === "0") { inZero = false; curRec = v.trim() === "LAYER" ? {} : null; if (curRec) layRecs.push(curRec); if (v.trim() === "ENDTAB") return at; }
+        if (curRec && /^(2|62|70)$/.test(c)) { var vs = readLine(u8, at).next; curRec[c] = { v: v.trim(), at: vs, end: nx }; if (c === "2") curRec.name = decName(u8.subarray(vs, nx)); }
         if (c === "2") inZero = v.trim() === "0";
         if (inZero && /^(390|347|348)$/.test(c)) zeroRef[c] = v.trim();
         return null;
@@ -304,6 +313,20 @@ function write(bytes, ann, opt) {
   if (layRec && layEnd !== null) edits.push({ at: layEnd, data: ascii(layRec) });
   if (styRec) edits.push({ at: styEnd, data: ascii(styRec) });
   if (seed) edits.push({ at: seed.at, end: seed.end, data: ascii(hNext.toString(16).toUpperCase() + NL) });
+  /* 隱藏管線圖層：只改圖層表的狀態（關閉＋凍結），不刪任何圖元，原圖結構完全不動，AutoCAD 開檔最穩；
+     要真的刪掉可在 AutoCAD 用 LAYDEL。目前圖層不能凍結，只關閉。 */
+  var hidden = [];
+  if (opt.hideLayers) {
+    var want = opt.hideLayers === "auto" ? null : opt.hideLayers.map(function (x) { return String(x).trim().toUpperCase(); }).filter(Boolean);
+    layRecs.forEach(function (r) {
+      if (!r.name || !r["2"]) return;
+      var hit = want ? want.indexOf(r.name.trim().toUpperCase()) >= 0 : PIPE_RE.test(r.name.trim());
+      if (!hit || r.name.trim() === "0") return;
+      hidden.push(r.name.trim());
+      if (r["62"]) { var col = Math.abs(parseInt(r["62"].v, 10) || 7); edits.push({ at: r["62"].at, end: r["62"].end, data: ascii("-" + col + NL) }); }
+      if (r["70"] && r["2"].v !== curLayerRaw) { var fl = (parseInt(r["70"].v, 10) || 0) | 1; edits.push({ at: r["70"].at, end: r["70"].end, data: ascii(String(fl) + NL) }); }
+    });
+  }
   edits.sort(function (a, b) { return b.at - a.at; });
   var parts = [], cursor = u8.length;
   edits.forEach(function (e) {
@@ -315,7 +338,7 @@ function write(bytes, ann, opt) {
   parts.unshift(u8.subarray(0, cursor));
   var total = parts.reduce(function (s, p) { return s + p.length; }, 0), outB = new Uint8Array(total), o = 0;
   parts.forEach(function (p) { outB.set(p, o); o += p.length; });
-  return { bytes: outB, count: ann.labels.length, layers: Object.keys(layersUsed), version: "AC" + ver };
+  return { bytes: outB, count: ann.labels.length, layers: Object.keys(layersUsed), version: "AC" + ver, hidden: hidden };
 }
 
 /** 只輸出標註的獨立 DXF（R12 格式，最單純、各版 AutoCAD 都能開）：座標與原圖相同，
@@ -404,6 +427,6 @@ function check(dr, P, ann) {
   var noIp = Object.keys(sym).filter(function (n) { return !ipN[n]; }).sort(function (a, b) { return sym[b] - sym[a]; }).map(function (n) { return { dev: n, sym: sym[n] }; });
   return { rows: rows, noIp: noIp };
 }
-var api = { labels: labels, check: check, write: write, writeStandalone: writeStandalone, LAYERS: LAYERS, enc: enc };
+var api = { labels: labels, check: check, PIPE_RE: PIPE_RE, write: write, writeStandalone: writeStandalone, LAYERS: LAYERS, enc: enc };
 if (typeof module === "object" && module.exports) module.exports = api; else root.DXF_ANNOT = api;
 })(typeof self !== "undefined" ? self : this);
