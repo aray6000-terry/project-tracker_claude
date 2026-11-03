@@ -24,9 +24,12 @@ function parse(sheets) {
     for (var r = 0; r < Math.min(rows.length, 60); r++) {
       var row = rows[r] || [], c = {};
       row.forEach(function (v, i) {
-        var t = norm(v);
+        var t = norm(v).replace(/[．.‧・·、\/]/g, "");   /* 「品　名．規　範」→ 品名規範 */
         if (t === "項次") c.no = i;
-        else if (/^(工程項目|品名|項目|品名規格|名稱|品名及規格)$/.test(t)) c.name = i;
+        else if (/^(工程項目|品名|項目|品名規格|品名規範|名稱|品名及規格)$/.test(t)) c.name = i;
+        else if (t === "設備成本") c.sumEq = i;
+        else if (t === "線材成本") c.sumWire = i;
+        else if (/^(安裝工資|工資成本)$/.test(t)) c.sumLabor = i;
         else if (t === "單位") c.unit = i;
         else if (t === "數量") c.qty = i;
         else if (t === "單價") c.price = i;
@@ -41,6 +44,8 @@ function parse(sheets) {
   if (col.note === undefined) col.note = col.amount + 1;
   var o = col.note;
   col.margin = o + 1; col.cost = o + 2; col.costAmt = o + 3; col.brand = o + 4; col.wire = o + 5; col.pull = o + 7; col.install = o + 9;
+  var sumCost = col.sumEq !== undefined;   /* 總表右側有「設備成本／線材成本／安裝工資」（宗麒報價單格式）：明細列為 廠牌｜型號｜成本｜成本複價｜安裝工資 */
+  if (sumCost) { col.margin = -1; col.brand = o; col.model = o + 1; col.cost = o + 2; col.costAmt = o + 3; col.install = o + 4; col.wire = -1; col.pull = -1; }
   var rows = sh.rows, meta = {}, households = null;
   for (var r0 = 0; r0 < rows.length; r0++) (rows[r0] || []).forEach(function (v, i) {
     var t = str(v), m;
@@ -50,13 +55,20 @@ function parse(sheets) {
     if (/估價單|報價單/.test(t) && !meta.company) meta.company = t.replace(/工程?估價單|報價單/g, "").trim();
     if (/^戶數$/.test(norm(t))) { var hv = num((rows[r0] || [])[i + 1]); if (hv) households = hv; }
   });
-  var summary = [], sections = [], cur = null, seenDetail = false;
+  var summary = [], sections = [], cur = null, seenDetail = false, sumDone = false, options = [];
   for (var r = hr + 1; r < rows.length; r++) {
     var row = rows[r] || [], no = row[col.no], name = str(row[col.name]), qty = num(row[col.qty]), unit = str(row[col.unit]);
+    if (qty === null && str(row[col.qty]) && num(row[col.unit]) !== null) { qty = num(row[col.unit]); unit = str(row[col.qty]); }   /* 明細表「單位｜數量」與總表表頭順序相反 */
+    if (seenDetail && /^(建議工程|選購工程|加選項目|另案報價)/.test(norm(str(no)) + norm(name))) break;   /* 明細後面的建議／選購項目不算進各系統 */
     if (!name) continue;
+    if (!seenDetail && summary.length && /^(合|總)\s*計$/.test(name.replace(/\s/g, ""))) sumDone = true;
     if (!seenDetail && (/^註/.test(str(no)) || /^\d+[.、．]\S/.test(name) && !itemNo(no)) && !/^(合|稅|總|小)\s*計|稅\s*金/.test(name.replace(/\s/g, ""))) { (meta.notes = meta.notes || []).push(name.replace(/^\d+[.、．]\s*/, "")); continue; }
     if (isCnNo(no)) {
-      if (!seenDetail && qty !== null && unit) { summary.push({ no: str(no), name: name, price: num(row[col.amount]) || 0, cost: num(row[col.cost]) || 0, margin: num(row[col.margin]) }); continue; }
+      if (!seenDetail && qty !== null && unit && sumDone) { options.push({ no: str(no), name: name, price: num(row[col.price]) || 0, note: str(row[col.note]) }); continue; }   /* 合計之後的「建議工程」等選項 */
+      if (!seenDetail && qty !== null && unit) {
+        if (sumCost) { var eq = num(row[col.sumEq]) || 0, wi = col.sumWire !== undefined ? num(row[col.sumWire]) || 0 : 0, la = col.sumLabor !== undefined ? num(row[col.sumLabor]) || 0 : 0, pr = num(row[col.amount]) || 0;
+          summary.push({ no: str(no), name: name, price: pr, cost: eq + wi + la, eq: eq, wire: wi, labor: la, margin: pr ? (pr - eq - wi - la) / pr : null }); continue; }
+        summary.push({ no: str(no), name: name, price: num(row[col.amount]) || 0, cost: num(row[col.cost]) || 0, margin: num(row[col.margin]) }); continue; }
       if (seenDetail && cur && cnVal(no) <= cnVal(cur.no)) { cur.groups = (cur.groups || []).concat(name); continue; }   /* 子分項（例如 十二 之下的 一、二） */
       seenDetail = true;
       cur = { no: str(no), name: name, sys: secSys(name), items: [], subtotal: null };
@@ -65,10 +77,15 @@ function parse(sheets) {
     if (!cur) continue;
     if (/^小\s*計$/.test(name.replace(/\s/g, "")) || /小\s*計/.test(name) && no === null) { cur.subtotal = { price: num(row[col.amount]), cost: num(row[col.costAmt]) }; continue; }
     if (itemNo(no) === null) { if (cur.items.length) cur.items[cur.items.length - 1].spec = (cur.items[cur.items.length - 1].spec ? cur.items[cur.items.length - 1].spec + "\n" : "") + name; continue; }
-    var price = num(row[col.price]), cost = num(row[col.cost]);
+    var cc = col.cost, ca = col.costAmt;
+    if (sumCost) [o + 1, o + 2].some(function (i) {   /* 各段欄位可能左右差一欄（例如貼入的廠商報價）：找「成本 × 數量 ＝ 成本複價」的那一組 */
+      var u = num(row[i]), t = num(row[i + 1]); if (u === null || t === null || !u) return false;
+      if (Math.abs(u * (qty || 0) - t) < 1) { cc = i; ca = i + 1; return true; } return false;
+    });
+    var price = num(row[col.price]), cost = num(row[cc]);
     var it = { no: itemNo(no), group: cur.groups ? cur.groups[cur.groups.length - 1] : "", name: name, unit: unit, qty: qty || 0, price: price || 0, amount: num(row[col.amount]) || (qty || 0) * (price || 0),
-      brandSpec: str(row[col.note]), cost: cost || 0, costAmt: num(row[col.costAmt]) || (qty || 0) * (cost || 0), brand: str(row[col.brand]),
-      wire: num(row[col.wire]) || 0, pull: num(row[col.pull]) || 0, install: num(row[col.install]) || 0, row: r + 1 };
+      brandSpec: str(row[col.note]) + (col.model !== undefined && str(row[col.model]) ? " " + str(row[col.model]) : ""), cost: cost || 0, costAmt: num(row[ca]) || (qty || 0) * (cost || 0), brand: str(row[col.brand]),
+      wire: col.wire >= 0 ? num(row[col.wire]) || 0 : 0, pull: col.pull >= 0 ? num(row[col.pull]) || 0 : 0, install: num(row[col.install]) || 0, row: r + 1 };
     it.margin = it.amount ? (it.amount - it.costAmt) / it.amount : null;
     it.kind = /線材|五金|另料/.test(name) ? "material" : /工資|安裝$|施工|製作$|佈線$/.test(name) ? "labor" : /測試|調整|編寫|設計|設定|美工|教育訓練|申請|授權費?$|建檔/.test(name) ? "service" : "device";
     cur.items.push(it);
@@ -79,8 +96,14 @@ function parse(sheets) {
     s.itemPrice = p; s.itemCost = c;
     if (s.subtotal && s.subtotal.price) { s.price = s.subtotal.price; s.cost = s.subtotal.cost !== null ? s.subtotal.cost : c; } else { s.price = p; s.cost = c; }
     s.margin = s.price ? (s.price - s.cost) / s.price : null; s.wire = w; s.pullLabor = pu; s.installLabor = ins;
+    var sm = sumCost ? summary.filter(function (x) { return x.no === s.no && x.eq !== undefined; })[0] : null;
+    if (sm) {   /* 成本以總表「設備＋線材＋安裝工資」為準（明細的工資、線材列沒有填成本） */
+      if (!s.price) s.price = sm.price;
+      s.cost = sm.cost; s.margin = s.price ? (s.price - s.cost) / s.price : null; s.wire = sm.wire; s.pullLabor = 0; s.installLabor = sm.labor; s.costFrom = "summary";
+    }
   });
   var tp = 0, tc = 0; sections.forEach(function (s) { tp += s.price; tc += s.cost; });
+  if (options.length) meta.options = options;
   return { meta: meta, households: households, sheet: sh.name, sections: sections, summary: summary,
     total: { price: tp, cost: tc, margin: tp ? (tp - tc) / tp : null, perHousehold: households ? tp / households : null } };
 }
@@ -169,7 +192,7 @@ function review(q, opt) {
     if (s.margin !== null && s.margin < secMin) add("warn", s.name, "系統毛利 " + pct(s.margin) + "，低於標準 " + pct(secMin));
     s.items.forEach(function (it) {
       var w = s.name + "／" + it.name;
-      if (it.amount > 0 && !it.cost && it.kind !== "service" && !/授權|編輯|建檔/.test(it.name)) add("warn", w, "沒有填成本", it.row);
+      if (it.amount > 0 && !it.cost && it.kind !== "service" && !/授權|編輯|建檔/.test(it.name) && !(s.costFrom === "summary" && (it.kind === "material" || it.kind === "labor"))) add("warn", w, "沒有填成本", it.row);   /* 總表另列線材成本、安裝工資時，線材與工資列本來就不填成本 */
       else if (it.margin !== null && it.amount > 0 && it.margin < itemMin) add("warn", w, "毛利 " + pct(it.margin) + "，低於 " + pct(itemMin), it.row);
       if (it.margin !== null && it.margin < 0) add("bad", w, "售價低於成本（虧損）", it.row);
       var sd = stdIdx[norm(it.name)];
