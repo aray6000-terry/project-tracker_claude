@@ -5,6 +5,10 @@ var T=window.TR; if(!T||!window.QUOTEGEN||!window.XLSX_WRITE) return;
 var esc=T.esc, api=T.api, toast=T.toast, fail=T.fail, G=window.QUOTEGEN;
 var $=function(id){ return document.getElementById(id); };
 var st={pid:null, lib:null, canEdit:false, loading:false, opt:null, q:null, tab:"set"};
+var PF={mode:"margin", pct:35};   /* 利潤設定：margin 毛利率／markup 加成率 */
+try{ var pf0=JSON.parse(localStorage.getItem("qgen:profit")||"null"); if(pf0&&pf0.mode) PF=pf0; }catch(e){}
+function pfSave(){ try{ localStorage.setItem("qgen:profit",JSON.stringify(PF)); }catch(e){} }
+function pfLabel(){ return PF.mode==="markup"?"加成率":"毛利率"; }
 var FULL={"宗亞":"宗亞資訊工業股份有限公司","宗友":"宗友資訊股份有限公司"};
 var SMART_LABEL={none:"一般（非智慧建築）","2016":"智慧建築 2016 年版","2024":"智慧建築 2024 年版",smart:"智慧建築（未標版本）"};
 /* 專案建置系統 → 報價系統 */
@@ -76,11 +80,16 @@ function outHtml(cur){
   if(big.length) h+='<div class="tipbox"><b>規模放大</b>'+big.map(function(s){ return esc(s.no+" "+s.name+"："+s.scaleNote); }).join("<br>")+'</div>';
   if(q.unmatched.length) h+='<details class="mxwrap"'+(q.unmatched.length?" open":"")+'><summary>圖面有、報價單沒對到的設備（'+q.unmatched.length+'）</summary><p class="meta">可能是範本沒有的設備，或屬於配管、箱體等不在報價範圍內的項目。需要報價的請選擇段落後加入。</p><div class="tblwrap"><table class="items"><thead><tr><th>圖面設備</th><th>數量</th><th>加到段落</th><th></th></tr></thead><tbody>'
     +q.unmatched.map(function(u,i){ return '<tr><td>'+esc(u.name)+'</td><td>'+u.qty+'</td><td><select class="fld" data-qg-addsec="'+i+'">'+q.sections.map(function(s,j){ return '<option value="'+j+'"'+(s.sys===mapSys(u.sys)?" selected":"")+'>'+esc(s.no+" "+s.name)+'</option>'; }).join("")+'</select></td><td><button class="btn small" type="button" data-qg-add="'+i+'">加入</button></td></tr>'; }).join("")+'</tbody></table></div></details>';
+  var noCost=0; q.sections.forEach(function(s){ s.items.forEach(function(it){ if(!(it.cost>=1)&&it.qty>0) noCost++; }); });
+  h+='<div class="tipbox" style="border-color:var(--accent)"><b>依成本訂價</b>　利潤算法 <select class="fld" id="qgPfMode"><option value="margin"'+(PF.mode==="margin"?" selected":"")+'>毛利率（售價＝成本÷(1−%)）</option><option value="markup"'+(PF.mode==="markup"?" selected":"")+'>加成率（售價＝成本×(1＋%)）</option></select>'
+    +'　全部系統 <input class="fld" type="number" step="0.5" id="qgPfAll" value="'+esc(PF.pct)+'" style="width:72px"> % <button class="btn small primary" id="qgPfApply" type="button">套用到全部</button>'
+    +'<br><span class="hint">各系統可在段落標題旁另填利潤率；每一項也可以直接改「利潤%」。只會改有成本的項目'+(noCost?'，目前有 <b>'+noCost+'</b> 項沒有成本，單價維持原樣':'')+'。售價 1,000 以上取整到 10 元。</span></div>';
   h+='<div class="tools" style="margin:10px 0"><button class="btn primary small" id="qgXls" type="button">下載報價單（Excel）</button><button class="btn small" id="qgXlsInt" type="button">下載內部成本版（Excel）</button>'
     +(edit?'<button class="btn small" id="qgSave" type="button">存為本案估價單</button>':'')+'<span class="hint">藍字＝圖面數量；橘字＝請確認</span></div>';
   q.sections.forEach(function(s,si){
     h+='<details class="mxwrap" open><summary><b>'+esc(s.no+"、"+s.name)+'</b>　'+money(s.price)+'　<span class="hint">毛利 '+pct(s.margin)+(s.source?'｜範本：'+esc(s.source.tname):'')+'</span></summary>'
-      +'<div class="tblwrap"><table class="items qgtbl"><thead><tr><th>#</th><th>名稱</th><th>單位</th><th>數量</th><th>單價</th><th>複價</th><th>成本</th><th>備註（廠牌）</th><th></th></tr></thead><tbody>'
+      +'<div class="uprow"><span class="meta">本系統'+pfLabel()+'</span><input class="fld" type="number" step="0.5" data-qg-pfsec="'+si+'" value="'+esc(s.profitPct!==undefined?s.profitPct:"")+'" placeholder="'+esc(PF.pct)+'" style="width:72px"><span class="meta">%</span><button class="btn small" type="button" data-qg-pfsecgo="'+si+'">套用到本系統</button></div>'
+      +'<div class="tblwrap"><table class="items qgtbl"><thead><tr><th>#</th><th>名稱</th><th>單位</th><th>數量</th><th>單價</th><th>複價</th><th>成本</th><th>利潤%</th><th>備註（廠牌）</th><th></th></tr></thead><tbody>'
       +s.items.map(function(it,ii){
         var k=si+"-"+ii, fc=/^圖面/.test(it.flag)?"qg-d":/請/.test(it.flag)?"qg-w":"";
         return '<tr><td>'+it.no+'</td><td><input class="fld qgname" data-qg-it="'+k+'" data-f="name" value="'+esc(it.name)+'">'+(it.flag?'<div class="hint '+fc+'">'+esc(it.flag)+'</div>':'')+'</td>'
@@ -89,6 +98,7 @@ function outHtml(cur){
           +'<td><input class="fld" type="number" min="0" step="any" style="width:96px" data-qg-it="'+k+'" data-f="price" value="'+it.price+'"></td>'
           +'<td style="text-align:right">'+Math.round(it.amount).toLocaleString()+'</td>'
           +'<td><input class="fld" type="number" min="0" step="any" style="width:90px" data-qg-it="'+k+'" data-f="cost" value="'+it.cost+'"></td>'
+          +(function(){ var pv=G.profitOf(it,PF.mode); return '<td><input class="fld'+(pv!==null&&pv<0?' qg-w':'')+'" type="number" step="0.5" style="width:70px" data-qg-pf="'+k+'" value="'+(pv===null?"":Math.round(pv*10)/10)+'"'+(it.cost>=1?'':' disabled title="請先填成本"')+'></td>'; })()
           +'<td><input class="fld" style="min-width:140px" data-qg-it="'+k+'" data-f="brandSpec" value="'+esc(it.brandSpec||"")+'"></td>'
           +'<td><button class="btn small" type="button" data-qg-del="'+k+'" aria-label="刪除">×</button></td></tr>'; }).join("")
       +'</tbody></table></div><button class="btn small" type="button" data-qg-new="'+si+'">新增項目</button></details>';
@@ -148,6 +158,22 @@ function bind(cur,el,rerender,dr,reload){
     it[f]=/^(qty|price|cost)$/.test(f)?(Number(i.value)||0):i.value.trim();
     if(f==="qty") it.flag=it.flag&&/^圖面/.test(it.flag)?it.flag+"（已修改）":"";
     G.finalize(q); re(); }; });
+  /* 利潤設定 */
+  if($("qgPfMode")) $("qgPfMode").onchange=function(){ PF.mode=this.value; pfSave(); re(); };
+  if($("qgPfAll")) $("qgPfAll").onchange=function(){ PF.pct=Number(this.value)||0; pfSave(); };
+  if($("qgPfApply")) $("qgPfApply").onclick=function(){
+    var v=Number($("qgPfAll").value); if(!isFinite(v)||(PF.mode==="margin"&&v>=100)){ toast("請輸入正確的利潤率"); return; }
+    PF.pct=v; pfSave(); var n=G.applyProfit(q,v,PF.mode); re(); toast("已依"+pfLabel()+" "+v+"% 重算 "+n+" 項單價");
+  };
+  P.querySelectorAll("[data-qg-pfsecgo]").forEach(function(b){ b.onclick=function(){
+    var si=+b.dataset.qgPfsecgo, inp=P.querySelector('[data-qg-pfsec="'+si+'"]'), v=inp.value===""?PF.pct:Number(inp.value);
+    if(!isFinite(v)||(PF.mode==="margin"&&v>=100)){ toast("請輸入正確的利潤率"); return; }
+    var n=G.applyProfit(q,v,PF.mode,si); re(); toast(q.sections[si].name+"：依"+pfLabel()+" "+v+"% 重算 "+n+" 項單價");
+  }; });
+  P.querySelectorAll("[data-qg-pf]").forEach(function(i){ i.onchange=function(){
+    var r=itOf(i.dataset.qgPf), it=r.s.items[r.i], v=Number(i.value), np=G.priceFromCost(it.cost,v,PF.mode);
+    if(i.value===""||np===null){ toast("請輸入正確的利潤率"); re(); return; }
+    it.price=np; it.profitPct=v; G.finalize(q); re(); }; });
   P.querySelectorAll("[data-qg-del]").forEach(function(b){ b.onclick=function(){ var r=itOf(b.dataset.qgDel); r.s.items.splice(r.i,1); G.finalize(q); re(); }; });
   P.querySelectorAll("[data-qg-new]").forEach(function(b){ b.onclick=function(){ q.sections[+b.dataset.qgNew].items.push({name:"",unit:"台",qty:1,price:0,cost:0,brandSpec:"",kind:"device",flag:"",tqty:0}); G.finalize(q); re(); }; });
   P.querySelectorAll("[data-qg-add]").forEach(function(b){ b.onclick=function(){

@@ -118,30 +118,69 @@ function ioPlan(dr, P) {
       p.di += (r.di || 0) * n; p.do += (r.do || 0) * n;
     });
   });
-  var list = Object.keys(panels).sort(function (a, b) { return floorRank(a) - floorRank(b); }).map(function (f) {
+  /* 模組配置：先放手動指定的點（P.ioMove：點位鍵 → 端子編號或 "pending"），其餘依序放進同樓層模組的空端子；
+     放不下或指定「待配置」的點列在最後（待配置） */
+  var moves = P.ioMove || {}, slots = {}, built = [];
+  Object.keys(panels).sort(function (a, b) { return floorRank(a) - floorRank(b); }).forEach(function (f) {
     var p = panels[f];
     var diReq = p.di + Math.ceil(p.di * P.spare), doReq = p.do + Math.ceil(p.do * P.spare);
     var n10 = Math.ceil(doReq / 8), rest = Math.max(0, diReq - n10 * 10), n18 = Math.ceil(rest / 18);
     var mods = [], k = 0;
-    for (var i = 0; i < n10; i++) mods.push({ id: "IO-" + fl(f) + "-" + pad(++k), type: "10DI8DO", di: 10, do: 8, usedDi: 0, usedDo: 0 });
-    for (var j = 0; j < n18; j++) mods.push({ id: "IO-" + fl(f) + "-" + pad(++k), type: "18DI", di: 18, do: 0, usedDi: 0, usedDo: 0 });
-    var rows = [];
-    p.points.forEach(function (pt) {
-      if (pt.type === "COM") { rows.push({ module: "RS-485", ch: "COM", tag: fl(f) + "-COM-" + pad(rows.filter(function (r) { return r.ch === "COM"; }).length + 1), name: pt.name + " #" + pt.seq, note: pt.note }); return; }
-      var m = mods.filter(function (x) { return pt.type === "DI" ? x.usedDi < x.di : x.usedDo < x.do; })[0];
-      if (!m) return;
-      var ch = pt.type === "DI" ? ++m.usedDi : ++m.usedDo;
-      rows.push({ module: m.id + "（" + m.type + "）", mod: m.id, type: m.type, ch: pt.type + "-" + pad(ch), tag: m.id + "-" + pt.type + pad(ch), name: (pt.dev || pt.name) + " #" + pt.seq + (pt.point ? "－" + pt.point : ""), dev: (pt.dev || pt.name) + " #" + pt.seq, point: pt.point || "", loc: pt.loc || "", note: pt.note });
+    for (var i = 0; i < n10; i++) mods.push({ id: "IO-" + fl(f) + "-" + pad(++k), type: "10DI8DO", di: 10, do: 8 });
+    for (var j = 0; j < n18; j++) mods.push({ id: "IO-" + fl(f) + "-" + pad(++k), type: "18DI", di: 18, do: 0 });
+    mods.forEach(function (m) {
+      for (var a = 1; a <= m.di; a++) slots[m.id + "-DI" + pad(a)] = { floor: f, mod: m, t: "DI", ch: a, pt: null };
+      for (var b = 1; b <= m.do; b++) slots[m.id + "-DO" + pad(b)] = { floor: f, mod: m, t: "DO", ch: b, pt: null };
     });
-    mods.forEach(function (m) { for (var a = m.usedDi + 1; a <= m.di; a++) rows.push({ module: m.id + "（" + m.type + "）", mod: m.id, type: m.type, ch: "DI-" + pad(a), tag: m.id + "-DI" + pad(a), name: "預留", dev: "預留", point: "", loc: "", note: "" });
-      for (var b = m.usedDo + 1; b <= m.do; b++) rows.push({ module: m.id + "（" + m.type + "）", mod: m.id, type: m.type, ch: "DO-" + pad(b), tag: m.id + "-DO" + pad(b), name: "預留", dev: "預留", point: "", loc: "", note: "" }); });
-    /* 依模組、DI 在前 DO 在後、通道順序排列（接線時照端子順序看） */
-    var mi = {}; mods.forEach(function (m, i) { mi[m.id] = i; });
-    rows.sort(function (a, b) { var x = (mi[a.mod] === undefined ? 999 : mi[a.mod]) - (mi[b.mod] === undefined ? 999 : mi[b.mod]); return x || (a.ch < b.ch ? -1 : a.ch > b.ch ? 1 : 0); });
-    return { floor: f, panel: fl(f) + " 監控箱", di: p.di, do: p.do, proto: p.proto, n18: n18, n10: n10, modules: mods.map(function (m) { return { id: m.id, type: m.type, usedDi: m.usedDi, usedDo: m.usedDo }; }), rows: rows };
+    built.push({ f: f, p: p, mods: mods, n10: n10, n18: n18, auto: [], pending: [], com: [] });
   });
-  var tot = { di: 0, do: 0, proto: 0, n18: 0, n10: 0 };
-  list.forEach(function (p) { tot.di += p.di; tot.do += p.do; tot.proto += p.proto; tot.n18 += p.n18; tot.n10 += p.n10; });
+  function ptKey(f, pt) { return f + "|" + (pt.dev || pt.name) + " #" + pt.seq + "|" + (pt.point || ""); }
+  built.forEach(function (b) {
+    b.p.points.forEach(function (pt) {
+      if (pt.type === "COM") { b.com.push(pt); return; }
+      pt.key = ptKey(b.f, pt);
+      var mv = moves[pt.key], sl = mv && slots[mv];
+      if (mv === "pending") { b.pending.push(pt); pt.why = "手動設為待配置"; return; }
+      if (sl && !sl.pt && sl.t === pt.type) { sl.pt = pt; pt.moved = true; return; }
+      b.auto.push(pt);
+    });
+  });
+  built.forEach(function (b) {
+    b.auto.forEach(function (pt) {
+      var hit = null;
+      b.mods.some(function (m) {
+        var n = pt.type === "DI" ? m.di : m.do;
+        for (var c = 1; c <= n; c++) { var sl = slots[m.id + "-" + pt.type + pad(c)]; if (!sl.pt) { hit = sl; return true; } }
+        return false;
+      });
+      if (hit) hit.pt = pt; else { pt.why = "模組端子不足"; b.pending.push(pt); }
+    });
+  });
+  var list = built.map(function (b) {
+    var f = b.f, p = b.p, rows = [];
+    b.com.forEach(function (pt, i) { rows.push({ module: "RS-485", ch: "COM", tag: fl(f) + "-COM-" + pad(i + 1), name: pt.name + " #" + pt.seq, note: pt.note }); });
+    b.mods.forEach(function (m) {
+      m.usedDi = 0; m.usedDo = 0;
+      ["DI", "DO"].forEach(function (t) {
+        var n = t === "DI" ? m.di : m.do;
+        for (var c = 1; c <= n; c++) {
+          var tag = m.id + "-" + t + pad(c), sl = slots[tag], pt = sl.pt;
+          if (pt) { if (t === "DI") m.usedDi++; else m.usedDo++; }
+          rows.push(pt ? { module: m.id + "（" + m.type + "）", mod: m.id, type: m.type, ch: t + "-" + pad(c), tag: tag, name: (pt.dev || pt.name) + " #" + pt.seq + (pt.point ? "－" + pt.point : ""), dev: (pt.dev || pt.name) + " #" + pt.seq, point: pt.point || "", loc: pt.loc || "", note: pt.note, key: pt.key, ptype: pt.type, moved: !!pt.moved, floor: pt.floor || f }
+            : { module: m.id + "（" + m.type + "）", mod: m.id, type: m.type, ch: t + "-" + pad(c), tag: tag, name: "預留", dev: "預留", point: "", loc: "", note: "" });
+        }
+      });
+    });
+    b.pending.forEach(function (pt, i) {
+      rows.push({ module: "待配置", mod: "", type: "", ch: pt.type + "-—", tag: "待配置-" + fl(f) + "-" + pad(i + 1), name: (pt.dev || pt.name) + " #" + pt.seq + (pt.point ? "－" + pt.point : ""), dev: (pt.dev || pt.name) + " #" + pt.seq, point: pt.point || "", loc: pt.loc || "", note: pt.why || "", key: pt.key, ptype: pt.type, pending: true });
+    });
+    return { floor: f, panel: fl(f) + " 監控箱", di: p.di, do: p.do, proto: p.proto, n18: b.n18, n10: b.n10, pending: b.pending.length,
+      modules: b.mods.map(function (m) { return { id: m.id, type: m.type, usedDi: m.usedDi, usedDo: m.usedDo, di: m.di, do: m.do }; }), rows: rows };
+  });
+  /* 模組可接收其他樓層的點（例：B2 的點拉到 B1 的模組）：移過去的點跟著模組所在監控箱列出 */
+  list.forEach(function (pl) { pl.rows.forEach(function (r) { if (r.key && r.key.split("|")[0] !== pl.floor) { r.from = r.key.split("|")[0]; r.loc = (r.loc ? r.loc + "，" : "") + "來自 " + r.from; } }); });
+  var tot = { di: 0, do: 0, proto: 0, n18: 0, n10: 0, pending: 0 };
+  list.forEach(function (p) { tot.di += p.di; tot.do += p.do; tot.proto += p.proto; tot.n18 += p.n18; tot.n10 += p.n10; tot.pending += p.pending; });
   return { panels: list, total: tot, table: table };
 }
 
@@ -206,22 +245,48 @@ function ipPlan(dr, P, io, net) {
   if (net.server) hosts.mgmt.push({ floor: net.server.floor, abbr: "SW", name: "主機交換器 " + net.server.id, sw: net.server.id });
   net.dist.forEach(function (d) { hosts.mgmt.push({ floor: d.at, abbr: "DSW", name: "匯聚交換器 " + d.id, sw: d.id }); });
   hosts.mgmt.unshift({ floor: net.core.floor, abbr: "CORE", name: "核心交換器 " + net.core.id, sw: net.core.id });
-  var third = 0, subnets = [], rows = [];
+  /* 各系統網段：預設依 VLAN 順序自動切（基底 P.baseNet）；P.ipNet[系統] = {vlan, cidr, gw} 可自訂（例：192.168.20.0/24） */
+  var third = 0, subnets = [], rows = [], custom = P.ipNet || {}, used = [];
+  function toInt(ip) { var a = String(ip).split(".").map(Number); return ((a[0] << 24) >>> 0) + (a[1] << 16) + (a[2] << 8) + a[3]; }
+  function toIp(n) { return [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join("."); }
+  function parseCidr(c) {
+    var m = /^\s*(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\s*\/\s*(\d{1,2})\s*$/.exec(String(c || ""));
+    if (!m || [m[1], m[2], m[3], m[4]].some(function (x) { return +x > 255; }) || +m[5] < 8 || +m[5] > 30) return null;
+    var pf = +m[5], mask = pf ? (0xffffffff << (32 - pf)) >>> 0 : 0, net = (toInt(m[1] + "." + m[2] + "." + m[3] + "." + m[4]) & mask) >>> 0;
+    return { net: net, pfx: pf, size: Math.pow(2, 32 - pf) };
+  }
+  var customRanges = [];
+  VLANS.forEach(function (v) { var c = custom[v[0]] && parseCidr(custom[v[0]].cidr); if (c && hosts[v[0]].length) customRanges.push({ a: c.net, b: c.net + c.size - 1 }); });
   VLANS.forEach(function (v) {
     var hs = hosts[v[0]]; if (!hs.length) return;
-    var need = Math.ceil(hs.length * (1 + P.growth)) + 20, pfx = prefixFor(need), blocks = Math.pow(2, 24 - pfx);
-    third = Math.ceil(third / blocks) * blocks;
-    var net3 = third, base = P.baseNet + "." + net3 + ".0/" + pfx;
-    subnets.push({ vlan: v[1], key: v[0], name: v[2], cidr: base, gateway: P.baseNet + "." + net3 + ".1", hosts: hs.length, capacity: Math.pow(2, 32 - pfx) - 2 });
-    third += blocks;
+    var need = Math.ceil(hs.length * (1 + P.growth)) + 20, cu = custom[v[0]] || {}, pc = cu.cidr ? parseCidr(cu.cidr) : null, net, pfx, size, vid = +cu.vlan > 0 && +cu.vlan < 4095 ? +cu.vlan : v[1], warn = "";
+    if (cu.cidr && !pc) warn = "自訂網段「" + cu.cidr + "」格式不正確，改用預設";
+    if (pc) { net = pc.net; pfx = pc.pfx; size = pc.size; }
+    else {
+      pfx = prefixFor(need); var blocks = Math.pow(2, 24 - pfx);
+      size = Math.pow(2, 32 - pfx);
+      for (var guard = 0; guard < 256; guard++) {   /* 自動切的網段避開自訂網段 */
+        third = Math.ceil(third / blocks) * blocks; net = toInt(P.baseNet + "." + third + ".0");
+        var clash = customRanges.some(function (u) { return net <= u.b && net + size - 1 >= u.a; });
+        if (!clash) break; third += blocks;
+      }
+      third += blocks;
+    }
+    var bcast = net + size - 1, gwI = cu.gw && /^\d{1,3}(\.\d{1,3}){3}$/.test(cu.gw) ? toInt(cu.gw) : net + 1;
+    if (gwI <= net || gwI >= bcast) { warn = (warn ? warn + "；" : "") + "閘道 " + (cu.gw || toIp(gwI)) + " 不在網段內，改用 " + toIp(net + 1); gwI = net + 1; }
+    if (size - 2 < hs.length + 20) warn = (warn ? warn + "；" : "") + "網段可用 " + (size - 2) + " 個位址，不夠 " + hs.length + " 台設備（含保留 .2～.19），超出的設備標「位址不足」";
+    used.forEach(function (u) { if (net <= u.b && bcast >= u.a) warn = (warn ? warn + "；" : "") + "與「" + u.name + "」網段重疊"; });
+    used.push({ a: net, b: bcast, name: v[2] });
+    var gw = toIp(gwI);
+    subnets.push({ vlan: vid, key: v[0], name: v[2], cidr: toIp(net) + "/" + pfx, gateway: gw, hosts: hs.length, capacity: size - 2, custom: !!pc, warn: warn });
     var idx = 0, counters = {};
-    function ipAt(i) { var o = 20 + i; return P.baseNet + "." + (net3 + Math.floor(o / 256)) + "." + (o % 256); }
+    function ipAt(off) { var n = net + off; if (n === gwI) n++; return n < bcast ? toIp(n) : "位址不足"; }
     var servers = hs.filter(function (h) { return h.server || h.sw; }), devs = hs.filter(function (h) { return !(h.server || h.sw); });
     servers.forEach(function (h, i) { var key = h.abbr + h.floor; counters[key] = (counters[key] || 0) + 1;
-      rows.push({ vlan: v[1], sys: v[2], ip: P.baseNet + "." + net3 + "." + (2 + i), name: h.sw || (h.abbr + "-" + fl(h.floor) + "-" + pad(counters[key])), floor: h.floor, device: h.name, mask: pfx, gw: P.baseNet + "." + net3 + ".1" }); });
+      rows.push({ vlan: vid, sys: v[2], key: v[0], ip: ipAt(2 + i), name: h.sw || (h.abbr + "-" + fl(h.floor) + "-" + pad(counters[key])), floor: h.floor, device: h.name, mask: pfx, gw: gw }); });
     devs.sort(function (a, b) { return floorRank(a.floor) - floorRank(b.floor); }).forEach(function (h) {
       var key = h.abbr + h.floor; counters[key] = (counters[key] || 0) + 1;
-      rows.push({ vlan: v[1], sys: v[2], ip: ipAt(idx++), name: h.abbr + "-" + fl(h.floor) + "-" + pad(counters[key]), floor: h.floor, device: h.name, mask: pfx, gw: P.baseNet + "." + net3 + ".1" });
+      rows.push({ vlan: vid, sys: v[2], key: v[0], ip: ipAt(20 + idx++), name: h.abbr + "-" + fl(h.floor) + "-" + pad(counters[key]), floor: h.floor, device: h.name, mask: pfx, gw: gw });
     });
   });
   return { subnets: subnets, rows: rows };
@@ -313,7 +378,7 @@ function plan(dr, params) {
   ["spare", "growth", "floorHeight", "avgRun", "slack", "distGroup"].forEach(function (k) { P[k] = Number(P[k]); });
   if (params) { P.unitM = params.unitM; P.drop = params.drop; }
   P.separateCctv = P.separateCctv === true || P.separateCctv === "true";
-  if (params) { P.ioRules = params.ioRules; P.ipRules = params.ipRules; P.extraIo = params.extraIo || []; P.systems = params.systems || []; P.ioQty = params.ioQty || {}; P.ioFloor = params.ioFloor || {}; P.panelFloors = params.panelFloors || {}; }
+  if (params) { P.ioRules = params.ioRules; P.ipRules = params.ipRules; P.extraIo = params.extraIo || []; P.systems = params.systems || []; P.ioQty = params.ioQty || {}; P.ioFloor = params.ioFloor || {}; P.ioMove = params.ioMove || {}; P.ipNet = params.ipNet || {}; P.panelFloors = params.panelFloors || {}; }
   var io = ioPlan(dr, P); io.comm = commPlan(dr, P);
   var net = network(dr, P, io), ip = ipPlan(dr, P, io, net), cb = cables(dr, P, io, net);
   var ipOf = {}; ip.rows.forEach(function (r) { if (/^IO-/.test(r.name)) ipOf[r.name] = r; });   /* IO 模組 IP（與 IP 編表同名） */

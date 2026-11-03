@@ -5,7 +5,7 @@ var T=window.TR; if(!T||!window.DESIGN) return;
 var esc=T.esc, api=T.api, toast=T.toast, fail=T.fail;
 var $=function(id){ return document.getElementById(id); };
 var st={pid:null, dr:null, params:{}, sub:"net", floor:null};
-var SUBS=[["net","網路架構"],["riser","設備昇位圖"],["io","IO 模組表"],["ip","IP 編表"],["sw","交換器"],["route","佈線圖"],["cable","線材"],["wire","配線系統圖"],["rule","參數與點位規則"]];
+var SUBS=[["net","網路架構"],["riser","設備昇位圖"],["io","IO 模組表"],["ip","IP 編表"],["annot","標註回圖面"],["sw","交換器"],["route","佈線圖"],["cable","線材"],["wire","配線系統圖"],["rule","參數與點位規則"]];
 var VNAME={}; DESIGN.VLANS.forEach(function(v){ VNAME[v[0]]=v[2]; });
 
 function csv(name, rows){
@@ -114,6 +114,7 @@ function body(P,cur){
   if(s==="riser") return riserView(P);
   if(s==="io") return ioView(P);
   if(s==="ip") return ipView(P);
+  if(s==="annot") return annotView(P);
   if(s==="sw") return swView(P);
   if(s==="cable") return cableView(P);
   if(s==="wire") return wireView(P);
@@ -271,28 +272,40 @@ function ioView(P){
     h+='<div class="kpis">'+k(t.di,"DI 點")+k(t.do,"DO 點")+k(t.n18,"18DI 模組")+k(t.n10,"10DI8DO 模組")+'</div>';
   }
   h+='<h4 style="margin:16px 0 6px">各樓層監控箱模組配置</h4><p class="meta">模組規格：18DI 或 10DI8DO。依 DO 點數先配 10DI8DO，剩下的 DI 再配 18DI，預留 '+Math.round(P.params.spare*100)+'%。判斷順序：手動指定 → 位置欄樓層 → 設備名稱樓層 → 位置欄盤名對照單線圖 → 圖面各樓層數量 → 依設備種類推定（泵浦、水池在最底層地下室，發電機、ATS 在 B1，屋頂水箱在最高屋突層）→ '+esc(P.params.coreFloor)+' 中央監控室。上方點數表「接到監控箱」欄可逐項修改。</p>'
-    +'<div class="tblwrap"><table><thead><tr><th>監控箱</th><th>DI</th><th>DO</th><th>18DI</th><th>10DI8DO</th><th>模組／IP</th></tr></thead><tbody>'
-    +io.panels.map(function(p){ return '<tr><td>'+esc(p.panel)+'</td><td>'+p.di+'</td><td>'+p.do+'</td><td>'+(p.n18||"")+'</td><td>'+(p.n10||"")+'</td><td class="mono" style="text-align:left">'+p.modules.map(function(m){return esc(m.id)+(m.ip?' <span class="hint">'+esc(m.ip)+'</span>':'');}).join("<br>")+'</td></tr>'; }).join("")
-    +'<tr class="grp"><td><b>合計</b></td><td><b>'+t.di+'</b></td><td><b>'+t.do+'</b></td><td><b>'+t.n18+'</b></td><td><b>'+t.n10+'</b></td><td></td></tr></tbody></table></div>';
+    +'<div class="tblwrap"><table><thead><tr><th>監控箱</th><th>DI</th><th>DO</th><th>18DI</th><th>10DI8DO</th><th>模組／IP</th><th>待配置</th></tr></thead><tbody>'
+    +io.panels.map(function(p){ return '<tr><td>'+esc(p.panel)+'</td><td>'+p.di+'</td><td>'+p.do+'</td><td>'+(p.n18||"")+'</td><td>'+(p.n10||"")+'</td><td class="mono" style="text-align:left">'+p.modules.map(function(m){return esc(m.id)+(m.ip?' <span class="hint">'+esc(m.ip)+'</span>':'');}).join("<br>")+'</td><td>'+(p.pending?'<b style="color:var(--bad)">'+p.pending+'</b>':'')+'</td></tr>'; }).join("")
+    +'<tr class="grp"><td><b>合計</b></td><td><b>'+t.di+'</b></td><td><b>'+t.do+'</b></td><td><b>'+t.n18+'</b></td><td><b>'+t.n10+'</b></td><td></td><td>'+(t.pending?'<b style="color:var(--bad)">'+t.pending+'</b>':'')+'</td></tr></tbody></table></div>';
   var sel=st.floor==="all"||(st.floor&&io.panels.some(function(p){return p.floor===st.floor;}))?st.floor:(io.panels[0]&&io.panels[0].floor);
   var shown=io.panels.filter(function(x){return sel==="all"||x.floor===sel;});
   if(shown.length){
-    var used=0,spare=0; shown.forEach(function(x){ x.rows.forEach(function(r){ if(r.name==="預留") spare++; else used++; }); });
+    var used=0,spare=0,pend=0; shown.forEach(function(x){ x.rows.forEach(function(r){ if(r.pending) pend++; else if(r.name==="預留") spare++; else used++; }); });
+    /* 「移到」選單：各模組剩餘端子（DI／DO 分開），可跨樓層 */
+    var freeOf={}; io.panels.forEach(function(x){ x.rows.forEach(function(r){ if(r.mod&&r.name==="預留"&&!r.edited){ var t=r.ch.slice(0,2), k=r.mod+"|"+t; (freeOf[k]=freeOf[k]||[]).push(r.tag); } }); });
+    var allMods=[]; io.panels.forEach(function(x){ x.modules.forEach(function(m){ allMods.push({id:m.id,floor:x.floor}); }); });
+    var mvSel=function(r){
+      if(!r.key) return '';
+      var t=r.ptype||r.ch.slice(0,2), opts='<option value="">'+(r.pending?'（待配置）':'（目前位置）')+'</option>';
+      allMods.forEach(function(m){ var fr=freeOf[m.id+"|"+t]||[]; if(fr.length&&m.id!==r.mod) opts+='<option value="'+esc(fr[0])+'">'+esc(m.id)+'（空 '+fr.length+'）</option>'; });
+      if(!r.pending) opts+='<option value="pending">移到待配置</option>';
+      if(r.moved||r.pending) opts+='<option value="auto">恢復自動配置</option>';
+      return '<select class="fld" data-iomv="'+esc(r.key)+'" style="padding:2px 4px;max-width:150px" aria-label="'+esc(r.name)+' 移到">'+opts+'</select>';
+    };
     h+='<h4 style="margin:16px 0 6px">IO 接線編表：<select id="ioFloor"><option value="all"'+(sel==="all"?" selected":"")+'>全部樓層</option>'+io.panels.map(function(x){ return '<option'+(x.floor===sel?" selected":"")+'>'+esc(x.floor)+'</option>'; }).join("")+'</select></h4>'
-      +'<p class="meta">每個點位接到哪一個模組、哪一個端子。模組 IP 與「IP 編表」的 IO 設備一致（VLAN '+esc((shown[0].modules[0]||{}).vlan||"")+'）；同一台設備的點排在相鄰端子，模組末端為預留點。使用 '+used+' 點、預留 '+spare+' 點。'
+      +'<p class="meta">每個點位接到哪一個模組、哪一個端子。模組 IP 與「IP 編表」的 IO 設備一致（VLAN '+esc((shown[0].modules[0]||{}).vlan||"")+'）；同一台設備的點排在相鄰端子，模組末端為預留點。使用 '+used+' 點、預留 '+spare+' 點'+(pend?'、<b style="color:var(--bad)">待配置 '+pend+' 點</b>（列在最後，可用「修改點位 → 移到」放進有空端子的模組）':'')+'。'
       +'<br>DI 分<b style="color:var(--bad)">警報</b>（故障、跳脫、高低水位、漏水、濃度、求救、防盜等，發生時中央監控要跳警報、響鈴、記錄）與<b>不警報</b>（運轉、開關、位置等狀態顯示）：全部 DI 中警報 '+ien.alarm+' 點、不警報 '+ien.normal+' 點。系統依點位內容自動判斷，可逐點修改。'
       +(ien.edited?'<br>已手動修改 '+ien.edited+' 點（底色標示）。':'')+'</p>'
       +(ien.stale?'<div class="tipbox" style="border-color:var(--warn,#b7791f)"><b>有 '+ien.stale+' 個點位的自動編排已變動</b>（數量或樓層改過，端子重新排列），手動修改仍套用在原點位編號上，請確認標示「⚠」的列是否正確。</div>':'')
-      +(edit?'<div class="tools" style="margin:6px 0">'+(st.ioEditing?'<button class="btn small primary" id="btnIoeSave" type="button">儲存點位修改</button><button class="btn small" id="btnIoeCancel" type="button">取消</button><span class="meta">可改設備、點位內容、位置；預留點也可以填入新的點位。清空設備名稱＝改回預留。</span>':'<button class="btn small" id="btnIoeOn" type="button">修改點位</button>')
-        +(Object.keys(st.params.ioEdit||{}).length?'<button class="btn small danger" id="btnIoeReset" type="button">清除全部點位修改</button>':'')+'</div>':'')
-      +'<div class="tblwrap"><table><thead><tr>'+(sel==="all"?'<th>監控箱</th>':'')+'<th>模組</th><th>型號</th><th>模組 IP</th><th>端子</th><th>點位編號</th><th>設備</th><th>點位內容</th><th>DI 類別</th><th>位置</th></tr></thead><tbody>'
+      +(edit?'<div class="tools" style="margin:6px 0">'+(st.ioEditing?'<button class="btn small primary" id="btnIoeSave" type="button">儲存點位修改</button><button class="btn small" id="btnIoeCancel" type="button">取消</button><span class="meta">可改設備、點位內容、位置；預留點也可以填入新的點位。清空設備名稱＝改回預留。「移到」可把點位搬到其他模組（含其他樓層監控箱，放在該模組第一個空端子）或設為待配置，選了就會儲存。</span>':'<button class="btn small" id="btnIoeOn" type="button">修改點位</button>')
+        +(Object.keys(st.params.ioEdit||{}).length?'<button class="btn small danger" id="btnIoeReset" type="button">清除全部點位修改</button>':'')
+        +(Object.keys(st.params.ioMove||{}).length?'<button class="btn small danger" id="btnIomReset" type="button">清除全部點位搬移（'+Object.keys(st.params.ioMove).length+'）</button>':'')+'</div>':'')
+      +'<div class="tblwrap"><table><thead><tr>'+(sel==="all"?'<th>監控箱</th>':'')+'<th>模組</th><th>型號</th><th>模組 IP</th><th>端子</th><th>點位編號</th><th>設備</th><th>點位內容</th><th>DI 類別</th><th>位置</th>'+(edit&&st.ioEditing?'<th>移到</th>':'')+'</tr></thead><tbody>'
       +shown.map(function(x){ var last=""; return x.rows.map(function(r){ var first=r.mod!==last; last=r.mod;
         var ing=edit&&st.ioEditing&&r.ch!=="COM", di=/^DI/.test(r.ch||""), spareRow=r.name==="預留"&&!r.edited;
         var inp=function(k,v,w){ return '<input class="fld" data-ioe="'+esc(r.tag)+'" data-k="'+k+'" value="'+esc(v)+'" style="width:'+w+'px;padding:3px 6px">'; };
         var alm=di&&!spareRow?(edit?'<select class="alm'+(r.alarm?' on':'')+'" data-ioa="'+esc(r.tag)+'" aria-label="'+esc(r.tag)+' 警報類別"><option value="1"'+(r.alarm?' selected':'')+'>警報</option><option value="0"'+(r.alarm?'':' selected')+'>不警報</option></select>':(r.alarm?'<b style="color:var(--bad)">警報</b>':'不警報')):(di?'':'<span class="hint">—</span>');
-        var cls=(spareRow?'muted':'')+(r.edited?' ioed':'');
+        var cls=(spareRow?'muted':'')+(r.edited?' ioed':'')+(r.pending?' iopend':'')+(r.moved?' iomoved':'');
         return '<tr'+(cls.trim()?' class="'+cls.trim()+'"':'')+(first?' style="border-top:2px solid var(--line)"':'')+(r.stale?' title="原自動編排：'+esc(r.stale)+'"':'')+'>'+(sel==="all"?'<td>'+(first?esc(x.panel):'')+'</td>':'')+'<td class="mono">'+(first?esc(r.mod||r.module):'')+'</td><td>'+(first?esc(r.type||""):'')+'</td><td class="mono">'+(first?esc(r.ip||""):'')+'</td><td class="mono">'+esc(r.ch)+'</td><td class="mono">'+esc(r.tag)+(r.stale?' ⚠':'')+'</td>'
-          +'<td>'+(ing?inp("dev",r.name==="預留"&&!r.edited?"":(r.dev||r.name),170):esc(r.dev||r.name))+'</td><td>'+(ing?inp("point",r.point||"",120):esc(r.point||""))+'</td><td>'+alm+'</td><td>'+(ing?inp("loc",r.loc||"",110):esc(r.loc||r.note||""))+'</td></tr>'; }).join(""); }).join("")+'</tbody></table></div>';
+          +'<td>'+(ing?inp("dev",r.name==="預留"&&!r.edited?"":(r.dev||r.name),170):esc(r.dev||r.name))+'</td><td>'+(ing?inp("point",r.point||"",120):esc(r.point||""))+'</td><td>'+alm+'</td><td>'+(ing?inp("loc",r.loc||"",110):esc(r.loc||r.note||""))+'</td>'+(edit&&st.ioEditing?'<td>'+mvSel(r)+'</td>':'')+'</tr>'; }).join(""); }).join("")+'</tbody></table></div>';
   }
   return h;
 }
@@ -314,9 +327,54 @@ function ipView(P){
   var shown=f==="all"?rows:rows.filter(function(r){ return String(r.vlan)===f; });
   return '<div class="row" style="flex-wrap:wrap"><h3>設備 IP 編表（'+rows.length+'）</h3><button class="btn small" id="csvIp" type="button">下載 Excel（CSV）</button></div>'
     +'<p class="meta">每個 VLAN：.1 為閘道（核心交換器）、.2～.19 給交換器與主機、.20 起依樓層由下往上配給設備；網段預留 '+Math.round(P.params.growth*100)+'% 成長空間。設備名稱格式：代號-樓層-序號（CAM 攝影機、IDU 室內機、ODU 門口機、ACR 讀卡機、IO 模組、SW 交換器…）。</p>'
+    +netTable(P)
     +'<div class="filters"><select id="ipVlan"><option value="all">全部 VLAN</option>'+vl.map(function(s){ return '<option value="'+s.vlan+'"'+(String(s.vlan)===f?" selected":"")+'>VLAN '+s.vlan+' '+esc(s.name)+'（'+s.hosts+'）</option>'; }).join("")+'</select></div>'
     +'<div class="tblwrap"><table><thead><tr><th>VLAN</th><th>IP</th><th>遮罩</th><th>閘道</th><th>設備名稱</th><th>樓層</th><th>設備</th></tr></thead><tbody>'
     +shown.slice(0,600).map(function(r){ return '<tr><td>'+r.vlan+'</td><td class="mono">'+esc(r.ip)+'</td><td class="mono">'+maskOf(r.mask)+' <span class="hint">/'+r.mask+'</span></td><td class="mono">'+esc(r.gw)+'</td><td class="mono">'+esc(r.name)+'</td><td>'+esc(r.floor)+'</td><td>'+esc(r.device)+'</td></tr>'; }).join("")+'</tbody></table></div>';
+}
+
+/* ---------- IP／IO 標註回圖面（另存 DXF） ---------- */
+var AN={mode:"layers",scale:1,table:false,sys:null};
+function annotView(P){
+  if(!window.DXF_ANNOT) return '<p class="meta">標註元件未載入，請重新整理頁面。</p>';
+  applyIoEdits(P);
+  var keys=P.ip.subnets.map(function(s){ return [s.key,s.name+"（"+s.hosts+"）"]; }).concat([["io","中央監控 IO 點位（"+P.io.panels.reduce(function(m,p){ return m+p.rows.filter(function(r){ return r.key; }).length; },0)+"）"]]);
+  if(!AN.sys){ AN.sys={}; keys.forEach(function(k){ AN.sys[k[0]]=true; }); }
+  var ann=DXF_ANNOT.labels(st.dr,P,{systems:AN.sys,scale:AN.scale,table:AN.table}), S=ann.stat;
+  var noPlan=!(st.dr.plans||[]).length;
+  var h='<div class="row" style="flex-wrap:wrap"><h3>IP／IO 標註回圖面</h3></div>'
+    +'<p class="meta">依「數量・報價」分析到的平面圖設備位置，把 IP 編表（設備名稱＋IP）與 IO 點位（模組端子＋點位內容）標在每個設備符號旁，監控箱旁標出 IO 模組與 IP。'
+    +'同一張平面代表多層（例 9-17F）時，一個符號會列出各層的名稱與 IP。圖上找不到位置的設備（交換器、主機、平面圖沒畫的設備，或數量比符號多）會列在該平面圖右側「<b>待配置</b>」；IO 尚未配到模組的點也標「待配置」。'
+    +'<br>原圖內容不會被修改，只在模型空間新增標註；可選分系統圖層（WV-IP-CCTV、WV-IP-INTERCOM、WV-IO、WV-PENDING…，在 CAD 用圖層開關分系統顯示）或全部放在同一圖層（WV-ANNOT）。</p>';
+  if(noPlan) return h+'<div class="tipbox" style="border-color:var(--warn)">這份圖面分析沒有平面圖設備位置（可能是舊版分析結果）。請到「數量・報價」重新分析 DXF 後再來產生標註。</div>';
+  h+='<div class="kpis">'+k(S.ip,"IP 已標在設備旁")+k(S.ipPending,"IP 待配置",S.ipPending?"warn":"")+k(S.io,"IO 點已標在設備旁")+k(S.ioPending,"IO 待配置",S.ioPending?"warn":"")+k(S.plans,"平面圖")+'</div>';
+  h+='<h4 style="margin:12px 0 6px">要標註的系統</h4><div class="uprow" style="flex-wrap:wrap">'+keys.map(function(x){ return '<label class="meta"><input type="checkbox" data-ansys="'+x[0]+'"'+(AN.sys[x[0]]?" checked":"")+'> '+esc(x[1])+'</label>'; }).join("")+'</div>'
+    +'<div class="uprow" style="flex-wrap:wrap"><span class="meta">顯示方式</span><label class="meta"><input type="radio" name="anmode" value="layers"'+(AN.mode==="layers"?" checked":"")+'> 分系統圖層</label><label class="meta"><input type="radio" name="anmode" value="single"'+(AN.mode==="single"?" checked":"")+'> 全部同一圖層</label>'
+    +'<span class="meta" style="margin-left:12px">文字大小</span><select class="fld" id="anScale">'+[0.5,0.75,1,1.5,2,3].map(function(v){ return '<option value="'+v+'"'+(+AN.scale===v?" selected":"")+'>×'+v+'</option>'; }).join("")+'</select>'
+    +'<label class="meta" style="margin-left:12px"><input type="checkbox" id="anTable"'+(AN.table?" checked":"")+'> 圖面右側附完整 IP／IO 編表</label></div>';
+  var pend=ann.pending.filter(function(p){ return /^待配置/.test(p.title); });
+  if(pend.length) h+='<details class="mxwrap"><summary>待配置清單（'+pend.reduce(function(m,p){ return m+p.items.length; },0)+' 項）</summary><div class="tblwrap" style="max-height:320px;overflow:auto"><table><thead><tr><th>位置</th><th>項目</th></tr></thead><tbody>'
+    +pend.map(function(p){ return p.items.map(function(it,i){ return '<tr><td>'+(i?'':esc(p.title.replace(/^待配置（|，圖上找不到位置）$|）$/g,"")))+'</td><td class="mono">'+esc(it.text)+'</td></tr>'; }).join(""); }).join("")+'</tbody></table></div></details>';
+  h+='<h4 style="margin:12px 0 6px">產生標註 DXF</h4><p class="meta">請選擇<b>分析時用的同一份 DXF</b>（'+esc(st.dr.fileName||"")+'），座標才會對得上。檔案只在瀏覽器內處理，不會上傳。</p>'
+    +'<div class="uprow"><input type="file" id="anFile" accept=".dxf"><button class="btn primary small" id="anGo" type="button">產生並下載標註 DXF</button><span class="hint" id="anMsg"></span></div>';
+  return h;
+}
+/* 各系統網段：預設自動切，可改 VLAN、網段（CIDR）、閘道 */
+function netTable(P){
+  var vl=P.ip.subnets, edit=T.canEdit(), cu=st.params.ipNet||{};
+  var h='<h4 style="margin:12px 0 6px">各系統網段</h4><p class="meta">預設以「'+esc(P.params.baseNet)+'.x.0」依系統自動切網段'+(edit?'；要用公司或業主指定的網段，直接改下表後按「儲存網段」，例如影像監視 192.168.20.0/24、閘道 192.168.20.254。留空＝自動':'')+'。改完 IP 編表、IO 模組 IP 會一起更新。</p>'
+    +'<div class="tblwrap"><table class="items"><thead><tr><th>系統</th><th>設備數</th><th>VLAN</th><th>網段（CIDR）</th><th>閘道</th><th>可用位址</th><th></th></tr></thead><tbody>';
+  vl.forEach(function(s){
+    var c=cu[s.key]||{};
+    h+='<tr><td>'+esc(s.name)+(s.custom?' <span class="rtag">自訂</span>':'')+'</td><td>'+s.hosts+'</td>'
+      +'<td>'+(edit?'<input class="fld mono" data-ipn="'+s.key+'" data-k="vlan" value="'+esc(c.vlan||"")+'" placeholder="'+s.vlan+'" style="width:70px">':s.vlan)+'</td>'
+      +'<td>'+(edit?'<input class="fld mono" data-ipn="'+s.key+'" data-k="cidr" value="'+esc(c.cidr||"")+'" placeholder="'+esc(s.cidr)+'" style="width:150px">':esc(s.cidr))+'</td>'
+      +'<td>'+(edit?'<input class="fld mono" data-ipn="'+s.key+'" data-k="gw" value="'+esc(c.gw||"")+'" placeholder="'+esc(s.gateway)+'" style="width:130px">':esc(s.gateway))+'</td>'
+      +'<td>'+s.capacity+'</td><td class="hint" style="color:'+(s.warn?'var(--bad)':'inherit')+';white-space:normal">'+esc(s.warn||"")+'</td></tr>';
+  });
+  h+='</tbody></table></div>';
+  if(edit) h+='<div class="tools" style="margin:6px 0 12px"><button class="btn small primary" id="btnIpnSave" type="button">儲存網段</button>'+(Object.keys(cu).length?'<button class="btn small" id="btnIpnReset" type="button">全部恢復自動</button>':'')+'</div>';
+  return h;
 }
 
 /* ---------- 交換器 ---------- */
@@ -495,6 +553,14 @@ function bind(P,cur,el){
     if(Object.keys(e).filter(function(k){ return k!=="o"; }).length) m[r.tag]=e; else delete m[r.tag];
     ioeSave(m,r.tag+" 設為"+(v?"警報":"不警報"));
   }; });
+  el.querySelectorAll("[data-iomv]").forEach(function(s2){ s2.onchange=function(){
+    if(!s2.value) return;
+    var m=Object.assign({},st.params.ioMove||{}), k=s2.dataset.iomv, lab=k.split("|").slice(1).join(" ");
+    if(s2.value==="auto") delete m[k]; else m[k]=s2.value;
+    var np=Object.assign({},st.params,{ioMove:m});
+    api("analysisSave",{id:cur.id,kind:"design",data:np}).then(function(){ st.params=np; toast(lab+(s2.value==="auto"?" 恢復自動配置":s2.value==="pending"?" 移到待配置":" 移到 "+s2.value)); re(); }).catch(fail);
+  }; });
+  if($("btnIomReset")) $("btnIomReset").onclick=function(){ if(!confirm("清除全部點位搬移，恢復自動配置？")) return; var np=Object.assign({},st.params,{ioMove:{}}); api("analysisSave",{id:cur.id,kind:"design",data:np}).then(function(){ st.params=np; toast("已恢復自動配置"); re(); }).catch(fail); };
   if($("btnIoeOn")) $("btnIoeOn").onclick=function(){ st.ioEditing=true; re(); };
   if($("btnIoeCancel")) $("btnIoeCancel").onclick=function(){ st.ioEditing=false; re(); };
   if($("btnIoeReset")) $("btnIoeReset").onclick=function(){ if(!confirm("清除全部點位修改（含警報設定），恢復系統自動編排？")) return; st.ioEditing=false; ioeSave({},"已恢復自動編排"); };
@@ -514,6 +580,36 @@ function bind(P,cur,el){
     if(!ch){ toast("沒有變更"); re(); return; }
     ioeSave(m,"已儲存 "+ch+" 個點位的修改");
   };
+  el.querySelectorAll("[data-ansys]").forEach(function(c){ c.onchange=function(){ AN.sys[c.dataset.ansys]=c.checked; re(); }; });
+  el.querySelectorAll("input[name=anmode]").forEach(function(r){ r.onchange=function(){ AN.mode=r.value; }; });
+  if($("anScale")) $("anScale").onchange=function(){ AN.scale=+this.value; re(); };
+  if($("anTable")) $("anTable").onchange=function(){ AN.table=this.checked; re(); };
+  if($("anGo")) $("anGo").onclick=function(){
+    var f=$("anFile").files[0], msg=$("anMsg"); if(!f){ toast("請先選擇 DXF 檔"); return; }
+    if(!/\.dxf$/i.test(f.name)){ toast("請選擇 .dxf 檔（DWG 請先在 AutoCAD 另存成 DXF）"); return; }
+    var same=st.dr.fileName&&f.name.replace(/\.zip$/i,"")===String(st.dr.fileName).replace(/\.zip$/i,"");
+    if(st.dr.fileName&&!same&&!confirm("選的檔案「"+f.name+"」和分析時的「"+st.dr.fileName+"」檔名不同，座標可能對不上。仍要產生？")) return;
+    var b=this; b.disabled=true; msg.textContent="讀取中…";
+    f.arrayBuffer().then(function(buf){
+      msg.textContent="寫入標註中…";
+      applyIoEdits(P);
+      var ann=DXF_ANNOT.labels(st.dr,P,{systems:AN.sys,scale:AN.scale,table:AN.table});
+      var r=DXF_ANNOT.write(new Uint8Array(buf),ann,{mode:AN.mode});
+      var a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([r.bytes],{type:"application/dxf"}));
+      a.download=f.name.replace(/\.dxf$/i,"")+"_IP_IO標註.dxf"; document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },2000);
+      msg.textContent="完成：標註 "+r.count+" 處，圖層 "+r.layers.join("、")+"（"+r.version+"）"; b.disabled=false;
+      toast("已產生標註 DXF");
+    }).catch(function(e){ b.disabled=false; msg.textContent=""; fail(e); });
+  };
+  if($("btnIpnSave")) $("btnIpnSave").onclick=function(){
+    var m={}, bad="";
+    el.querySelectorAll("[data-ipn]").forEach(function(i){ var v=i.value.trim(); if(!v) return; var k=i.dataset.ipn; (m[k]=m[k]||{})[i.dataset.k]=v;
+      if(i.dataset.k==="cidr"&&!/^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(v)) bad=v; if(i.dataset.k==="gw"&&!/^\d{1,3}(\.\d{1,3}){3}$/.test(v)) bad=v; if(i.dataset.k==="vlan"&&!(+v>0&&+v<4095)) bad=v; });
+    if(bad){ toast("「"+bad+"」格式不正確（網段例：192.168.20.0/24；閘道例：192.168.20.254；VLAN 1～4094）"); return; }
+    var np=Object.assign({},st.params,{ipNet:m});
+    api("analysisSave",{id:cur.id,kind:"design",data:np}).then(function(){ st.params=np; toast("已儲存網段，IP 編表已重新配置"); re(); }).catch(fail);
+  };
+  if($("btnIpnReset")) $("btnIpnReset").onclick=function(){ if(!confirm("各系統網段全部恢復自動配置？")) return; var np=Object.assign({},st.params,{ipNet:{}}); api("analysisSave",{id:cur.id,kind:"design",data:np}).then(function(){ st.params=np; toast("已恢復自動網段"); re(); }).catch(fail); };
   if($("csvIp")) $("csvIp").onclick=function(){ csv(name+"_IP編表.csv",[["VLAN","用途","IP","遮罩","閘道","設備名稱","樓層","設備"]].concat(P.ip.rows.map(function(r){ return [r.vlan,r.sys,r.ip,maskOf(r.mask),r.gw,r.name,r.floor,r.device]; }))); };
   if($("csvSw")) $("csvSw").onclick=function(){ csv(name+"_交換器.csv",[["層級","樓層","編號","埠數","使用","PoE(W)","上連"]].concat(P.net.access.map(function(a){ var d=P.net.dist.filter(function(d){ return d.floors.indexOf(a.floor)>=0; })[0]; return ["接取",a.floor,a.id,a.ports,a.used,a.poe?a.poeW:"",d?d.id:""]; }),P.net.dist.map(function(d){ return ["匯聚",d.at,d.id,d.ports,d.downlinks,"",P.net.core.id]; }),[["核心",P.net.core.floor,P.net.core.id,P.net.core.ports,"","",""]])); };
   if($("routePlan")) $("routePlan").onchange=function(){ st.plan=+this.value; re(); };
@@ -522,7 +618,7 @@ function bind(P,cur,el){
     P.wiring.plans.forEach(function(p){ p.runs.forEach(function(r){ rows.push([p.title,p.floors.join(" "),r.n,r.cable,r.m,r.x,r.y,r.tx,r.ty]); }); }); csv(name+"_配線清單.csv",rows); };
   if($("csvCable")) $("csvCable").onclick=function(){ csv(name+"_線材估算.csv",[["線材","用途","條數","米數","依據"]].concat(P.cables.map(function(c){ return [c.type,c.use,c.runs,c.meters,c.basis||"估算"]; }))); };
   if($("btnDsSave")) $("btnDsSave").onclick=function(){
-    var np={ioQty:st.params.ioQty||{}, ioFloor:st.params.ioFloor||{}, ioEdit:st.params.ioEdit||{}, ioRules:{}, extraIo:xio().filter(function(x){ return String(x.name).trim()&&+x.n>0; }).map(function(x){ return {floor:x.floor,name:String(x.name).trim().slice(0,60),n:Math.min(200,+x.n)}; })};
+    var np={ioQty:st.params.ioQty||{}, ioFloor:st.params.ioFloor||{}, ioEdit:st.params.ioEdit||{}, ioMove:st.params.ioMove||{}, ipNet:st.params.ipNet||{}, ioRules:{}, extraIo:xio().filter(function(x){ return String(x.name).trim()&&+x.n>0; }).map(function(x){ return {floor:x.floor,name:String(x.name).trim().slice(0,60),n:Math.min(200,+x.n)}; })};
     ["baseNet","spare","growth","floorHeight","avgRun","slack","distGroup","coreFloor","separateCctv","unitM","drop"].forEach(function(k){ var e=$("p_"+k); if(e) np[k]=e.value; });
     if(!/^\d{1,3}\.\d{1,3}$/.test(np.baseNet)){ toast("IP 前兩段格式例：10.10"); return; }
     var items=(st.dr.items||[]).filter(function(it){ return it.total>0; });

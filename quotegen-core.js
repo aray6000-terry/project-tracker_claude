@@ -276,6 +276,32 @@ function toSheets(q, opt) {
   return [{ name: internal ? "報價單（內部成本）" : "報價單", cols: [6, 46, 6, 8, 12, 14, 26].concat(internal ? [9, 12, 14] : []), rows: rows, merges: merges, freeze: 4 }];
 }
 
-var api = { toSheets: toSheets, matchScore: matchScore, SYSTEMS: SYSTEMS, GRADES: GRADES, classify: classify, smartOf: smartOf, candidates: candidates, build: build, finalize: finalize, stripSmart: stripSmart };
+/* ---------- 依成本與利潤率訂價 ----------
+   mode "margin"（毛利率，預設）：售價＝成本 ÷ (1 − 利潤率)；mode "markup"（加成率）：售價＝成本 × (1 + 利潤率)
+   售價 1,000 以上取整到 10 元，以下取整到 1 元。沒有成本的項目不動。 */
+function roundPrice(p) { return p >= 1000 ? Math.round(p / 10) * 10 : Math.round(p); }
+function priceFromCost(cost, pct, mode) {
+  cost = Number(cost) || 0; pct = Number(pct);
+  if (!(cost >= 1) || !isFinite(pct)) return null;   /* 成本小於 1 元多半是範本裡的比率欄，不當成本 */
+  if (mode === "markup") return pct < -99 ? null : roundPrice(cost * (1 + pct / 100));
+  return pct >= 100 || pct <= -100 ? null : roundPrice(cost / (1 - pct / 100));
+}
+function profitOf(it, mode) {
+  var c = Number(it.cost) || 0, p = Number(it.price) || 0;
+  if (!(c >= 1) || !(p > 0)) return null;
+  return mode === "markup" ? (p - c) / c * 100 : (p - c) / p * 100;
+}
+/** 套用利潤率：secIdx 省略＝全部系統；回傳改了幾項 */
+function applyProfit(q, pct, mode, secIdx) {
+  var n = 0;
+  q.sections.forEach(function (s, i) {
+    if (secIdx !== undefined && secIdx !== null && i !== secIdx) return;
+    s.profitPct = pct;
+    s.items.forEach(function (it) { var p = priceFromCost(it.cost, pct, mode); if (p !== null) { it.price = p; it.profitPct = pct; n++; } });
+  });
+  finalize(q);
+  return n;
+}
+var api = { priceFromCost: priceFromCost, profitOf: profitOf, applyProfit: applyProfit, toSheets: toSheets, matchScore: matchScore, SYSTEMS: SYSTEMS, GRADES: GRADES, classify: classify, smartOf: smartOf, candidates: candidates, build: build, finalize: finalize, stripSmart: stripSmart };
 if (typeof module === "object" && module.exports) module.exports = api; else root.QUOTEGEN = api;
 })(typeof self !== "undefined" ? self : this);
