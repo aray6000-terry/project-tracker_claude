@@ -352,7 +352,16 @@ function analyze(text, opt) {
     if (!qh) return;
     var lg = T.filter(function (t) { return /^圖\s*例$/.test(t.s) && Math.abs(t.y - dh.y) < hh * 0.6 && t.x < dh.x && t.x > dh.x - hh * 20; })[0];
     usedD.push(dh);
-    buildTable(lg || dh, dh, qh, isFloorKey(qh.s) ? qh.s : "", true);
+    if (!isFloorKey(qh.s)) { buildTable(lg || dh, dh, qh, "", true); return; }
+    /* 「圖例｜說明｜R1F｜R2F｜R3F」：一張表有好幾個樓層欄，每欄各建一張表（連續的樓層欄，遇到其他文字為止） */
+    var qs = [], started = false;
+    row.some(function (t) {
+      if (t === qh) started = true;
+      if (!started) return false;
+      if (t.s.length < 12 && isFloorKey(t.s)) { qs.push(t); return false; }
+      return true;
+    });
+    qs.forEach(function (q) { buildTable(lg || dh, dh, q, q.s, true); });
   });
   /* 方式四：設備在欄、樓層／盤體在列的「轉置」數量表（Philips 燈控格式）：
      表頭左上「區域」，往右每欄一種設備（欄上方有廠商、型號、名稱），每列一個盤（樓層＋盤名），最後一列「合計」 */
@@ -518,6 +527,14 @@ function analyze(text, opt) {
     if (best && !best.block) { best.block = s.name; (blockNames[s.name] = blockNames[s.name] || {})[best.name] = 1; }
   });
 
+  /* 同一張圖例表的多個樓層欄（R1F｜R2F｜R3F）共用圖例符號 */
+  tables.forEach(function (tb) {
+    tables.forEach(function (o) {
+      if (o === tb || o.x !== tb.x || o.y !== tb.y) return;
+      var byName = {}; o.rows.forEach(function (r) { if (r.block) byName[r.name] = r.block; });
+      tb.rows.forEach(function (r) { if (!r.block && byName[r.name]) r.block = byName[r.name]; });
+    });
+  });
   /* 2a. 平面圖整張做成圖塊（例：「SA-3F」），設備符號在圖塊裡：展開成模型空間座標，才能和數量表核對 */
   (function () {
     var memo = {}, add = [];
@@ -578,6 +595,27 @@ function analyze(text, opt) {
     var above = titles.filter(function (o) { return o !== t && Math.abs(o.x - t.x) < t.h * 20 && o.y > t.y && o.y - t.y < t.h * 60; });
     return above.length < 2;
   });
+  /* 平面圖沒有標題文字、但整張做成以樓層命名的圖塊（「R1F-115.10.06」「R2F-…」）：以圖塊名稱當標題 */
+  if (titles.length) {
+    var th = titles.map(function (t) { return t.h; }).sort(function (a, b) { return a - b; })[Math.floor(titles.length / 2)];
+    var covered = {}; titles.forEach(function (t) { var f = bldFloors(t.s); if (f) f.floors.forEach(function (x) { covered[x] = 1; }); });
+    var seenV = {};
+    d.inserts.forEach(function (s) {
+      var m = /^((?:B|R)?\d{1,3}F|RF)(?=[-_ ]|$)/i.exec(s.name); if (!m || s.rot) return;
+      var f = m[1].toUpperCase(); if (covered[f] || seenV[f]) return;
+      /* 圖塊外框常被遠處的雜線撐大：取圖塊內線條端點的 5%～95% 範圍當平面圖範圍 */
+      var xs = [], ys = [], base = (d.bases && d.bases[s.name]) || [0, 0];
+      (d.blocks[s.name] || []).forEach(function (e) { if (/LINE|POLYLINE|ARC|CIRCLE/.test(e.t)) e.pts.forEach(function (p) { xs.push(p[0]); ys.push(p[1]); }); });
+      if (xs.length < 20) return;
+      xs.sort(function (a, b) { return a - b; }); ys.sort(function (a, b) { return a - b; });
+      var q = function (arr, f) { return arr[Math.floor((arr.length - 1) * f)]; };
+      var b = [s.x + (q(xs, 0.05) - base[0]) * s.sx, s.y + (q(ys, 0.05) - base[1]) * s.sy, s.x + (q(xs, 0.95) - base[0]) * s.sx, s.y + (q(ys, 0.95) - base[1]) * s.sy];
+      if (Math.abs(b[2] - b[0]) < th * 15) return;   /* 只取平面圖大小的圖塊 */
+      var cnm = f === "RF" ? "屋頂" : f[0] === "B" ? "地下" + f.slice(1, -1) + "層" : f[0] === "R" ? "屋突" + f.slice(1, -1) + "層" : f.slice(0, -1) + "層";
+      seenV[f] = 1;
+      titles.push({ s: cnm + "平面圖", x: (b[0] + b[2]) / 2, y: Math.min(b[1], b[3]) - th, h: th, virtual: true });
+    });
+  }
   /* 圖框（大型圖塊）：同一張圖紙內的符號才歸給該圖紙上的平面圖 */
   var frames = [];
   d.inserts.forEach(function (s) {
