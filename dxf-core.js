@@ -817,6 +817,10 @@ function analyze(text, opt) {
   var list = Object.keys(items).map(function (k) { return items[k]; }).sort(function (a, b) { return a.sys < b.sys ? -1 : a.sys > b.sys ? 1 : b.total - a.total; });
   if (noCheck.length) warnings.push("以下數量表的平面圖上找不到可核對的設備符號（符號可能畫在戶型等圖塊裡），數量以表為準，未逐項核對圖面：" + noCheck.join("、"));
   tables.forEach(function (tb) { if (tb.needFloor) warnings.push("數量表「" + tb.key + "」看不出是哪一層，數量未計入樓層"); });
+  /* 同一層出現在兩張以上的數量表（例：「十五.二十層」與「三.八.九.十四.二十…層」都含 20F）：數量會重複加總，提示確認 */
+  var fTabs = {};
+  tables.forEach(function (tb) { if (!tb.needFloor && !tb.bld) tb.floors.forEach(function (f) { (fTabs[f] = fTabs[f] || []).push(tb.key); }); });
+  Object.keys(fTabs).forEach(function (f) { var ks = fTabs[f].filter(function (k, i, a) { return a.indexOf(k) === i; }); if (ks.length > 1) warnings.push(f + " 同時出現在數量表「" + ks.join("」「") + "」，該層數量已重複加總，請確認圖面樓層是否寫錯"); });
   if (!tables.length && !legendInfo) {
     var seen = T.filter(function (t) { return /數\s*量/.test(t.s); }).map(function (t) { return t.s.slice(0, 20); });
     seen = seen.filter(function (x, i) { return seen.indexOf(x) === i; }).slice(0, 8);
