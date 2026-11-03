@@ -202,7 +202,7 @@ var CN_FORMAL = { "壹": "一", "貳": "二", "贰": "二", "參": "三", "叁":
 /** 「地下壹層」「參層至拾壹層」「屋突貳層」「屋頂」→「B1F」「3F~11F」「R2F」「RF」；不是樓層字樣則原樣回傳 */
 function cnFloor(s) {
   var t = String(s).replace(/[壹貳贰參叁肆伍陸柒捌玖拾兩]/g, function (c) { return CN_FORMAL[c]; }).replace(/\s/g, "");
-  t = t.replace(/(弱電)?(中央)?(監控)?(系統)?(設備)?(配置|佈置|配線)?(平面圖|數量.*)$/, "");
+  t = t.replace(/(弱電)?(中央)?(監控)?(系統)?(設備)?(配置|佈置|配線)?(平面圖|平面配置圖|平面佈置圖|數量.*)$/, "");
   function one(x) {
     var m = /^(地下|屋突)?([一二三四五六七八九十\d]+)[層樓F]?$/.exec(x);
     if (m) { var n = cnNum(m[2]); if (!isFinite(n)) return null; return (m[1] === "地下" ? "B" : m[1] === "屋突" ? "R" : "") + n + "F"; }
@@ -221,7 +221,13 @@ function cnNum(s) {
   return CN[s] || NaN;
 }
 /** 「3F~5F」「B1F」「R2F」「6F～13F」→ 樓層清單 */
-function dotFloors(s) { s = String(s); return /^\s*(B|R)?\d+(\s*[.．]\s*(B|R)?\d+)+\s*F\s*$/i.test(s) ? s.replace(/\s*[.．]\s*/g, "、") : s; }   /* 「5.6.8F」→「5、6、8F」 */
+function dotFloors(s) {
+  s = String(s);
+  if (/^\s*(B|R)?\d+(\s*[.．]\s*(B|R)?\d+)+\s*F\s*$/i.test(s)) return s.replace(/\s*[.．]\s*/g, "、");
+  /* 「三.八.九.十四.二十.二十一.二十六層…」→「三、八、九…層」 */
+  var m = /^([一二三四五六七八九十]+(?:[.．][一二三四五六七八九十]+)+)(層.*)$/.exec(s.replace(/\s/g, ""));
+  return m ? m[1].replace(/[.．]/g, "、") + m[2] : s;
+}   /* 「5.6.8F」→「5、6、8F」 */
 function floorsOf(key) {
   key = dotFloors(key);
   if (/[、,，\/]|及/.test(String(key))) { var lst = floorList(key); return lst || [key]; }   /* 「4、6F」「8、10、12F」「四層,六層」 */
@@ -255,7 +261,7 @@ function floorList(s) {
 }
 /** 「A棟-3F」「B2F」「A棟四層、六至九層設備平面圖」→ { bld:"A", floors:[…] } */
 function bldFloors(s) {
-  var t = String(s).replace(/\s/g, "").replace(/(弱電)?(中央)?(監控)?(系統)?(設備)?(配置|佈置|配線)?平面圖$/, "");
+  var t = String(s).replace(/\s/g, "").replace(/(弱電)?(中央)?(監控)?(系統)?(設備)?(配置|佈置|配線)?平面(配置|佈置)?圖$/, "");
   var m = /^([A-Za-z])棟-?(.*)$/.exec(t), bld = m ? m[1].toUpperCase() : "";
   var fl = floorList(m ? m[2] : t);
   return fl ? { bld: bld, floors: fl } : null;
@@ -585,7 +591,21 @@ function analyze(text, opt) {
     var m = /^(.*平面圖)\s*(?:A\d\s*[=＝]|S\s*[:：=＝]\s*1\s*\/|1\s*[:：\/]\s*\d).*$/.exec(t.s);
     if (m) { t.s = m[1].trim(); t.scaled = true; }
   });
-  var cands = T.filter(function (t) { return /平面圖$/.test(t.s) && !/配置圖/.test(t.s); });
+  /* 圖框標題欄常把樓層和圖名分成上下好幾行（「三.八.九.十四.二十.」／「二十一.二十六層」／「中央監控系統平面配置圖」）：沒有樓層的圖名往上接同欄的樓層行 */
+  T.forEach(function (t) {
+    if (!/平面(配置|佈置)?圖$/.test(t.s) || bldFloors(t.s) || !t.h) return;
+    var lines = [], y = t.y;
+    for (var k = 0; k < 3; k++) {
+      var up = T.filter(function (o) { return o !== t && Math.abs(o.x - t.x) < t.h * 0.6 && o.y - y > t.h * 0.8 && o.y - y < t.h * 2.2 && Math.abs((o.h || 0) - t.h) < t.h * 0.3 && o.s.length <= 24; })[0];
+      if (!up) break;
+      var nextLine = up.s.replace(/\s/g, "");
+      if (lines.length && !/[.．、,，]$/.test(nextLine) && bldFloors(lines.join("") + t.s)) break;   /* 上一行不是接續（不以分隔號結尾）就停 */
+      lines.unshift(nextLine); y = up.y;
+    }
+    while (lines.length && !bldFloors(lines.join("") + t.s)) lines.shift();
+    if (lines.length) { t.s = lines.join("") + t.s; t.merged = true; }
+  });
+  var cands = T.filter(function (t) { return /平面圖$/.test(t.s) || (/平面(配置|佈置)圖$/.test(t.s) && (t.merged || bldFloors(t.s))); });
   var hmax = cands.reduce(function (m, t) { return Math.max(m, t.h); }, 0);
   var titles = cands.filter(function (t) { return t.h >= hmax * 0.6 || t.scaled; });
   var all0 = titles; titles = titles.filter(function (t) {            /* 先去掉圖說「圖紙目錄」裡一行一行列出的圖名 */
@@ -616,6 +636,13 @@ function analyze(text, opt) {
       titles.push({ s: cnm + "平面圖", x: (b[0] + b[2]) / 2, y: Math.min(b[1], b[3]) - th, h: th, virtual: true });
     });
   }
+  /* 圖框標題欄接起來的圖名（merged）若已有同樓層的平面圖標題，以平面圖標題為準 */
+  titles = titles.filter(function (t) {
+    if (!t.merged) return true;
+    var bf = bldFloors(t.s); if (!bf) return true;
+    var key = bf.bld + "|" + bf.floors.join(",");
+    return !titles.some(function (o) { if (o === t || o.merged) return false; var f2 = bldFloors(o.s); return f2 && f2.bld + "|" + f2.floors.join(",") === key; });
+  });
   /* 圖框（大型圖塊）：同一張圖紙內的符號才歸給該圖紙上的平面圖 */
   var frames = [];
   d.inserts.forEach(function (s) {
@@ -659,6 +686,13 @@ function analyze(text, opt) {
   });
 
 
+  /* 標題排成一列、間距固定時的圖紙寬度（同一列相鄰標題 x 差的中位數） */
+  var rowPitch = 0;
+  (function () {
+    var gaps = [];
+    titles.forEach(function (a) { var nx = null; titles.forEach(function (b) { if (b !== a && Math.abs(b.y - a.y) < a.h && b.x > a.x && (!nx || b.x < nx.x)) nx = b; }); if (nx) gaps.push(nx.x - a.x); });
+    if (gaps.length >= 2) { gaps.sort(function (a, b) { return a - b; }); rowPitch = gaps[Math.floor(gaps.length / 2)]; }
+  })();
   /* 4. 平面圖上的符號歸屬 */
   var sym = {};   /* tableKey -> block -> count */
   var notes = T.filter(function (t) { return t.s.length >= 8 && (/^\s*(\d+\s*[.、．]|註|※)/.test(t.s) || /\u3000\u3000|\s{3,}/.test(t.s)); });
@@ -694,6 +728,14 @@ function analyze(text, opt) {
       var sc = dx + 0.5 * Math.max(dy, 0);
       if (sc < bs) { bs = sc; best = t; }
     });
+    }
+    if (!best && rowPitch) {   /* 標題在圖紙右下角（圖框標題欄）：符號歸給同一列右側最近的標題 */
+      var bd2 = Infinity, frS = frames.length ? frameOf(s.cx, s.cy) : -1;
+      titles.forEach(function (t) {
+        if (frS >= 0 && t.frame >= 0 && t.frame !== frS) return;
+        var dx = t.x - s.cx; if (dx < -t.h * 10 || dx > rowPitch * 1.05 || Math.abs(s.cy - t.y) > rowPitch * 0.9) return;
+        if (dx < bd2) { bd2 = dx; best = t; }
+      });
     }
     if (!best) return;
     if (!best.table) {   /* 這層沒有數量表：用其他層表上學到的「符號→設備」直接數圖上符號 */
