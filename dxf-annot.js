@@ -17,7 +17,7 @@ var ALL_LAYER = ["WV-ANNOT", 2, "IP／IO 標註"];
 
 var SYN = [
   [/門位|磁簧|門磁/, /磁簧|門磁/], [/求救|押扣|壓扣/, /求救|押扣|壓扣/], [/水箱蓋/, /水箱蓋|微動開關/], [/水箱|水池|水位|液位/, /液位|水位|水箱蓋|浮球/],
-  [/一氧化碳/, /一氧化碳/], [/泵|幫浦|揚水|污水|排水/, /泵|幫浦|動力|馬達/], [/風機|排風|送風/, /風機|排風|送風/], [/紅外線|熱感應/, /紅外線|熱感應/],
+  [/一氧化碳/, /一氧化碳/], [/泵|幫浦|揚水|污水|排水/, /泵|幫浦|動力|馬達/], [/風機|排風|送風/, /風機|排風|送風/], [/紅外線|熱感應/, /^(?!.*(攝影|鏡頭|CAM)).*(紅外線|熱感應)/i],
   [/漏水|淹水/, /漏水|淹水/], [/發電機/, /發電機/], [/鐵捲門/, /鐵捲門/], [/燈/, /燈/], [/瓦斯/, /瓦斯/]
 ];
 function baseName(s) { return String(s || "").replace(/\s*#\d+$/, "").trim(); }
@@ -49,6 +49,15 @@ function spread(list) {
     l.tx = pick[0] + h * 0.15; l.ty = topBase - h * 1.2 * n;
     l.lx = Math.min(Math.max(l.x, pick[0]), pick[2]); l.ly = Math.min(Math.max(l.y, pick[1]), pick[3]);
   });
+}
+/* 同一個符號代表幾種設備（「隱藏式磁簧開關(住戶)／隱藏式磁簧開關(公共)」）：挑最符合點數表名稱的那個 */
+function symName(n, base) {
+  var ns = String(n).split("／");
+  var hit = ns.filter(function (x) { return nameHit(x, base) === 2; })[0] || ns.filter(function (x) { return nameHit(x, base) === 1; })[0];
+  if (hit) return hit;
+  if (/公設|公共/.test(base)) { var p = ns.filter(function (x) { return /公設|公共/.test(x); })[0]; if (p) return p; }
+  if (/住戶|室內/.test(base)) { var u = ns.filter(function (x) { return /住戶/.test(x); })[0]; if (u) return u; }
+  return ns[0];
 }
 function readingOrder(a, b) { return (b.y - a.y) || (a.x - b.x); }   /* 由上而下、由左而右 */
 function nameHit(devN, want) {
@@ -124,8 +133,10 @@ function labels(dr, P, opt) {
           var perF = devs[dk], idx = seqOf(dk) - 1, rs = [];
           fs.forEach(function (f) { (perF[f] || []).forEach(function (r) { rs.push(r); }); });
           var tagOf = function (r) { return r.pending ? "待配置" : r.tag; };
-          var lines = [dk + (fs.length > 1 ? "（" + floorText(fs.filter(function (f) { return perF[f]; })) + "）" : "")]
-            .concat(rs.slice(0, fs.length > 1 ? 4 : 8).map(function (r) { return tagOf(r) + " " + (r.point || ""); }));
+          /* 每個 IO 點後面註明接的是哪個設備（用圖上的設備名稱，對得到點數表時再附編號） */
+          var sq = /#(\d+)$/.exec(dk), devName = (pos[idx] ? symName(pos[idx].n, b) : b) + (sq ? " #" + sq[1] : "");
+          var lines = (fs.length > 1 ? [floorText(fs.filter(function (f) { return perF[f]; }))] : [])
+            .concat(rs.slice(0, fs.length > 1 ? 4 : 8).map(function (r) { return tagOf(r) + " 接 " + devName + " " + (r.point || ""); }));
           if (rs.length > (fs.length > 1 ? 4 : 8)) lines.push("…共 " + rs.length + " 點，詳 IO 接線編表");
           if (pos[idx]) { addLabel(pos[idx], "io", lines); stat.io += rs.length; }
           else { rs.forEach(function (r) { pendHere.push({ layer: "io", text: tagOf(r) + " " + r.dev + " " + (r.point || "") + "（" + r.key.split("|")[0] + "）" }); stat.ioPending++; }); }
@@ -285,6 +296,22 @@ function write(bytes, ann, opt) {
   function layerOf(k) { var L = one ? ALL_LAYER : (LAYERS[k] || LAYERS.pending); layersUsed[L[0]] = L; return L[0]; }
   /* 3. 實體：引線＋單行文字（TEXT，各家 CAD 與檢視器都支援；字型用新增的文字樣式 WV-ZH＝微軟正黑體） */
   var utf8 = ver >= 1021, STYLE = "WV-ZH";
+  /* 文字樣式：沿用原圖中文字最常用的樣式（例如 CHINA＝C2.SHX＋CHINESET.SHX）。原圖的中文在使用者的 AutoCAD 能正常顯示，
+     用同一個樣式就不會因為字型找不到而變成「????」；原圖沒有中文字才新增 WV-ZH（微軟正黑體）。 */
+  var styCnt = {}, zh = 0, curT = null, curSty = "STANDARD", curZh = false;
+  scanPairs(u8, entSec, function (c, v, at, nx) {
+    if (c === "0") {
+      if (curT === "TEXT" && curZh && /^[\x21-\x7e]+$/.test(curSty)) { styCnt[curSty] = (styCnt[curSty] || 0) + 1; if (++zh >= 400) return true; }
+      curT = v.trim(); curSty = "STANDARD"; curZh = false;
+      if (curT === "ENDSEC") return true;
+    } else if (curT === "TEXT") {
+      if (c === "7") curSty = v.trim();
+      else if (c === "1") { for (var q = 0; q < v.length; q++) if (v.charCodeAt(q) > 127) { curZh = true; break; } }
+    }
+    return null;
+  });
+  var bestSty = Object.keys(styCnt).sort(function (a, b) { return styCnt[b] - styCnt[a]; })[0];
+  if (bestSty) { STYLE = bestSty; hasStyle = true; }
   var ents = "";
   function ent(type, layer, body, sub) {
     var s = pair(0, type);
