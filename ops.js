@@ -106,6 +106,7 @@ T.views.home=function(){
   var app=$("app"); loading(app);
   var c=caps();
   Promise.all([api("dashboard"), c.projects?api("list"):Promise.resolve({projects:[],users:[]})]).then(function(r){
+    if(!/^#?(home)?$/.test(location.hash)) return;   /* 讀取期間已切到其他頁，不要蓋掉 */
     var d=r[0], ps=r[1].projects||[]; T.data.projects=ps; if(r[1].users&&r[1].users.length) T.data.users=r[1].users;
     var stats=ps.map(function(x){ return T.sumStat(x.summary||{}); });
     var active=stats.filter(function(s){return s.status!=="closed";}).length, late=stats.filter(function(s){return s.status==="late";}).length;
@@ -814,7 +815,8 @@ function csExport(d){
 }
 T.views.contracts=function(){
   var app=$("app"); loading(app);
-  api("contractSummary",{}).then(function(d){ CS.data=d; csRender(app); })
+  app.innerHTML='<div class="loading">彙整各專案合約與設備中…（專案多時約需 10～30 秒）</div>';
+  api("contractSummary",{}).then(function(d){ CS.data=d; if(location.hash==="#contracts") csRender(app); })
     .catch(function(e){ app.innerHTML='<div class="empty">'+(e.code==="NOT_DEPLOYED"?'合約彙整需要更新後端（Contract.gs），請管理員部署 v2.10.0。':esc(e.message))+'</div>'; });
 };
 function csRender(app){
