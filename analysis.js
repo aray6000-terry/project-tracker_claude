@@ -36,7 +36,10 @@ function render(cur,el){
   h+='<p class="meta">圖面在您的電腦（瀏覽器）裡分析，不會上傳原始檔。系統會讀取每張平面圖的「監控設備數量表」，並逐一核對圖面上的設備符號數量；樓層範圍（例如 6F~13F）會自動展開。<br>AutoCAD「另存新檔」選 <b>DXF</b>；檔案太大可先壓縮成 <b>.zip</b>。</p>';
   if(edit) h+='<div class="uprow"><input type="file" id="dxfFile" accept=".dxf,.zip"><button class="btn primary small" id="btnDxf" type="button">分析圖面</button><span class="hint" id="dxfMsg"></span></div>';
   if(st.draft) h+='<div class="tipbox"><b>這是剛分析的結果，尚未儲存。</b> 確認無誤後按「儲存分析結果」。 <button class="btn primary small" id="btnDxfSave" type="button">儲存分析結果</button> <button class="btn small" id="btnDxfCancel" type="button">放棄</button></div>';
-  else if(dr) h+='<p class="meta">目前結果：'+esc(dr.fileName||"")+'｜'+esc(T.userName(dr.savedBy||""))+' '+fmtTime(dr.savedAt)+'</p>';
+  else if(dr){
+    h+='<p class="meta">目前結果（已儲存）：'+esc(dr.fileName||"")+'｜'+esc(T.userName(dr.savedBy||""))+' '+fmtTime(dr.savedAt)+'</p>';
+    if(window.DXF&&DXF.CORE_VERSION&&!(dr.core>=DXF.CORE_VERSION)&&dr.tables) h+='<div class="tipbox" style="border-color:var(--warn)"><b>這份結果是用舊版辨識程式分析的</b>，下方的提示與數量可能是舊的（例如「找不到可核對的設備符號」、缺平面圖設備位置）。平台的圖面辨識已更新，請在上方重新選擇 DXF 按「分析圖面」，<b>再按「儲存分析結果」</b>，設計・編表與標註回圖面才會用到新的結果。</div>';
+  }
   if(dr) h+=drawingHtml(dr); else h+='<p class="meta">尚未分析圖面。</p>';
   h+='</section>';
   if(c.quote && T.quoteGen) h+=T.quoteGen.html(cur,dr);

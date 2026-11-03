@@ -120,7 +120,8 @@ function ioPlan(dr, P) {
   });
   /* 模組配置：先放手動指定的點（P.ioMove：點位鍵 → 端子編號或 "pending"），其餘依序放進同樓層模組的空端子；
      放不下或指定「待配置」的點列在最後（待配置） */
-  var moves = P.ioMove || {}, slots = {}, built = [];
+  var moves = P.ioMove || {}, slots = {}, built = [], extra = (P.ioExtraMods || []).filter(function (x) { return x && x.floor && /^(18DI|10DI8DO)$/.test(x.type); });
+  extra.forEach(function (x) { if (!panels[x.floor]) panels[x.floor] = { floor: x.floor, points: [], di: 0, do: 0, proto: 0 }; });   /* 手動新增模組的樓層即使沒有點也建立監控箱 */
   Object.keys(panels).sort(function (a, b) { return floorRank(a) - floorRank(b); }).forEach(function (f) {
     var p = panels[f];
     var diReq = p.di + Math.ceil(p.di * P.spare), doReq = p.do + Math.ceil(p.do * P.spare);
@@ -128,6 +129,7 @@ function ioPlan(dr, P) {
     var mods = [], k = 0;
     for (var i = 0; i < n10; i++) mods.push({ id: "IO-" + fl(f) + "-" + pad(++k), type: "10DI8DO", di: 10, do: 8 });
     for (var j = 0; j < n18; j++) mods.push({ id: "IO-" + fl(f) + "-" + pad(++k), type: "18DI", di: 18, do: 0 });
+    extra.forEach(function (x, xi) { if (x.floor !== f) return; mods.push({ id: "IO-" + fl(f) + "-" + pad(++k), type: x.type, di: x.type === "18DI" ? 18 : 10, do: x.type === "18DI" ? 0 : 8, manual: true, xi: xi }); if (x.type === "18DI") n18++; else n10++; });
     mods.forEach(function (m) {
       for (var a = 1; a <= m.di; a++) slots[m.id + "-DI" + pad(a)] = { floor: f, mod: m, t: "DI", ch: a, pt: null };
       for (var b = 1; b <= m.do; b++) slots[m.id + "-DO" + pad(b)] = { floor: f, mod: m, t: "DO", ch: b, pt: null };
@@ -175,7 +177,7 @@ function ioPlan(dr, P) {
       rows.push({ module: "待配置", mod: "", type: "", ch: pt.type + "-—", tag: "待配置-" + fl(f) + "-" + pad(i + 1), name: (pt.dev || pt.name) + " #" + pt.seq + (pt.point ? "－" + pt.point : ""), dev: (pt.dev || pt.name) + " #" + pt.seq, point: pt.point || "", loc: pt.loc || "", note: pt.why || "", key: pt.key, ptype: pt.type, pending: true });
     });
     return { floor: f, panel: fl(f) + " 監控箱", di: p.di, do: p.do, proto: p.proto, n18: b.n18, n10: b.n10, pending: b.pending.length,
-      modules: b.mods.map(function (m) { return { id: m.id, type: m.type, usedDi: m.usedDi, usedDo: m.usedDo, di: m.di, do: m.do }; }), rows: rows };
+      modules: b.mods.map(function (m) { return { id: m.id, type: m.type, usedDi: m.usedDi, usedDo: m.usedDo, di: m.di, do: m.do, manual: !!m.manual, xi: m.xi }; }), rows: rows };
   });
   /* 模組可接收其他樓層的點（例：B2 的點拉到 B1 的模組）：移過去的點跟著模組所在監控箱列出 */
   list.forEach(function (pl) { pl.rows.forEach(function (r) { if (r.key && r.key.split("|")[0] !== pl.floor) { r.from = r.key.split("|")[0]; r.loc = (r.loc ? r.loc + "，" : "") + "來自 " + r.from; } }); });
@@ -378,7 +380,7 @@ function plan(dr, params) {
   ["spare", "growth", "floorHeight", "avgRun", "slack", "distGroup"].forEach(function (k) { P[k] = Number(P[k]); });
   if (params) { P.unitM = params.unitM; P.drop = params.drop; }
   P.separateCctv = P.separateCctv === true || P.separateCctv === "true";
-  if (params) { P.ioRules = params.ioRules; P.ipRules = params.ipRules; P.extraIo = params.extraIo || []; P.systems = params.systems || []; P.ioQty = params.ioQty || {}; P.ioFloor = params.ioFloor || {}; P.ioMove = params.ioMove || {}; P.ipNet = params.ipNet || {}; P.panelFloors = params.panelFloors || {}; }
+  if (params) { P.ioRules = params.ioRules; P.ipRules = params.ipRules; P.extraIo = params.extraIo || []; P.systems = params.systems || []; P.ioQty = params.ioQty || {}; P.ioFloor = params.ioFloor || {}; P.ioMove = params.ioMove || {}; P.ioExtraMods = params.ioExtraMods || []; P.ipNet = params.ipNet || {}; P.panelFloors = params.panelFloors || {}; }
   var io = ioPlan(dr, P); io.comm = commPlan(dr, P);
   var net = network(dr, P, io), ip = ipPlan(dr, P, io, net), cb = cables(dr, P, io, net);
   var ipOf = {}; ip.rows.forEach(function (r) { if (/^IO-/.test(r.name)) ipOf[r.name] = r; });   /* IO 模組 IP（與 IP 編表同名） */

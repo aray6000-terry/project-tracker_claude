@@ -831,6 +831,7 @@ function analyze(text, opt) {
     tables: tables.map(function (t) { return { key: t.key, floors: t.floors, rows: t.rows.map(function (r) { return { name: r.name, qty: r.qty, raw: r.raw, block: r.block }; }) }; }),
     floors: floorList, items: list, checks: checks, warnings: warnings, embedded: embedded, pendingXlsx: pendingXlsx, plans: plans,
     unitM: guessUnit(plans), planVer: 2,
+    core: CORE_VERSION,
     stats: { frames: frames.length, inserts: d.inserts.length, texts: T.length, blocks: Object.keys(d.blocks).length, titles: titles.map(function (t) { return t.s + "→" + (t.table ? t.table.key : "?"); }) }
   };
 }
@@ -1180,7 +1181,9 @@ function guessUnit(plans) {
   return w > 20000 ? 0.001 : w > 200 ? 0.01 : 1;
 }
 
-var api = { decode: decode, parse: parse, analyze: analyze, mergeSheetTables: mergeSheetTables, floorsOf: floorsOf, floorRank: floorRank, sysOf: sysOf, SYS_RULES: SYS_RULES, cnNum: cnNum };
+/* 圖面辨識規則版本：規則有改時加一，舊的分析結果會提示重新分析 */
+var CORE_VERSION = 12;
+var api = { CORE_VERSION: CORE_VERSION, decode: decode, parse: parse, analyze: analyze, mergeSheetTables: mergeSheetTables, floorsOf: floorsOf, floorRank: floorRank, sysOf: sysOf, SYS_RULES: SYS_RULES, cnNum: cnNum };
 if (typeof module === "object" && module.exports) module.exports = api;
 else root.DXF = api;
 })(typeof self !== "undefined" ? self : this);

@@ -84,12 +84,12 @@ function outHtml(cur){
   h+='<div class="tipbox" style="border-color:var(--accent)"><b>依成本訂價</b>　利潤算法 <select class="fld" id="qgPfMode"><option value="margin"'+(PF.mode==="margin"?" selected":"")+'>毛利率（售價＝成本÷(1−%)）</option><option value="markup"'+(PF.mode==="markup"?" selected":"")+'>加成率（售價＝成本×(1＋%)）</option></select>'
     +'　全部系統 <input class="fld" type="number" step="0.5" id="qgPfAll" value="'+esc(PF.pct)+'" style="width:72px"> % <button class="btn small primary" id="qgPfApply" type="button">套用到全部</button>'
     +'<br><span class="hint">各系統可在段落標題旁另填利潤率；每一項也可以直接改「利潤%」。只會改有成本的項目'+(noCost?'，目前有 <b>'+noCost+'</b> 項沒有成本，單價維持原樣':'')+'。售價 1,000 以上取整到 10 元。</span></div>';
-  h+='<div class="tools" style="margin:10px 0"><button class="btn primary small" id="qgXls" type="button">下載報價單（Excel）</button><button class="btn small" id="qgXlsInt" type="button">下載內部成本版（Excel）</button>'
+  h+='<div class="tools" style="margin:10px 0"><button class="btn small" id="qgXls" type="button">下載客戶版報價單（含型號）</button><button class="btn primary small" id="qgXlsInt" type="button">下載內部版（含型號、成本、毛利、毛利率）</button>'
     +(edit?'<button class="btn small" id="qgSave" type="button">存為本案估價單</button>':'')+'<span class="hint">藍字＝圖面數量；橘字＝請確認</span></div>';
   q.sections.forEach(function(s,si){
     h+='<details class="mxwrap" open><summary><b>'+esc(s.no+"、"+s.name)+'</b>　'+money(s.price)+'　<span class="hint">毛利 '+pct(s.margin)+(s.source?'｜範本：'+esc(s.source.tname):'')+'</span></summary>'
       +'<div class="uprow"><span class="meta">本系統'+pfLabel()+'</span><input class="fld" type="number" step="0.5" data-qg-pfsec="'+si+'" value="'+esc(s.profitPct!==undefined?s.profitPct:"")+'" placeholder="'+esc(PF.pct)+'" style="width:72px"><span class="meta">%</span><button class="btn small" type="button" data-qg-pfsecgo="'+si+'">套用到本系統</button></div>'
-      +'<div class="tblwrap"><table class="items qgtbl"><thead><tr><th>#</th><th>名稱</th><th>單位</th><th>數量</th><th>單價</th><th>複價</th><th>成本</th><th>利潤%</th><th>備註（廠牌）</th><th></th></tr></thead><tbody>'
+      +'<div class="tblwrap"><table class="items qgtbl"><thead><tr><th>#</th><th>名稱</th><th>單位</th><th>數量</th><th>單價</th><th>複價</th><th>成本</th><th>利潤%</th><th>廠牌</th><th>型號</th><th></th></tr></thead><tbody>'
       +s.items.map(function(it,ii){
         var k=si+"-"+ii, fc=/^圖面/.test(it.flag)?"qg-d":/請/.test(it.flag)?"qg-w":"";
         return '<tr><td>'+it.no+'</td><td><input class="fld qgname" data-qg-it="'+k+'" data-f="name" value="'+esc(it.name)+'">'+(it.flag?'<div class="hint '+fc+'">'+esc(it.flag)+'</div>':'')+'</td>'
@@ -99,7 +99,8 @@ function outHtml(cur){
           +'<td style="text-align:right">'+Math.round(it.amount).toLocaleString()+'</td>'
           +'<td><input class="fld" type="number" min="0" step="any" style="width:90px" data-qg-it="'+k+'" data-f="cost" value="'+it.cost+'"></td>'
           +(function(){ var pv=G.profitOf(it,PF.mode); return '<td><input class="fld'+(pv!==null&&pv<0?' qg-w':'')+'" type="number" step="0.5" style="width:70px" data-qg-pf="'+k+'" value="'+(pv===null?"":Math.round(pv*10)/10)+'"'+(it.cost>=1?'':' disabled title="請先填成本"')+'></td>'; })()
-          +'<td><input class="fld" style="min-width:140px" data-qg-it="'+k+'" data-f="brandSpec" value="'+esc(it.brandSpec||"")+'"></td>'
+          +'<td><input class="fld" style="min-width:130px" data-qg-it="'+k+'" data-f="brandSpec" value="'+esc(it.brandSpec||"")+'"></td>'
+          +'<td><input class="fld mono" style="min-width:110px" data-qg-it="'+k+'" data-f="model" value="'+esc(it.model||"")+'" placeholder="型號"></td>'
           +'<td><button class="btn small" type="button" data-qg-del="'+k+'" aria-label="刪除">×</button></td></tr>'; }).join("")
       +'</tbody></table></div><button class="btn small" type="button" data-qg-new="'+si+'">新增項目</button></details>';
   });

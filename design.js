@@ -273,8 +273,12 @@ function ioView(P){
   }
   h+='<h4 style="margin:16px 0 6px">各樓層監控箱模組配置</h4><p class="meta">模組規格：18DI 或 10DI8DO。依 DO 點數先配 10DI8DO，剩下的 DI 再配 18DI，預留 '+Math.round(P.params.spare*100)+'%。判斷順序：手動指定 → 位置欄樓層 → 設備名稱樓層 → 位置欄盤名對照單線圖 → 圖面各樓層數量 → 依設備種類推定（泵浦、水池在最底層地下室，發電機、ATS 在 B1，屋頂水箱在最高屋突層）→ '+esc(P.params.coreFloor)+' 中央監控室。上方點數表「接到監控箱」欄可逐項修改。</p>'
     +'<div class="tblwrap"><table><thead><tr><th>監控箱</th><th>DI</th><th>DO</th><th>18DI</th><th>10DI8DO</th><th>模組／IP</th><th>待配置</th></tr></thead><tbody>'
-    +io.panels.map(function(p){ return '<tr><td>'+esc(p.panel)+'</td><td>'+p.di+'</td><td>'+p.do+'</td><td>'+(p.n18||"")+'</td><td>'+(p.n10||"")+'</td><td class="mono" style="text-align:left">'+p.modules.map(function(m){return esc(m.id)+(m.ip?' <span class="hint">'+esc(m.ip)+'</span>':'');}).join("<br>")+'</td><td>'+(p.pending?'<b style="color:var(--bad)">'+p.pending+'</b>':'')+'</td></tr>'; }).join("")
-    +'<tr class="grp"><td><b>合計</b></td><td><b>'+t.di+'</b></td><td><b>'+t.do+'</b></td><td><b>'+t.n18+'</b></td><td><b>'+t.n10+'</b></td><td></td><td>'+(t.pending?'<b style="color:var(--bad)">'+t.pending+'</b>':'')+'</td></tr></tbody></table></div>';
+    +io.panels.map(function(p){ return '<tr><td>'+esc(p.panel)+'</td><td>'+p.di+'</td><td>'+p.do+'</td><td>'+(p.n18||"")+'</td><td>'+(p.n10||"")+'</td><td class="mono" style="text-align:left">'+p.modules.map(function(m){return esc(m.id)+(m.manual?' <span class="rtag">手動</span>':'')+(m.ip?' <span class="hint">'+esc(m.ip)+'</span>':'')+(m.manual&&edit?' <button class="btn small danger" type="button" data-iomdel="'+m.xi+'" style="padding:0 6px">移除</button>':'');}).join("<br>")+'</td><td>'+(p.pending?'<b style="color:var(--bad)">'+p.pending+'</b>':'')+'</td></tr>'; }).join("")
+    +'<tr class="grp"><td><b>合計</b></td><td><b>'+t.di+'</b></td><td><b>'+t.do+'</b></td><td><b>'+t.n18+'</b></td><td><b>'+t.n10+'</b></td><td></td><td>'+(t.pending?'<b style="color:var(--bad)">'+t.pending+'</b>':'')+'</td></tr></tbody></table></div>'
+    +(edit?(function(){ var fs={}; (st.dr.floors||[]).concat(io.panels.map(function(p){ return p.floor; }),P.net.floors||[]).forEach(function(f){ if(f) fs[f]=1; });
+      var fl=Object.keys(fs).sort(function(a,b){ return DESIGN.floorRank(a)-DESIGN.floorRank(b); });
+      return '<div class="uprow"><span class="meta">手動新增模組</span><select class="fld" id="iomFloor">'+fl.map(function(f){ return '<option>'+esc(f)+'</option>'; }).join("")+'</select><select class="fld" id="iomType"><option>18DI</option><option>10DI8DO</option></select><button class="btn small" id="btnIomAdd" type="button">新增模組</button><span class="hint">新增後模組 IP 自動配給；可用「修改點位 → 移到」把點位搬進新模組。</span></div>'; })():'')
+    +'<div class="uprow"><button class="btn small" id="xlsIo" type="button">匯出 IO 表（Excel）</button>'+(edit?'<input type="file" id="ioImpFile" accept=".xlsx"><button class="btn small" id="btnIoImp" type="button">匯入 IO 表</button><span class="hint">匯出後可在 Excel 改設備、點位內容、位置、DI 類別、點位編號（搬到其他端子或填「待配置」），或在新模組編號的列填點位；不要改「點位鍵」欄。匯入時會套用到平台。</span>':'')+'</div>';
   var sel=st.floor==="all"||(st.floor&&io.panels.some(function(p){return p.floor===st.floor;}))?st.floor:(io.panels[0]&&io.panels[0].floor);
   var shown=io.panels.filter(function(x){return sel==="all"||x.floor===sel;});
   if(shown.length){
@@ -346,16 +350,16 @@ function annotView(P){
     +'<p class="meta">依「數量・報價」分析到的平面圖設備位置，把 IP 編表（設備名稱＋IP）與 IO 點位（模組端子＋點位內容）標在每個設備符號旁，監控箱旁標出 IO 模組與 IP。'
     +'同一張平面代表多層（例 9-17F）時，一個符號會列出各層的名稱與 IP。圖上找不到位置的設備（交換器、主機、平面圖沒畫的設備，或數量比符號多）會列在該平面圖右側「<b>待配置</b>」；IO 尚未配到模組的點也標「待配置」。'
     +'<br>原圖內容不會被修改，只在模型空間新增標註；可選分系統圖層（WV-IP-CCTV、WV-IP-INTERCOM、WV-IO、WV-PENDING…，在 CAD 用圖層開關分系統顯示）或全部放在同一圖層（WV-ANNOT）。</p>';
-  if(noPlan) return h+'<div class="tipbox" style="border-color:var(--warn)">這份圖面分析沒有平面圖設備位置（可能是舊版分析結果）。請到「數量・報價」重新分析 DXF 後再來產生標註。</div>';
-  h+='<div class="kpis">'+k(S.ip,"IP 已標在設備旁")+k(S.ipPending,"IP 待配置",S.ipPending?"warn":"")+k(S.io,"IO 點已標在設備旁")+k(S.ioPending,"IO 待配置",S.ioPending?"warn":"")+k(S.plans,"平面圖")+'</div>';
-  h+='<h4 style="margin:12px 0 6px">要標註的系統</h4><div class="uprow" style="flex-wrap:wrap">'+keys.map(function(x){ return '<label class="meta"><input type="checkbox" data-ansys="'+x[0]+'"'+(AN.sys[x[0]]?" checked":"")+'> '+esc(x[1])+'</label>'; }).join("")+'</div>'
+  if(noPlan) h+='<div class="tipbox">已儲存的圖面分析沒有平面圖設備位置（舊版分析），沒關係：下方選擇 DXF 後，平台會<b>直接重新分析這份圖</b>取得設備位置再標註，不需要先回「數量・報價」。</div>';
+  else h+='<div class="kpis">'+k(S.ip,"IP 已標在設備旁")+k(S.ipPending,"IP 待配置",S.ipPending?"warn":"")+k(S.io,"IO 點已標在設備旁")+k(S.ioPending,"IO 待配置",S.ioPending?"warn":"")+k(S.plans,"平面圖")+'</div>';
+  h+=(noPlan?'':'')+'<h4 style="margin:12px 0 6px">要標註的系統</h4><div class="uprow" style="flex-wrap:wrap">'+keys.map(function(x){ return '<label class="meta"><input type="checkbox" data-ansys="'+x[0]+'"'+(AN.sys[x[0]]?" checked":"")+'> '+esc(x[1])+'</label>'; }).join("")+'</div>'
     +'<div class="uprow" style="flex-wrap:wrap"><span class="meta">顯示方式</span><label class="meta"><input type="radio" name="anmode" value="layers"'+(AN.mode==="layers"?" checked":"")+'> 分系統圖層</label><label class="meta"><input type="radio" name="anmode" value="single"'+(AN.mode==="single"?" checked":"")+'> 全部同一圖層</label>'
     +'<span class="meta" style="margin-left:12px">文字大小</span><select class="fld" id="anScale">'+[0.5,0.75,1,1.5,2,3].map(function(v){ return '<option value="'+v+'"'+(+AN.scale===v?" selected":"")+'>×'+v+'</option>'; }).join("")+'</select>'
     +'<label class="meta" style="margin-left:12px"><input type="checkbox" id="anTable"'+(AN.table?" checked":"")+'> 圖面右側附完整 IP／IO 編表</label></div>';
   var pend=ann.pending.filter(function(p){ return /^待配置/.test(p.title); });
-  if(pend.length) h+='<details class="mxwrap"><summary>待配置清單（'+pend.reduce(function(m,p){ return m+p.items.length; },0)+' 項）</summary><div class="tblwrap" style="max-height:320px;overflow:auto"><table><thead><tr><th>位置</th><th>項目</th></tr></thead><tbody>'
+  if(pend.length&&!noPlan) h+='<details class="mxwrap"><summary>待配置清單（'+pend.reduce(function(m,p){ return m+p.items.length; },0)+' 項）</summary><div class="tblwrap" style="max-height:320px;overflow:auto"><table><thead><tr><th>位置</th><th>項目</th></tr></thead><tbody>'
     +pend.map(function(p){ return p.items.map(function(it,i){ return '<tr><td>'+(i?'':esc(p.title.replace(/^待配置（|，圖上找不到位置）$|）$/g,"")))+'</td><td class="mono">'+esc(it.text)+'</td></tr>'; }).join(""); }).join("")+'</tbody></table></div></details>';
-  h+='<h4 style="margin:12px 0 6px">產生標註 DXF</h4><p class="meta">請選擇<b>分析時用的同一份 DXF</b>（'+esc(st.dr.fileName||"")+'），座標才會對得上。檔案只在瀏覽器內處理，不會上傳。</p>'
+  h+='<h4 style="margin:12px 0 6px">產生標註 DXF</h4><p class="meta">選擇要標註的 DXF（通常是分析時用的同一份：'+esc(st.dr.fileName||"")+'）。平台會先在瀏覽器裡重新分析這份圖的設備位置，再把 IP／IO 標上去，所以座標一定對得上；檔案不會上傳。大檔約需 10～60 秒。</p>'
     +'<div class="uprow"><input type="file" id="anFile" accept=".dxf"><button class="btn primary small" id="anGo" type="button">產生並下載標註 DXF</button><span class="hint" id="anMsg"></span></div>';
   return h;
 }
@@ -560,6 +564,65 @@ function bind(P,cur,el){
     var np=Object.assign({},st.params,{ioMove:m});
     api("analysisSave",{id:cur.id,kind:"design",data:np}).then(function(){ st.params=np; toast(lab+(s2.value==="auto"?" 恢復自動配置":s2.value==="pending"?" 移到待配置":" 移到 "+s2.value)); re(); }).catch(fail);
   }; });
+  var saveDesign=function(patch,msg){ var np=Object.assign({},st.params,patch); return api("analysisSave",{id:cur.id,kind:"design",data:np}).then(function(){ st.params=np; toast(msg); re(); }).catch(fail); };
+  if($("btnIomAdd")) $("btnIomAdd").onclick=function(){ var m=(st.params.ioExtraMods||[]).concat([{floor:$("iomFloor").value,type:$("iomType").value}]); saveDesign({ioExtraMods:m},"已在 "+$("iomFloor").value+" 新增 "+$("iomType").value+" 模組"); };
+  el.querySelectorAll("[data-iomdel]").forEach(function(b){ b.onclick=function(){ if(!confirm("移除這個手動新增的模組？模組上的點位會重新自動配置。")) return; var m=(st.params.ioExtraMods||[]).slice(); m.splice(+b.dataset.iomdel,1); saveDesign({ioExtraMods:m},"已移除模組"); }; });
+  if($("xlsIo")) $("xlsIo").onclick=function(){
+    applyIoEdits(P);
+    var head=["樓層","監控箱","模組","型號","模組IP","端子","點位編號","設備","點位內容","DI類別","位置","說明","點位鍵（勿改）"];
+    var rows=[head.map(function(h){ return {v:h,s:2}; })];
+    P.io.panels.forEach(function(p){ var mm={}; p.modules.forEach(function(m){ mm[m.id]=m; }); p.rows.forEach(function(r){ if(r.ch==="COM") return; var m=mm[r.mod]||{};
+      rows.push([p.floor,p.panel,r.mod||"待配置",r.type||"",r.ip||"",r.ch,r.pending?"待配置":r.tag,r.name==="預留"&&!r.edited?"預留":(r.dev||r.name),r.point||"",/^DI/.test(r.ch||"")&&!(r.name==="預留"&&!r.edited)?(r.alarm?"警報":"不警報"):"",r.loc||"",r.note||"",r.key||""].map(function(v){ return {v:v,s:3}; })); }); });
+    var b=XLSX_WRITE.build([{name:"IO接線編表",cols:[7,12,12,10,14,8,18,26,18,8,18,18,40],rows:rows,freeze:1}]);
+    var a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([b],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"})); a.download=name+"_IO接線編表.xlsx"; document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },1500);
+  };
+  if($("btnIoImp")) $("btnIoImp").onclick=function(){
+    var f=$("ioImpFile").files[0]; if(!f){ toast("請先選擇 IO 表（.xlsx）"); return; }
+    f.arrayBuffer().then(XLSX_LITE.read).then(function(sheets){
+      var sh=sheets.filter(function(x){ return x.rows&&x.rows.length; })[0]; if(!sh) throw new Error("讀不到工作表");
+      var rows=sh.rows.map(function(r){ return (r||[]).map(function(v){ return v===null||v===undefined?"":String(v).trim(); }); });
+      var hi=rows.findIndex(function(r){ return r.indexOf("點位編號")>=0&&r.indexOf("設備")>=0; }); if(hi<0) throw new Error("找不到「點位編號」「設備」欄，請用平台匯出的 IO 表");
+      var H=rows[hi], col=function(n){ return H.findIndex(function(h){ return h.indexOf(n)===0; }); };
+      var cF=col("樓層"),cM=col("模組"),cT=col("型號"),cTag=col("點位編號"),cD=col("設備"),cP=col("點位內容"),cA=col("DI類別"),cL=col("位置"),cK=col("點位鍵");
+      var data=rows.slice(hi+1).filter(function(r){ return r[cTag]||r[cD]; });
+      /* 1. 新模組：點位編號用到不存在的模組，且有型號 → 手動新增 */
+      var known={}; P.io.panels.forEach(function(p){ p.modules.forEach(function(m){ known[m.id]=1; }); });
+      var extra=(st.params.ioExtraMods||[]).slice(), addMods=0, seenNew={};
+      data.forEach(function(r){ var m=/^(IO-.+-\d+)-(DI|DO)\d+$/.exec(r[cTag]||""); if(!m||known[m[1]]||seenNew[m[1]]) return; var ty=/10DI8DO/.test(r[cT])?"10DI8DO":/18DI/.test(r[cT])?"18DI":(m[2]==="DO"?"10DI8DO":"18DI"); var fl=r[cF]; if(!fl) return; seenNew[m[1]]=1; extra.push({floor:fl,type:ty}); addMods++; });
+      var p1=Object.assign({},st.params,{ioExtraMods:extra});
+      var P1=DESIGN.plan(st.dr,Object.assign({},p1,{systems:cur.project.systems||[],panelFloors:st.panelFloors||{}}));
+      /* 表上的新模組編號（例 IO-B1-09）對應到平台實際配給的編號（依樓層順序接在現有模組後面） */
+      var base0=(st.params.ioExtraMods||[]).length, idMap={};
+      Object.keys(seenNew).forEach(function(sid,i){ var xi=base0+i, real=null; P1.io.panels.forEach(function(p){ p.modules.forEach(function(m){ if(m.manual&&m.xi===xi) real=m.id; }); }); if(real) idMap[sid]=real; });
+      data.forEach(function(r){ var m=/^(IO-.+-\d+)(-(?:DI|DO)\d+)$/.exec(r[cTag]||""); if(m&&idMap[m[1]]) r[cTag]=idMap[m[1]]+m[2]; });
+      /* 2. 搬移：點位鍵現在的位置和表上點位編號不同 */
+      var where={}, slotOK={}; P1.io.panels.forEach(function(p){ p.rows.forEach(function(r){ if(r.key) where[r.key]=r.pending?"待配置":r.tag; if(r.mod) slotOK[r.tag]=r.ch.slice(0,2); }); });
+      var moves=Object.assign({},st.params.ioMove||{}), nMove=0, bad=[];
+      data.forEach(function(r){ var k=r[cK], tag=r[cTag]; if(!k||!where[k]||!tag||tag===where[k]) return;
+        if(tag==="待配置"){ moves[k]="pending"; nMove++; return; }
+        if(!slotOK[tag]){ bad.push(tag); return; }
+        if(slotOK[tag]!==k.split("|")[0]&&false) return;
+        moves[k]=tag; nMove++; });
+      var p2=Object.assign({},p1,{ioMove:moves});
+      var P2=DESIGN.plan(st.dr,Object.assign({},p2,{systems:cur.project.systems||[],panelFloors:st.panelFloors||{}}));
+      /* 3. 內容修改：與自動編排不同的設備、點位內容、位置、DI 類別 → ioEdit（依點位編號） */
+      /* 有點位鍵的列依點位鍵找到它現在的位置（搬移後其他點的端子會重排）；沒有點位鍵的列（預留端子、新模組）依點位編號 */
+      var byTag={}, byKey={}; P2.io.panels.forEach(function(p){ p.rows.forEach(function(r){ if(r.mod) byTag[r.tag]=r; if(r.key) byKey[r.key]=r; }); });
+      var ed=JSON.parse(JSON.stringify(st.params.ioEdit||{})), nEd=0;
+      data.forEach(function(r){ var x=r[cK]?byKey[r[cK]]:byTag[r[cTag]]; if(!x||x.pending||!x.mod) return; var tag=x.tag;
+        if(!r[cK]&&x.name!=="預留"&&!x.edited) return;
+        var e=ed[tag]||{}, origDev=x.name==="預留"?"":(x.dev||x.name), ch=false, dv=r[cD]==="預留"?"":r[cD];
+        if(dv!==origDev){ if(dv!==(e.dev===undefined?origDev:e.dev)){ e.dev=dv; ch=true; } } else if(e.dev!==undefined){ delete e.dev; ch=true; }
+        if(cP>=0){ if(r[cP]!==(x.point||"")){ if(e.point!==r[cP]){ e.point=r[cP]; ch=true; } } else if(e.point!==undefined){ delete e.point; ch=true; } }
+        if(cL>=0){ if(r[cL]!==(x.loc||"")&&!/來自 /.test(r[cL])){ if(e.loc!==r[cL]){ e.loc=r[cL]; ch=true; } } }
+        if(cA>=0&&/^(警報|不警報)$/.test(r[cA])){ var want=r[cA]==="警報"?1:0, probe={ch:x.ch,name:e.dev!==undefined?(e.dev||"預留"):x.name,dev:e.dev!==undefined?e.dev:x.dev,point:e.point!==undefined?e.point:x.point,note:x.note}, def=alarmDef(probe)?1:0, curA=e.alarm!==undefined?e.alarm:def;
+          if(want!==curA){ if(want===def) delete e.alarm; else e.alarm=want; ch=true; } }
+        if(ch){ if(e.o===undefined) e.o=(x.dev||x.name)+"|"+(x.point||""); ed[tag]=e; nEd++; } });
+      if(!addMods&&!nMove&&!nEd){ toast("表上沒有變更"+(bad.length?"（無效的點位編號："+bad.slice(0,5).join("、")+"）":"")); return; }
+      if(!confirm("匯入 IO 表：新增模組 "+addMods+" 個、搬移點位 "+nMove+" 個、修改內容 "+nEd+" 個"+(bad.length?"；略過無效點位編號 "+bad.length+" 個（"+bad.slice(0,5).join("、")+"）":"")+"。確定套用？")) return;
+      return saveDesign({ioExtraMods:extra,ioMove:moves,ioEdit:ed},"已匯入 IO 表");
+    }).catch(function(e){ toast("無法匯入："+(e.message||e)); });
+  };
   if($("btnIomReset")) $("btnIomReset").onclick=function(){ if(!confirm("清除全部點位搬移，恢復自動配置？")) return; var np=Object.assign({},st.params,{ioMove:{}}); api("analysisSave",{id:cur.id,kind:"design",data:np}).then(function(){ st.params=np; toast("已恢復自動配置"); re(); }).catch(fail); };
   if($("btnIoeOn")) $("btnIoeOn").onclick=function(){ st.ioEditing=true; re(); };
   if($("btnIoeCancel")) $("btnIoeCancel").onclick=function(){ st.ioEditing=false; re(); };
@@ -586,19 +649,28 @@ function bind(P,cur,el){
   if($("anTable")) $("anTable").onchange=function(){ AN.table=this.checked; re(); };
   if($("anGo")) $("anGo").onclick=function(){
     var f=$("anFile").files[0], msg=$("anMsg"); if(!f){ toast("請先選擇 DXF 檔"); return; }
-    if(!/\.dxf$/i.test(f.name)){ toast("請選擇 .dxf 檔（DWG 請先在 AutoCAD 另存成 DXF）"); return; }
-    var same=st.dr.fileName&&f.name.replace(/\.zip$/i,"")===String(st.dr.fileName).replace(/\.zip$/i,"");
-    if(st.dr.fileName&&!same&&!confirm("選的檔案「"+f.name+"」和分析時的「"+st.dr.fileName+"」檔名不同，座標可能對不上。仍要產生？")) return;
+    if(!/\.dxf$/i.test(f.name)){ toast("請選擇 .dxf 檔（DWG 請先在 AutoCAD 另存成 DXF；ZIP 請先解壓）"); return; }
     var b=this; b.disabled=true; msg.textContent="讀取中…";
     f.arrayBuffer().then(function(buf){
-      msg.textContent="寫入標註中…";
-      applyIoEdits(P);
-      var ann=DXF_ANNOT.labels(st.dr,P,{systems:AN.sys,scale:AN.scale,table:AN.table});
-      var r=DXF_ANNOT.write(new Uint8Array(buf),ann,{mode:AN.mode});
-      var a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([r.bytes],{type:"application/dxf"}));
-      a.download=f.name.replace(/\.dxf$/i,"")+"_IP_IO標註.dxf"; document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },2000);
-      msg.textContent="完成：標註 "+r.count+" 處，圖層 "+r.layers.join("、")+"（"+r.version+"）"; b.disabled=false;
-      toast("已產生標註 DXF");
+      var keep=new Uint8Array(buf.slice(0));
+      /* 重新分析這份圖取得各平面圖的設備位置（與「數量・報價」同一套程式，在背景執行緒） */
+      return new Promise(function(ok,no){
+        var w=new Worker("dxf-worker.js?v="+encodeURIComponent(window.APP_VERSION||"0"));
+        w.onmessage=function(ev){ var m=ev.data; if(m.type==="progress"){ msg.textContent="分析圖面："+m.text; return; } w.terminate(); if(m.type==="error") no(new Error(m.message)); else ok(m.result); };
+        w.onerror=function(e){ w.terminate(); no(new Error(e.message||"瀏覽器不支援背景分析")); };
+        w.postMessage({buf:buf,name:f.name},[buf]);
+      }).then(function(dr2){
+        if(!(dr2.plans||[]).length) throw new Error("這份圖讀不到平面圖標題與設備位置，無法標註（數量表 "+((dr2.tables||[]).length)+" 張）");
+        msg.textContent="寫入標註中…";
+        applyIoEdits(P);
+        var ann=DXF_ANNOT.labels(dr2,P,{systems:AN.sys,scale:AN.scale,table:AN.table});
+        var r=DXF_ANNOT.write(keep,ann,{mode:AN.mode});
+        var a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([r.bytes],{type:"application/dxf"}));
+        a.download=f.name.replace(/\.dxf$/i,"")+"_IP_IO標註.dxf"; document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },2000);
+        var S=ann.stat;
+        msg.textContent="完成：平面圖 "+S.plans+" 張；IP 標在設備旁 "+S.ip+"、待配置 "+S.ipPending+"；IO 標上 "+S.io+" 點、待配置 "+S.ioPending+"；圖層 "+r.layers.join("、");
+        b.disabled=false; toast("已產生標註 DXF");
+      });
     }).catch(function(e){ b.disabled=false; msg.textContent=""; fail(e); });
   };
   if($("btnIpnSave")) $("btnIpnSave").onclick=function(){
@@ -618,7 +690,7 @@ function bind(P,cur,el){
     P.wiring.plans.forEach(function(p){ p.runs.forEach(function(r){ rows.push([p.title,p.floors.join(" "),r.n,r.cable,r.m,r.x,r.y,r.tx,r.ty]); }); }); csv(name+"_配線清單.csv",rows); };
   if($("csvCable")) $("csvCable").onclick=function(){ csv(name+"_線材估算.csv",[["線材","用途","條數","米數","依據"]].concat(P.cables.map(function(c){ return [c.type,c.use,c.runs,c.meters,c.basis||"估算"]; }))); };
   if($("btnDsSave")) $("btnDsSave").onclick=function(){
-    var np={ioQty:st.params.ioQty||{}, ioFloor:st.params.ioFloor||{}, ioEdit:st.params.ioEdit||{}, ioMove:st.params.ioMove||{}, ipNet:st.params.ipNet||{}, ioRules:{}, extraIo:xio().filter(function(x){ return String(x.name).trim()&&+x.n>0; }).map(function(x){ return {floor:x.floor,name:String(x.name).trim().slice(0,60),n:Math.min(200,+x.n)}; })};
+    var np={ioQty:st.params.ioQty||{}, ioFloor:st.params.ioFloor||{}, ioEdit:st.params.ioEdit||{}, ioMove:st.params.ioMove||{}, ipNet:st.params.ipNet||{}, ioExtraMods:st.params.ioExtraMods||[], ioRules:{}, extraIo:xio().filter(function(x){ return String(x.name).trim()&&+x.n>0; }).map(function(x){ return {floor:x.floor,name:String(x.name).trim().slice(0,60),n:Math.min(200,+x.n)}; })};
     ["baseNet","spare","growth","floorHeight","avgRun","slack","distGroup","coreFloor","separateCctv","unitM","drop"].forEach(function(k){ var e=$("p_"+k); if(e) np[k]=e.value; });
     if(!/^\d{1,3}\.\d{1,3}$/.test(np.baseNet)){ toast("IP 前兩段格式例：10.10"); return; }
     var items=(st.dr.items||[]).filter(function(it){ return it.total>0; });

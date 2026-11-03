@@ -225,7 +225,8 @@ function finalize(q) {
     s.items.forEach(function (it, j) {
       it.no = j + 1; it.qty = Number(it.qty) || 0; it.price = Number(it.price) || 0; it.cost = Number(it.cost) || 0;
       it.amount = it.qty * it.price; it.costAmt = it.qty * it.cost; it.margin = it.amount ? (it.amount - it.costAmt) / it.amount : null;
-      it.brand = it.brand || ""; it.wire = it.wire || 0; it.pull = it.pull || 0; it.install = it.install || 0; it.row = null;
+      it.brand = it.brand || "";
+      if (it.model === undefined) { var mm = /型號\s*[:：]?\s*([A-Za-z0-9][\w\-\/.()]*)/.exec(String(it.spec || "") + " " + String(it.brandSpec || "")); it.model = mm ? mm[1] : ""; } it.wire = it.wire || 0; it.pull = it.pull || 0; it.install = it.install || 0; it.row = null;
       p += it.amount; c += it.costAmt;
     });
     s.itemPrice = p; s.itemCost = c; s.price = p; s.cost = c; s.margin = p ? (p - c) / p : null; s.subtotal = { price: p, cost: c };
@@ -239,41 +240,42 @@ function finalize(q) {
 /* ---------- 匯出 Excel（公司報價單格式）；internal=true 時加上毛利率、成本欄（欄位與估價單解析相容） ---------- */
 function toSheets(q, opt) {
   opt = opt || {};
-  var m = q.meta || {}, internal = !!opt.internal, W = internal ? 10 : 7, last = internal ? "J" : "G";
+  var m = q.meta || {}, internal = !!opt.internal, W = internal ? 11 : 7, last = internal ? "K" : "G";
+  var noteOf = function (it) { var b = it.brandSpec || ""; return it.model ? b + (b ? "\n" : "") + "型號：" + it.model : b; };
   var rows = [], merges = [];
   function push(r) { rows.push(r); return rows.length; }
   push([{ v: (m.company || "") + "報價單", s: 1 }]); merges.push("A1:" + last + "1");
   push([{ v: "業主：" + (m.client || ""), s: 11 }, "", "", "", { v: (m.tel ? "電話：" + m.tel + "　" : "") + "日期：" + (m.date || ""), s: 11 }]); merges.push("A2:D2", "E2:" + last + "2");
   push([{ v: "案件名稱：" + (m.project || ""), s: 11 }, "", "", "", { v: (m.fax ? "傳真：" + m.fax + "　" : "") + (m.contact ? "承辦人：" + m.contact : ""), s: 11 }]); merges.push("A3:D3", "E3:" + last + "3");
-  var head = ["項次", "名　　稱", "單位", "數量", "單　價", "複　價", "備　　註"].concat(internal ? ["毛利率", "成本單價", "成本複價"] : []);
+  var head = ["項次", "名　　稱", "單位", "數量", "單　價", "複　價", "備　　註"].concat(internal ? ["毛利率", "成本單價", "成本複價", "毛　利"] : []);
   push(head.map(function (h) { return { v: h, s: 2 }; }));
   var sumStart = rows.length + 1, sumRows = [];
-  q.sections.forEach(function (sec) { sumRows.push(push([{ v: sec.no, s: 9 }, { v: sec.name, s: 3 }, { v: "式", s: 9 }, { v: 1, s: 12 }, { v: sec.price, s: 4 }, { v: sec.price, s: 4, f: "D{r}*E{r}" }, { v: "", s: 3 }].concat(internal ? [{ v: sec.margin, s: 8 }, { v: sec.cost, s: 4 }, { v: sec.cost, s: 4 }] : []))); });
+  q.sections.forEach(function (sec) { sumRows.push(push([{ v: sec.no, s: 9 }, { v: sec.name, s: 3 }, { v: "式", s: 9 }, { v: 1, s: 12 }, { v: sec.price, s: 4 }, { v: sec.price, s: 4, f: "D{r}*E{r}" }, { v: "", s: 3 }].concat(internal ? [{ v: sec.margin, s: 8 }, { v: sec.cost, s: 4 }, { v: sec.cost, s: 4 }, { v: sec.price - sec.cost, s: 4, f: "F{r}-J{r}" }] : []))); });
   var sumEnd = rows.length;
   var tRow = push(["", { v: "合　　計", s: 5 }, "", "", "", { v: q.total.price, s: 6, f: "SUM(F" + sumStart + ":F" + sumEnd + ")" }]
-    .concat(internal ? ["", { v: q.total.margin, s: 8, f: "IF(F{r}=0,\"\",(F{r}-J{r})/F{r})" }, "", { v: q.total.cost, s: 6, f: "SUM(J" + sumStart + ":J" + sumEnd + ")" }] : []));
+    .concat(internal ? ["", { v: q.total.margin, s: 8, f: "IF(F{r}=0,\"\",(F{r}-J{r})/F{r})" }, "", { v: q.total.cost, s: 6, f: "SUM(J" + sumStart + ":J" + sumEnd + ")" }, { v: q.total.price - q.total.cost, s: 6, f: "F{r}-J{r}" }] : []));
   var xRow = push(["", { v: "稅金（5%）", s: 5 }, "", "", "", { v: q.total.tax, s: 6, f: "ROUND(F" + tRow + "*0.05,0)" }]);
   push(["", { v: "總　　計", s: 5 }, "", "", "", { v: q.total.gross, s: 6, f: "F" + tRow + "+F" + xRow }]);
   push([]);
   (q.notes || []).forEach(function (n, i) { var r = push([{ v: i ? "" : "註：", s: 11 }, { v: (i + 1) + "." + n, s: 7 }]); merges.push("B" + r + ":" + last + r); });
   push([]);
   q.sections.forEach(function (sec, si) {
-    push([{ v: sec.no, s: 5 }, { v: sec.name + (sec.brand ? "（廠牌：" + sec.brand + "）" : ""), s: 5 }, { v: "", s: 3 }, { v: "", s: 3 }, { v: "", s: 3 }, { v: "", s: 3 }, { v: "", s: 3 }].concat(internal ? [{ v: "", s: 3 }, { v: "", s: 3 }, { v: "", s: 3 }] : []));
+    push([{ v: sec.no, s: 5 }, { v: sec.name + (sec.brand ? "（廠牌：" + sec.brand + "）" : ""), s: 5 }, { v: "", s: 3 }, { v: "", s: 3 }, { v: "", s: 3 }, { v: "", s: 3 }, { v: "", s: 3 }].concat(internal ? [{ v: "", s: 3 }, { v: "", s: 3 }, { v: "", s: 3 }, { v: "", s: 3 }] : []));
     var a = rows.length + 1;
     sec.items.forEach(function (it) {
       var nm = it.name + (it.spec ? "\n" + it.spec : "");
-      push([{ v: it.no, s: 9 }, { v: nm, s: 3 }, { v: it.unit || "", s: 9 }, { v: it.qty, s: 12 }, { v: it.price || "", s: 4 }, { v: it.amount, s: 4, f: "D{r}*E{r}" }, { v: it.brandSpec || "", s: 3 }]
-        .concat(internal ? [{ v: it.margin, s: 8, f: "IF(F{r}=0,\"\",(F{r}-J{r})/F{r})" }, { v: it.cost || "", s: 4 }, { v: it.costAmt, s: 4, f: "D{r}*I{r}" }] : []));
+      push([{ v: it.no, s: 9 }, { v: nm, s: 3 }, { v: it.unit || "", s: 9 }, { v: it.qty, s: 12 }, { v: it.price || "", s: 4 }, { v: it.amount, s: 4, f: "D{r}*E{r}" }, { v: noteOf(it), s: 3 }]
+        .concat(internal ? [{ v: it.margin, s: 8, f: "IF(F{r}=0,\"\",(F{r}-J{r})/F{r})" }, { v: it.cost || "", s: 4 }, { v: it.costAmt, s: 4, f: "D{r}*I{r}" }, { v: it.amount - it.costAmt, s: 4, f: "F{r}-J{r}" }] : []));
     });
     var b = rows.length;
     var st = push(["", { v: "小　　計", s: 5 }, { v: "", s: 3 }, { v: "", s: 3 }, { v: "", s: 3 }, { v: sec.price, s: 6, f: "SUM(F" + a + ":F" + b + ")" }, { v: "", s: 3 }]
-      .concat(internal ? [{ v: sec.margin, s: 8, f: "IF(F{r}=0,\"\",(F{r}-J{r})/F{r})" }, { v: "", s: 3 }, { v: sec.cost, s: 6, f: "SUM(J" + a + ":J" + b + ")" }] : []));
+      .concat(internal ? [{ v: sec.margin, s: 8, f: "IF(F{r}=0,\"\",(F{r}-J{r})/F{r})" }, { v: "", s: 3 }, { v: sec.cost, s: 6, f: "SUM(J" + a + ":J" + b + ")" }, { v: sec.price - sec.cost, s: 6, f: "F{r}-J{r}" }] : []));
     rows[sumRows[si] - 1][4] = { v: sec.price, s: 4, f: "F" + st };
     if (internal) { rows[sumRows[si] - 1][8] = { v: sec.cost, s: 4, f: "J" + st }; rows[sumRows[si] - 1][9] = { v: sec.cost, s: 4, f: "D{r}*I{r}" }; rows[sumRows[si] - 1][7] = { v: sec.margin, s: 8, f: "IF(F{r}=0,\"\",(F{r}-J{r})/F{r})" }; }
     push([]);
   });
   rows.forEach(function (r, i) { r.forEach(function (c) { if (c && typeof c === "object" && c.f) c.f = c.f.replace(/\{r\}/g, i + 1); }); });
-  return [{ name: internal ? "報價單（內部成本）" : "報價單", cols: [6, 46, 6, 8, 12, 14, 26].concat(internal ? [9, 12, 14] : []), rows: rows, merges: merges, freeze: 4 }];
+  return [{ name: internal ? "報價單（內部成本）" : "報價單", cols: [6, 46, 6, 8, 12, 14, 30].concat(internal ? [9, 12, 14, 14] : []), rows: rows, merges: merges, freeze: 4 }];
 }
 
 /* ---------- 依成本與利潤率訂價 ----------
