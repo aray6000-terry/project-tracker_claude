@@ -49,6 +49,7 @@ var IP_RULES = [
   [/智慧家庭自動化主機|室內對講/, { vlan: "intercom", abbr: "IDU", poe: 10 }],
   [/門口子機|住戶門口機/, { vlan: "intercom", abbr: "ODU", poe: 6 }],
   [/大門口機|管理總機|緊急對講|求救對講|緊急求救對講機/, { vlan: "intercom", abbr: "ICT", poe: 8 }],
+  [/對講防盜主機|影視對講.*主機|室內機|室內分機/, { vlan: "intercom", abbr: "IDU", poe: 10 }],
   [/電梯樓層管制|Smart ?Key讀卡機|感應式讀卡機|讀卡機/i, { vlan: "access", abbr: "ACR", poe: 6 }],
   [/車牌辨識/, { vlan: "parking", abbr: "LPR", poe: 12 }],
   [/車道控制主機/, { vlan: "parking", abbr: "PKC", poe: 0 }],

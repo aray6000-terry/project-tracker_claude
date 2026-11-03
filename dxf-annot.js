@@ -14,6 +14,11 @@ var LAYERS = {
 };
 var ALL_LAYER = ["WV-ANNOT", 2, "IP／IO 標註"];
 
+var SYN = [
+  [/門位|磁簧|門磁/, /磁簧|門磁/], [/求救|押扣|壓扣/, /求救|押扣|壓扣/], [/水箱蓋/, /水箱蓋|微動開關/], [/水箱|水池|水位|液位/, /液位|水位|水箱蓋|浮球/],
+  [/一氧化碳/, /一氧化碳/], [/泵|幫浦|揚水|污水|排水/, /泵|幫浦|動力|馬達/], [/風機|排風|送風/, /風機|排風|送風/], [/紅外線|熱感應/, /紅外線|熱感應/],
+  [/漏水|淹水/, /漏水|淹水/], [/發電機/, /發電機/], [/鐵捲門/, /鐵捲門/], [/燈/, /燈/], [/瓦斯/, /瓦斯/]
+];
 function baseName(s) { return String(s || "").replace(/\s*#\d+$/, "").trim(); }
 function splitNames(n) { return String(n || "").split("／").map(function (x) { return x.trim(); }).filter(Boolean); }
 function readingOrder(a, b) { return (b.y - a.y) || (a.x - b.x); }   /* 由上而下、由左而右 */
@@ -43,6 +48,13 @@ function labels(dr, P, opt) {
     function posFor(name) {
       var exact = pl.devs.filter(function (d) { return nameHit(d.n, name) === 2; });
       var list = exact.length ? exact : pl.devs.filter(function (d) { return nameHit(d.n, name) === 1; });
+      if (!list.length) {   /* 點數表用語和圖例不同（「公設門門位偵測」↔「隱藏式磁簧開關(公共)」、「水箱」↔「液位檢知器」）：依設備類別對應 */
+        var cls = SYN.filter(function (c) { return c[0].test(name); })[0];
+        if (cls) {
+          list = pl.devs.filter(function (d) { return cls[1].test(d.n); });
+          if (/公設|公共/.test(name)) { var pub = list.filter(function (d) { return /公共|公設/.test(d.n); }); if (pub.length) list = pub; }
+        }
+      }
       return list.slice().sort(readingOrder);
     }
     function addLabel(d, layerKey, lines) {
@@ -358,6 +370,23 @@ function writeStandalone(ann, opt) {
   pair(0, "ENDSEC"); pair(0, "EOF");
   return { bytes: ascii(out.join(NL) + NL), count: ann.labels.length, layers: ls, version: "AC1009" };
 }
-var api = { labels: labels, write: write, writeStandalone: writeStandalone, LAYERS: LAYERS, enc: enc };
+/** 標註檢查：每種有 IP 的設備「編表台數／圖上符號／已標」，判斷是沒算到還是沒標到 */
+function check(dr, P, ann) {
+  var lab = {}; (ann.labels || []).forEach(function (l) { lab[l.x + "," + l.y] = 1; });
+  var ipN = {}; ((P.ip && P.ip.rows) || []).forEach(function (r) { if (/交換器|IO 模組|伺服器|主機\(機房\)/.test(r.device)) return; ipN[r.device] = (ipN[r.device] || 0) + 1; });
+  var sym = {}, labd = {};
+  (dr.plans || []).forEach(function (pl) { var m = (pl.floors || []).length || 1; (pl.devs || []).forEach(function (d) { String(d.n).split("／").forEach(function (n) { sym[n] = (sym[n] || 0) + m; if (lab[d.x + "," + d.y]) labd[n] = (labd[n] || 0) + m; }); }); });
+  var rows = Object.keys(ipN).map(function (n) {
+    var a = ipN[n], s = sym[n] || 0, l = Math.min(labd[n] || 0, a), why;
+    if (l >= a) why = "已全部標上";
+    else if (!s) why = "沒標到：平面圖上沒有這個設備符號，IP 列在待配置";
+    else if (s < a) why = "沒標到：圖上符號 " + s + " 個比編表少 " + (a - s) + " 台，多的列在待配置";
+    else why = "部分沒對到位置，列在待配置";
+    return { dev: n, ip: a, sym: s, lab: l, why: why };
+  });
+  var noIp = Object.keys(sym).filter(function (n) { return !ipN[n]; }).sort(function (a, b) { return sym[b] - sym[a]; }).map(function (n) { return { dev: n, sym: sym[n] }; });
+  return { rows: rows, noIp: noIp };
+}
+var api = { labels: labels, check: check, write: write, writeStandalone: writeStandalone, LAYERS: LAYERS, enc: enc };
 if (typeof module === "object" && module.exports) module.exports = api; else root.DXF_ANNOT = api;
 })(typeof self !== "undefined" ? self : this);

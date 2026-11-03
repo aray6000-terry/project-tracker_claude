@@ -338,7 +338,7 @@ function ipView(P){
 }
 
 /* ---------- IP／IO 標註回圖面（另存 DXF） ---------- */
-var AN={mode:"layers",scale:1,table:false,sys:null,out:"layer"};
+var AN={mode:"layers",scale:1,table:false,sys:null,out:"merge"};
 function annotView(P){
   if(!window.DXF_ANNOT) return '<p class="meta">標註元件未載入，請重新整理頁面。</p>';
   applyIoEdits(P);
@@ -356,14 +356,14 @@ function annotView(P){
     +'<div class="uprow" style="flex-wrap:wrap"><span class="meta">顯示方式</span><label class="meta"><input type="radio" name="anmode" value="layers"'+(AN.mode==="layers"?" checked":"")+'> 分系統圖層</label><label class="meta"><input type="radio" name="anmode" value="single"'+(AN.mode==="single"?" checked":"")+'> 全部同一圖層</label>'
     +'<span class="meta" style="margin-left:12px">文字大小</span><select class="fld" id="anScale">'+[0.5,0.75,1,1.5,2,3].map(function(v){ return '<option value="'+v+'"'+(+AN.scale===v?" selected":"")+'>×'+v+'</option>'; }).join("")+'</select>'
     +'<label class="meta" style="margin-left:12px"><input type="checkbox" id="anTable"'+(AN.table?" checked":"")+'> 圖面右側附完整 IP／IO 編表</label></div>'
-    +'<div class="uprow" style="flex-wrap:wrap"><span class="meta">輸出方式</span><label class="meta"><input type="radio" name="anout" value="layer"'+(AN.out==="layer"?" checked":"")+'> 只輸出標註（建議，最穩定）</label><label class="meta"><input type="radio" name="anout" value="merge"'+(AN.out==="merge"?" checked":"")+'> 合併到原圖另存</label></div>'
+    +'<div class="uprow" style="flex-wrap:wrap"><span class="meta">輸出方式</span><label class="meta"><input type="radio" name="anout" value="merge"'+(AN.out==="merge"?" checked":"")+'> 合併到原圖另存（含底圖）</label><label class="meta"><input type="radio" name="anout" value="layer"'+(AN.out==="layer"?" checked":"")+'> 只輸出標註（沒有底圖，要自己貼回原圖）</label></div>'
     +'<p class="hint">「只輸出標註」：產生一個只有標註的小 DXF，座標與原圖相同。用法：AutoCAD 開這個標註 DXF → Ctrl＋A 全選 → 指令 <b>COPYBASE</b>（基點 0,0）→ 切到原本的 DWG → 指令 <b>PASTECLIP</b>（插入點 0,0）。也可以先另存成 DWG，再用 XATTACH 以 0,0 外部參考疊上去。'
     +'<br>「合併到原圖另存」：把標註直接寫進選的 DXF。若原 DXF 是用線上網站或 ezdxf 轉出的（不是 AutoCAD 另存），AutoCAD 可能開不完整，請改用「只輸出標註」。</p>';
   var pend=ann.pending.filter(function(p){ return /^待配置/.test(p.title); });
   if(pend.length&&!noPlan) h+='<details class="mxwrap"><summary>待配置清單（'+pend.reduce(function(m,p){ return m+p.items.length; },0)+' 項）</summary><div class="tblwrap" style="max-height:320px;overflow:auto"><table><thead><tr><th>位置</th><th>項目</th></tr></thead><tbody>'
     +pend.map(function(p){ return p.items.map(function(it,i){ return '<tr><td>'+(i?'':esc(p.title.replace(/^待配置（|，圖上找不到位置）$|）$/g,"")))+'</td><td class="mono">'+esc(it.text)+'</td></tr>'; }).join(""); }).join("")+'</tbody></table></div></details>';
   h+='<h4 style="margin:12px 0 6px">產生標註 DXF</h4><p class="meta">選擇要標註的 DXF（通常是分析時用的同一份：'+esc(st.dr.fileName||"")+'）。平台會先在瀏覽器裡重新分析這份圖的設備位置，再把 IP／IO 標上去，所以座標一定對得上；檔案不會上傳。大檔約需 10～60 秒。</p>'
-    +'<div class="uprow"><input type="file" id="anFile" accept=".dxf"><button class="btn primary small" id="anGo" type="button">產生並下載標註 DXF</button><span class="hint" id="anMsg"></span></div>';
+    +'<div class="uprow"><input type="file" id="anFile" accept=".dxf"><button class="btn primary small" id="anGo" type="button">產生並下載標註 DXF</button><span class="hint" id="anMsg"></span></div><div id="anCheck"></div>';
   return h;
 }
 /* 各系統網段：預設自動切，可改 VLAN、網段（CIDR）、閘道 */
@@ -673,6 +673,12 @@ function bind(P,cur,el){
         a.download=f.name.replace(/\.dxf$/i,"")+(AN.out==="merge"?"_IP_IO標註.dxf":"_IP_IO標註層.dxf"); document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },2000);
         var S=ann.stat;
         msg.textContent="完成：平面圖 "+S.plans+" 張；IP 標在設備旁 "+S.ip+"、待配置 "+S.ipPending+"；IO 標上 "+S.io+" 點、待配置 "+S.ioPending+"；圖層 "+r.layers.join("、");
+        var ezd=AN.out==="merge"&&/WRITTEN_BY_EZDXF|ezdxf/i.test(new TextDecoder("latin1").decode(keep.subarray(0,Math.min(keep.length,200000))));
+        if(ezd) msg.textContent+="。注意：原 DXF 是線上網站／ezdxf 轉出的，AutoCAD 若開不完整，請用 AutoCAD 開原圖另存一次 DXF 再產生，或改選「只輸出標註」";
+        var C=DXF_ANNOT.check(dr2,P,ann), ck=$("anCheck");
+        if(ck) ck.innerHTML='<details open><summary><b>IP 標註檢查（沒算到？沒標到？）</b></summary><table class="tbl"><thead><tr><th>設備</th><th>IP 編表台數</th><th>圖上符號</th><th>已標</th><th>判斷</th></tr></thead><tbody>'
+          +C.rows.map(function(r){ return '<tr'+(r.lab<r.ip?' class="iopend"':'')+'><td>'+esc(r.dev)+'</td><td>'+r.ip+'</td><td>'+r.sym+'</td><td>'+r.lab+'</td><td>'+esc(r.why)+'</td></tr>'; }).join("")+'</tbody></table>'
+          +(C.noIp.length?'<p class="hint">圖上有符號、但 IP 編表沒有（多半本來就不需要 IP，例如磁簧、瓦斯、陽極鎖、宅內箱；若其中有需要 IP 的設備，代表「沒算到」，請告訴我們補規則）：'+C.noIp.map(function(x){ return esc(x.dev)+" "+x.sym; }).join("、")+'</p>':'')+'<p class="hint">交換器、伺服器、IO 模組在平面圖上通常沒有符號，一律列在待配置。</p></details>';
         b.disabled=false; toast("已產生標註 DXF");
       });
     }).catch(function(e){ b.disabled=false; msg.textContent=""; fail(e); });
