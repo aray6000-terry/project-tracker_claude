@@ -338,7 +338,7 @@ function ipView(P){
 }
 
 /* ---------- IP／IO 標註回圖面（另存 DXF） ---------- */
-var AN={mode:"layers",scale:1,table:false,sys:null};
+var AN={mode:"layers",scale:1,table:false,sys:null,out:"layer"};
 function annotView(P){
   if(!window.DXF_ANNOT) return '<p class="meta">標註元件未載入，請重新整理頁面。</p>';
   applyIoEdits(P);
@@ -355,7 +355,10 @@ function annotView(P){
   h+=(noPlan?'':'')+'<h4 style="margin:12px 0 6px">要標註的系統</h4><div class="uprow" style="flex-wrap:wrap">'+keys.map(function(x){ return '<label class="meta"><input type="checkbox" data-ansys="'+x[0]+'"'+(AN.sys[x[0]]?" checked":"")+'> '+esc(x[1])+'</label>'; }).join("")+'</div>'
     +'<div class="uprow" style="flex-wrap:wrap"><span class="meta">顯示方式</span><label class="meta"><input type="radio" name="anmode" value="layers"'+(AN.mode==="layers"?" checked":"")+'> 分系統圖層</label><label class="meta"><input type="radio" name="anmode" value="single"'+(AN.mode==="single"?" checked":"")+'> 全部同一圖層</label>'
     +'<span class="meta" style="margin-left:12px">文字大小</span><select class="fld" id="anScale">'+[0.5,0.75,1,1.5,2,3].map(function(v){ return '<option value="'+v+'"'+(+AN.scale===v?" selected":"")+'>×'+v+'</option>'; }).join("")+'</select>'
-    +'<label class="meta" style="margin-left:12px"><input type="checkbox" id="anTable"'+(AN.table?" checked":"")+'> 圖面右側附完整 IP／IO 編表</label></div>';
+    +'<label class="meta" style="margin-left:12px"><input type="checkbox" id="anTable"'+(AN.table?" checked":"")+'> 圖面右側附完整 IP／IO 編表</label></div>'
+    +'<div class="uprow" style="flex-wrap:wrap"><span class="meta">輸出方式</span><label class="meta"><input type="radio" name="anout" value="layer"'+(AN.out==="layer"?" checked":"")+'> 只輸出標註（建議，最穩定）</label><label class="meta"><input type="radio" name="anout" value="merge"'+(AN.out==="merge"?" checked":"")+'> 合併到原圖另存</label></div>'
+    +'<p class="hint">「只輸出標註」：產生一個只有標註的小 DXF，座標與原圖相同。用法：AutoCAD 開這個標註 DXF → Ctrl＋A 全選 → 指令 <b>COPYBASE</b>（基點 0,0）→ 切到原本的 DWG → 指令 <b>PASTECLIP</b>（插入點 0,0）。也可以先另存成 DWG，再用 XATTACH 以 0,0 外部參考疊上去。'
+    +'<br>「合併到原圖另存」：把標註直接寫進選的 DXF。若原 DXF 是用線上網站或 ezdxf 轉出的（不是 AutoCAD 另存），AutoCAD 可能開不完整，請改用「只輸出標註」。</p>';
   var pend=ann.pending.filter(function(p){ return /^待配置/.test(p.title); });
   if(pend.length&&!noPlan) h+='<details class="mxwrap"><summary>待配置清單（'+pend.reduce(function(m,p){ return m+p.items.length; },0)+' 項）</summary><div class="tblwrap" style="max-height:320px;overflow:auto"><table><thead><tr><th>位置</th><th>項目</th></tr></thead><tbody>'
     +pend.map(function(p){ return p.items.map(function(it,i){ return '<tr><td>'+(i?'':esc(p.title.replace(/^待配置（|，圖上找不到位置）$|）$/g,"")))+'</td><td class="mono">'+esc(it.text)+'</td></tr>'; }).join(""); }).join("")+'</tbody></table></div></details>';
@@ -645,6 +648,7 @@ function bind(P,cur,el){
   };
   el.querySelectorAll("[data-ansys]").forEach(function(c){ c.onchange=function(){ AN.sys[c.dataset.ansys]=c.checked; re(); }; });
   el.querySelectorAll("input[name=anmode]").forEach(function(r){ r.onchange=function(){ AN.mode=r.value; }; });
+  el.querySelectorAll("input[name=anout]").forEach(function(r){ r.onchange=function(){ AN.out=r.value; }; });
   if($("anScale")) $("anScale").onchange=function(){ AN.scale=+this.value; re(); };
   if($("anTable")) $("anTable").onchange=function(){ AN.table=this.checked; re(); };
   if($("anGo")) $("anGo").onclick=function(){
@@ -664,9 +668,9 @@ function bind(P,cur,el){
         msg.textContent="寫入標註中…";
         applyIoEdits(P);
         var ann=DXF_ANNOT.labels(dr2,P,{systems:AN.sys,scale:AN.scale,table:AN.table});
-        var r=DXF_ANNOT.write(keep,ann,{mode:AN.mode});
+        var r=AN.out==="merge"?DXF_ANNOT.write(keep,ann,{mode:AN.mode}):DXF_ANNOT.writeStandalone(ann,{mode:AN.mode});
         var a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([r.bytes],{type:"application/dxf"}));
-        a.download=f.name.replace(/\.dxf$/i,"")+"_IP_IO標註.dxf"; document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },2000);
+        a.download=f.name.replace(/\.dxf$/i,"")+(AN.out==="merge"?"_IP_IO標註.dxf":"_IP_IO標註層.dxf"); document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },2000);
         var S=ann.stat;
         msg.textContent="完成：平面圖 "+S.plans+" 張；IP 標在設備旁 "+S.ip+"、待配置 "+S.ipPending+"；IO 標上 "+S.io+" 點、待配置 "+S.ioPending+"；圖層 "+r.layers.join("、");
         b.disabled=false; toast("已產生標註 DXF");

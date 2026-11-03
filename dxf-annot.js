@@ -303,6 +303,61 @@ function write(bytes, ann, opt) {
   return { bytes: outB, count: ann.labels.length, layers: Object.keys(layersUsed), version: "AC" + ver };
 }
 
-var api = { labels: labels, write: write, LAYERS: LAYERS, enc: enc };
+/** 只輸出標註的獨立 DXF（R12 格式，最單純、各版 AutoCAD 都能開）：座標與原圖相同，
+    在 AutoCAD 打開原圖後用「插入」（插入點 0,0、比例 1）或「外部參考」疊上去即可。中文寫成 \U+XXXX。 */
+function writeStandalone(ann, opt) {
+  opt = opt || {};
+  var NL = "\r\n", one = opt.mode === "single", used = {}, out = [];
+  function pair(c, v) { out.push((c < 10 ? "  " : c < 100 ? " " : "") + c, String(v)); }
+  function layerOf(k) { var L = one ? ALL_LAYER : (LAYERS[k] || LAYERS.pending); used[L[0]] = L; return L[0]; }
+  var ents = [];
+  function text(L, x, y, h, lines) { lines.forEach(function (ln, i) { ents.push(["TEXT", L, x, y - i * h * 1.5, h, enc(ln, false)]); }); }
+  ann.labels.forEach(function (l) {
+    var L = layerOf(l.layer);
+    ents.push(["CIRCLE", L, l.x, l.y, l.h * 0.6]);
+    ents.push(["LINE", L, l.x, l.y, l.tx, l.ty]);
+    text(L, l.tx, l.ty + l.h * 1.2 * l.lines.length, l.h, l.lines);
+  });
+  ann.pending.forEach(function (p) {
+    var byL = {};
+    p.items.forEach(function (it) { var L = layerOf(it.layer); (byL[L] = byL[L] || []).push(it.text); });
+    var y = p.y; text(layerOf("pending"), p.x, y, p.h * 1.3, [p.title]); y -= p.h * 3;
+    Object.keys(byL).forEach(function (L) { var arr = byL[L]; for (var i = 0; i < arr.length; i += 40) { var ch = arr.slice(i, i + 40); text(L, p.x, y, p.h, ch); y -= p.h * 1.7 * ch.length + p.h * 2; } });
+  });
+  var f = function (v) { return (+v).toFixed(3); };
+  var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  ents.forEach(function (e) { x0 = Math.min(x0, e[2]); y0 = Math.min(y0, e[3]); x1 = Math.max(x1, e[2]); y1 = Math.max(y1, e[3]); });
+  if (!isFinite(x0)) { x0 = y0 = 0; x1 = y1 = 100; }
+  pair(0, "SECTION"); pair(2, "HEADER");
+  pair(9, "$ACADVER"); pair(1, "AC1009");
+  pair(9, "$DWGCODEPAGE"); pair(3, "ANSI_950");
+  pair(9, "$EXTMIN"); pair(10, f(x0)); pair(20, f(y0)); pair(30, "0.0");
+  pair(9, "$EXTMAX"); pair(10, f(x1)); pair(20, f(y1)); pair(30, "0.0");
+  pair(0, "ENDSEC");
+  pair(0, "SECTION"); pair(2, "TABLES");
+  pair(0, "TABLE"); pair(2, "LTYPE"); pair(70, 1);
+  pair(0, "LTYPE"); pair(2, "CONTINUOUS"); pair(70, 0); pair(3, "Solid line"); pair(72, 65); pair(73, 0); pair(40, "0.0");
+  pair(0, "ENDTAB");
+  var ls = Object.keys(used);
+  pair(0, "TABLE"); pair(2, "LAYER"); pair(70, ls.length + 1);
+  pair(0, "LAYER"); pair(2, "0"); pair(70, 0); pair(62, 7); pair(6, "CONTINUOUS");
+  ls.forEach(function (n) { pair(0, "LAYER"); pair(2, n); pair(70, 0); pair(62, used[n][1]); pair(6, "CONTINUOUS"); });
+  pair(0, "ENDTAB");
+  pair(0, "TABLE"); pair(2, "STYLE"); pair(70, 2);
+  pair(0, "STYLE"); pair(2, "STANDARD"); pair(70, 0); pair(40, "0.0"); pair(41, "1.0"); pair(50, "0.0"); pair(71, 0); pair(42, "2.5"); pair(3, "txt"); pair(4, "");
+  pair(0, "STYLE"); pair(2, "WV-ZH"); pair(70, 0); pair(40, "0.0"); pair(41, "1.0"); pair(50, "0.0"); pair(71, 0); pair(42, "2.5"); pair(3, "msjh.ttc"); pair(4, "");
+  pair(0, "ENDTAB");
+  pair(0, "ENDSEC");
+  pair(0, "SECTION"); pair(2, "ENTITIES");
+  ents.forEach(function (e) {
+    pair(0, e[0]); pair(8, e[1]);
+    if (e[0] === "TEXT") { pair(10, f(e[2])); pair(20, f(e[3])); pair(30, "0.0"); pair(40, f(e[4])); pair(1, e[5]); pair(7, "WV-ZH"); }
+    else if (e[0] === "LINE") { pair(10, f(e[2])); pair(20, f(e[3])); pair(30, "0.0"); pair(11, f(e[4])); pair(21, f(e[5])); pair(31, "0.0"); }
+    else { pair(10, f(e[2])); pair(20, f(e[3])); pair(30, "0.0"); pair(40, f(e[4])); }
+  });
+  pair(0, "ENDSEC"); pair(0, "EOF");
+  return { bytes: ascii(out.join(NL) + NL), count: ann.labels.length, layers: ls, version: "AC1009" };
+}
+var api = { labels: labels, write: write, writeStandalone: writeStandalone, LAYERS: LAYERS, enc: enc };
 if (typeof module === "object" && module.exports) module.exports = api; else root.DXF_ANNOT = api;
 })(typeof self !== "undefined" ? self : this);
