@@ -12,6 +12,7 @@ var LAYERS = {
   energy: ["WV-IP-ENERGY", 40, "能源／IoT"], media: ["WV-IP-MEDIA", 4, "多媒體／平台"], voice: ["WV-IP-VOICE", 2, "電話"],
   io: ["WV-IO", 6, "中央監控 IO 點位"], pending: ["WV-PENDING", 1, "待配置清單"]
 };
+var POINT_LAYER = ["WV-POINT", 7, "設備點位"], FRAME_LAYER = ["WV-FRAME", 8, "平面圖外框與標題"];
 var ALL_LAYER = ["WV-ANNOT", 2, "IP／IO 標註"];
 
 var SYN = [
@@ -139,7 +140,9 @@ function labels(dr, P, opt) {
       if (ioT.length) put("IO 接線編表", "io", ioT);
     }
   }
-  return { labels: out, pending: pend, stat: stat };
+  /* 只留點位用：每張平面圖的外框、標題與所有設備位置 */
+  var pts = plans.map(function (pl) { return { title: pl.title, box: pl.box, h: Math.max((pl.box[2] - pl.box[0]) / 220, 1) * (Number(opt.scale) || 1), devs: pl.devs.map(function (d) { return { n: d.n, x: d.x, y: d.y }; }) }; });
+  return { labels: out, pending: pend, stat: stat, plans: pts };
 }
 
 /* ---------- DXF 寫入 ---------- */
@@ -324,6 +327,20 @@ function writeStandalone(ann, opt) {
   function layerOf(k) { var L = one ? ALL_LAYER : (LAYERS[k] || LAYERS.pending); used[L[0]] = L; return L[0]; }
   var ents = [];
   function text(L, x, y, h, lines) { lines.forEach(function (ln, i) { ents.push(["TEXT", L, x, y - i * h * 1.5, h, enc(ln, false)]); }); }
+  if (opt.points) {   /* 只留點位：不帶原圖管線，畫平面圖外框、標題與每個設備位置（小圓＋設備名稱） */
+    used[POINT_LAYER[0]] = POINT_LAYER; used[FRAME_LAYER[0]] = FRAME_LAYER;
+    (ann.plans || []).forEach(function (pl) {
+      var b = pl.box, F = FRAME_LAYER[0], h = pl.h;
+      ents.push(["LINE", F, b[0], b[1], b[2], b[1]], ["LINE", F, b[2], b[1], b[2], b[3]], ["LINE", F, b[2], b[3], b[0], b[3]], ["LINE", F, b[0], b[3], b[0], b[1]]);
+      text(F, b[0], b[3] + h * 3, h * 2.5, [pl.title]);
+      var seen = {};
+      pl.devs.forEach(function (d) {
+        var k = Math.round(d.x) + "," + Math.round(d.y); if (seen[k]) return; seen[k] = 1;
+        ents.push(["CIRCLE", POINT_LAYER[0], d.x, d.y, h * 0.35]);
+        text(POINT_LAYER[0], d.x + h * 0.5, d.y - h * 0.9, h * 0.45, [String(d.n).split("／")[0]]);
+      });
+    });
+  }
   ann.labels.forEach(function (l) {
     var L = layerOf(l.layer);
     ents.push(["CIRCLE", L, l.x, l.y, l.h * 0.6]);

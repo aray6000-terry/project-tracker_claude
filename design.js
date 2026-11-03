@@ -356,9 +356,9 @@ function annotView(P){
     +'<div class="uprow" style="flex-wrap:wrap"><span class="meta">顯示方式</span><label class="meta"><input type="radio" name="anmode" value="layers"'+(AN.mode==="layers"?" checked":"")+'> 分系統圖層</label><label class="meta"><input type="radio" name="anmode" value="single"'+(AN.mode==="single"?" checked":"")+'> 全部同一圖層</label>'
     +'<span class="meta" style="margin-left:12px">文字大小</span><select class="fld" id="anScale">'+[0.5,0.75,1,1.5,2,3].map(function(v){ return '<option value="'+v+'"'+(+AN.scale===v?" selected":"")+'>×'+v+'</option>'; }).join("")+'</select>'
     +'<label class="meta" style="margin-left:12px"><input type="checkbox" id="anTable"'+(AN.table?" checked":"")+'> 圖面右側附完整 IP／IO 編表</label></div>'
-    +'<div class="uprow" style="flex-wrap:wrap"><span class="meta">輸出方式</span><label class="meta"><input type="radio" name="anout" value="merge"'+(AN.out==="merge"?" checked":"")+'> 合併到原圖另存（含底圖）</label><label class="meta"><input type="radio" name="anout" value="layer"'+(AN.out==="layer"?" checked":"")+'> 只輸出標註（沒有底圖，要自己貼回原圖）</label></div>'
+    +'<div class="uprow" style="flex-wrap:wrap"><span class="meta">輸出方式</span><label class="meta"><input type="radio" name="anout" value="merge"'+(AN.out==="merge"?" checked":"")+'> 合併到原圖另存（含底圖）</label><label class="meta"><input type="radio" name="anout" value="layer"'+(AN.out==="layer"?" checked":"")+'> 只輸出標註（沒有底圖，要自己貼回原圖）</label><label class="meta"><input type="radio" name="anout" value="points"'+(AN.out==="points"?" checked":"")+'> 只留點位＋IP（拿掉管線與建築底圖）</label></div>'
     +'<p class="hint">「只輸出標註」：產生一個只有標註的小 DXF，座標與原圖相同。用法：AutoCAD 開這個標註 DXF → Ctrl＋A 全選 → 指令 <b>COPYBASE</b>（基點 0,0）→ 切到原本的 DWG → 指令 <b>PASTECLIP</b>（插入點 0,0）。也可以先另存成 DWG，再用 XATTACH 以 0,0 外部參考疊上去。'
-    +'<br>「合併到原圖另存」：把標註直接寫進選的 DXF。若原 DXF 是用線上網站或 ezdxf 轉出的（不是 AutoCAD 另存），AutoCAD 可能開不完整，請改用「只輸出標註」。</p>';
+    +'<br>「只留點位＋IP」：不帶原圖的管線與建築線，只畫各平面圖外框、標題、每個設備位置（小圓＋設備名稱）和 IP／IO 標註，適合給廠商設定 IP 或現場核對點位用。<br>「合併到原圖另存」：把標註直接寫進選的 DXF。若原 DXF 是用線上網站或 ezdxf 轉出的（不是 AutoCAD 另存），AutoCAD 可能開不完整，請改用「只輸出標註」。</p>';
   var pend=ann.pending.filter(function(p){ return /^待配置/.test(p.title); });
   if(pend.length&&!noPlan) h+='<details class="mxwrap"><summary>待配置清單（'+pend.reduce(function(m,p){ return m+p.items.length; },0)+' 項）</summary><div class="tblwrap" style="max-height:320px;overflow:auto"><table><thead><tr><th>位置</th><th>項目</th></tr></thead><tbody>'
     +pend.map(function(p){ return p.items.map(function(it,i){ return '<tr><td>'+(i?'':esc(p.title.replace(/^待配置（|，圖上找不到位置）$|）$/g,"")))+'</td><td class="mono">'+esc(it.text)+'</td></tr>'; }).join(""); }).join("")+'</tbody></table></div></details>';
@@ -668,9 +668,9 @@ function bind(P,cur,el){
         msg.textContent="寫入標註中…";
         applyIoEdits(P);
         var ann=DXF_ANNOT.labels(dr2,P,{systems:AN.sys,scale:AN.scale,table:AN.table});
-        var r=AN.out==="merge"?DXF_ANNOT.write(keep,ann,{mode:AN.mode}):DXF_ANNOT.writeStandalone(ann,{mode:AN.mode});
+        var r=AN.out==="merge"?DXF_ANNOT.write(keep,ann,{mode:AN.mode}):DXF_ANNOT.writeStandalone(ann,{mode:AN.mode,points:AN.out==="points"});
         var a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([r.bytes],{type:"application/dxf"}));
-        a.download=f.name.replace(/\.dxf$/i,"")+(AN.out==="merge"?"_IP_IO標註.dxf":"_IP_IO標註層.dxf"); document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },2000);
+        a.download=f.name.replace(/\.dxf$/i,"")+(AN.out==="merge"?"_IP_IO標註.dxf":AN.out==="points"?"_點位IP.dxf":"_IP_IO標註層.dxf"); document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },2000);
         var S=ann.stat;
         msg.textContent="完成：平面圖 "+S.plans+" 張；IP 標在設備旁 "+S.ip+"、待配置 "+S.ipPending+"；IO 標上 "+S.io+" 點、待配置 "+S.ioPending+"；圖層 "+r.layers.join("、");
         var ezd=AN.out==="merge"&&/WRITTEN_BY_EZDXF|ezdxf/i.test(new TextDecoder("latin1").decode(keep.subarray(0,Math.min(keep.length,200000))));
