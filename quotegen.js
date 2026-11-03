@@ -4,7 +4,7 @@
 var T=window.TR; if(!T||!window.QUOTEGEN||!window.XLSX_WRITE) return;
 var esc=T.esc, api=T.api, toast=T.toast, fail=T.fail, G=window.QUOTEGEN;
 var $=function(id){ return document.getElementById(id); };
-var st={pid:null, lib:null, canEdit:false, loading:false, opt:null, q:null, tab:"set"};
+var st={pid:null, lib:null, cb:null, canEdit:false, loading:false, opt:null, q:null, tab:"set"};
 var PF={mode:"margin", pct:35};   /* 利潤設定：margin 毛利率／markup 加成率 */
 try{ var pf0=JSON.parse(localStorage.getItem("qgen:profit")||"null"); if(pf0&&pf0.mode) PF=pf0; }catch(e){}
 function pfSave(){ try{ localStorage.setItem("qgen:profit",JSON.stringify(PF)); }catch(e){} }
@@ -34,13 +34,14 @@ function defaults(cur,dr){
 
 /* ---------- 畫面 ---------- */
 function html(cur,dr){
-  if(st.pid!==cur.id){ st={pid:cur.id, lib:null, canEdit:false, loading:false, opt:null, q:null, tab:"set"}; }
+  if(st.pid!==cur.id){ st={pid:cur.id, lib:null, cb:null, canEdit:false, loading:false, opt:null, q:null, tab:"set"}; }
   if(!st.opt) st.opt=defaults(cur,dr);
   var h='<section class="panel" id="qgenPanel"><div class="row" style="flex-wrap:wrap"><h3>自動生成報價單</h3>'
     +(st.q?'<div class="seg"><button type="button" data-qg-tab="set" class="'+(st.tab==="set"?"on":"")+'">設定</button><button type="button" data-qg-tab="out" class="'+(st.tab==="out"?"on":"")+'">報價單</button></div>':'')+'</div>';
   if(!st.lib){ h+='<div class="loading">讀取報價範本庫…</div></section>'; return h; }
   if(st.tab==="out"&&st.q) return h+outHtml(cur)+'</section>';
-  h+='<p class="meta">勾選要報價的系統與廠牌，系統會從「報價範本庫」挑出最接近的範本，再以圖面分析的設備數量帶入；線材與工資依設備金額比例調整。產生後可逐項修改，再下載 Excel 或存為本案估價單。'+(dr?'':'<br><b style="color:var(--warn)">本案尚未分析圖面，數量會沿用範本，請產生後逐項確認。</b>')+'</p>';
+  h+='<p class="meta">勾選要報價的系統與廠牌，系統會從「報價範本庫」挑出最接近的範本，再以圖面分析的設備數量帶入；有「成本總表」時，設備成本與線材、工資依成本總表計算，否則依設備規模比例調整。產生後可逐項修改，再下載 Excel 或存為本案估價單。'+(dr?'':'<br><b style="color:var(--warn)">本案尚未分析圖面，數量會沿用範本，請產生後逐項確認。</b>')+'</p>';
+  h+=cbHtml(cur);
   h+=libHtml();
   var o=st.opt, m=o.meta;
   h+='<h4 style="margin:14px 0 6px">報價單抬頭</h4><div class="fgrid">'
@@ -61,6 +62,24 @@ function html(cur,dr){
   return h+'</section>';
   function fld(k,l,v){ return '<label>'+esc(l)+'<input class="fld" data-qg-meta="'+k+'" maxlength="80" value="'+esc(v||"")+'"></label>'; }
 }
+/* 成本總表（設備＋工資）：存在範本庫的特殊項目裡，之後更新檔案重新上傳即可 */
+function cbHtml(cur){
+  var c=st.cb, p=cur.project||{}, h='<details class="mxwrap"'+(c?"":" open")+'><summary>成本總表（設備＋工資）'+(c?'：'+esc(c.fileName||c.name):'：尚未上傳')+'</summary>';
+  if(c){
+    var d=c.data, rg=null; (d.regions||[]).forEach(function(r){ if(!rg&&r.keys.some(function(k){ return String(p.site||"").indexOf(k)>=0; })) rg=r; });
+    h+='<p class="meta">'+esc(c.fileName||"")+'｜'+esc(T.userName(c.savedBy||""))+' '+esc(T.fmtTime(c.savedAt))+'｜'+d.rows.length.toLocaleString()+' 項成本／工資｜公司欄：'+esc((d.companies||[]).join("、")||"無")+'｜區域 '+(d.regions||[]).length+' 區</p>'
+      +'<p class="meta">本案：所屬公司 <b>'+esc(p.company||"未指定")+'</b>'+((d.companies||[]).some(function(x){ return p.company&&(String(p.company).indexOf(x)>=0||x.indexOf(p.company)>=0); })?'（使用公司成本，空白項目用共用成本）':'（使用共用成本）')
+      +'；案場地點 <b>'+esc(p.site||"未填")+'</b> → '+(rg?esc(rg.name)+' 工資 ×'+rg.labor+'、線材 ×'+rg.wire:'區域係數 1.00')+'</p>';
+  } else h+='<p class="meta" style="color:var(--warn)">還沒有成本總表。上傳「設備工資成本總表」.xlsx 後，自動生成的報價單會以它的設備成本與單位工資計算。</p>';
+  if(st.canEdit) h+='<div class="uprow"><input type="file" id="qgCbFile" accept=".xlsx"><button class="btn small primary" id="qgCbUp" type="button">'+(c?'上傳新版（取代目前版本）':'上傳成本總表')+'</button><span class="hint">需有「設備成本」分頁；「區域係數」「工資標準」分頁可選。只存在公司雲端，僅有報價權限的人看得到。</span></div>';
+  return h+'</details>';
+}
+function splitLib(list){
+  st.cb=null; var out=[];
+  (list||[]).forEach(function(t){ if(t&&t.data&&t.data.costbook){ if(!st.cb||String(t.savedAt||"")>String(st.cb.savedAt||"")) st.cb=t; } else out.push(t); });
+  st.cbAll=(list||[]).filter(function(t){ return t&&t.data&&t.data.costbook; });
+  st.lib=out;
+}
 function libHtml(){
   var L=st.lib, h='<details class="mxwrap"'+(L.length?"":" open")+'><summary>報價範本庫（'+L.length+' 份）</summary>';
   if(!L.length) h+='<p class="meta" style="color:var(--warn)">範本庫還是空的。'+(st.canEdit?'請上傳公司過去的報價單（.xlsx）作為範本，建議一般案、智慧建築 2016、2024 各至少一份。':'請業務主管上傳公司報價單作為範本。')+'</p>';
@@ -76,6 +95,8 @@ function outHtml(cur){
   var flagged=0; q.sections.forEach(function(s){ s.items.forEach(function(it){ if(/請/.test(it.flag)) flagged++; }); });
   var h='<div class="kpis">'+kpi(money(t.price),"未稅總價")+kpi(money(t.gross),"含稅總價（5%）")+kpi(money(t.cost),"成本")+kpi(pct(t.margin),"毛利率",t.margin!==null&&t.margin<0.35?"warn":"")+kpi(flagged,"待確認數量",flagged?"warn":"")+'</div>';
   if(q.missing.length) h+='<div class="tipbox"><b>範本庫沒有</b>'+esc(q.missing.join("、"))+'，這些系統只列出空白段落，請手動新增項目或先上傳含這些系統的範本。</div>';
+  if(q.costbook){ var cbs=q.costbook; h+='<div class="tipbox" style="border-color:var(--accent)"><b>成本總表</b>　公司：'+esc(cbs.company||"未指定")+'｜區域：'+esc(cbs.region||"未對到（係數 1.00）")+(cbs.region?'（工資 ×'+cbs.labor+'、線材 ×'+cbs.wire+'）':'')+'｜套用成本 '+cbs.cost+' 項、單位工資 '+cbs.labor0+' 項、線材／工資式項目 '+cbs.lumps+' 項依「Σ數量×單位工資」重算'+(cbs.sections.length?'<br>'+cbs.sections.map(esc).join('<br>'):'')+'<br><span class="hint">成本改了、售價沒改：請用下方「依成本訂價」重新訂價。</span></div>'; }
+  else if(!st.cb) h+='<div class="tipbox"><b>沒有成本總表</b>成本沿用範本，線材與工資依設備規模比例估算。</div>';
   var big=q.sections.filter(function(s){ return s.scaleNote; });
   if(big.length) h+='<div class="tipbox"><b>規模放大</b>'+big.map(function(s){ return esc(s.no+" "+s.name+"："+s.scaleNote); }).join("<br>")+'</div>';
   if(q.unmatched.length) h+='<details class="mxwrap"'+(q.unmatched.length?" open":"")+'><summary>圖面有、報價單沒對到的設備（'+q.unmatched.length+'）</summary><p class="meta">可能是範本沒有的設備，或屬於配管、箱體等不在報價範圍內的項目。需要報價的請選擇段落後加入。</p><div class="tblwrap"><table class="items"><thead><tr><th>圖面設備</th><th>數量</th><th>加到段落</th><th></th></tr></thead><tbody>'
@@ -92,7 +113,7 @@ function outHtml(cur){
       +'<div class="tblwrap"><table class="items qgtbl"><thead><tr><th>#</th><th>名稱</th><th>單位</th><th>數量</th><th>單價</th><th>複價</th><th>成本</th><th>利潤%</th><th>廠牌</th><th>型號</th><th></th></tr></thead><tbody>'
       +s.items.map(function(it,ii){
         var k=si+"-"+ii, fc=/^圖面/.test(it.flag)?"qg-d":/請/.test(it.flag)?"qg-w":"";
-        return '<tr><td>'+it.no+'</td><td><input class="fld qgname" data-qg-it="'+k+'" data-f="name" value="'+esc(it.name)+'">'+(it.flag?'<div class="hint '+fc+'">'+esc(it.flag)+'</div>':'')+'</td>'
+        return '<tr><td>'+it.no+'</td><td><input class="fld qgname" data-qg-it="'+k+'" data-f="name" value="'+esc(it.name)+'">'+(it.flag?'<div class="hint '+fc+'">'+esc(it.flag)+'</div>':'')+(it.cbNote?'<div class="hint">'+esc(it.cbNote)+'</div>':'')+'</td>'
           +'<td><input class="fld" style="width:52px" data-qg-it="'+k+'" data-f="unit" value="'+esc(it.unit||"")+'"></td>'
           +'<td><input class="fld '+fc+'" type="number" min="0" step="any" style="width:78px" data-qg-it="'+k+'" data-f="qty" value="'+it.qty+'"></td>'
           +'<td><input class="fld" type="number" min="0" step="any" style="width:96px" data-qg-it="'+k+'" data-f="price" value="'+it.price+'"></td>'
@@ -116,7 +137,7 @@ function bind(cur,el,rerender,dr,reload){
   var re=function(){ var y=window.scrollY; rerender(); window.scrollTo(0,y); };
   if(!st.lib && !st.loading){
     st.loading=true;
-    api("quoteLibGet").then(function(r){ st.lib=r.templates||[]; st.canEdit=!!r.canEdit; st.loading=false; re(); })
+    api("quoteLibGet").then(function(r){ splitLib(r.templates); st.canEdit=!!r.canEdit; st.loading=false; re(); })
       .catch(function(e){ st.loading=false; st.lib=[]; fail(e); re(); });
     return;
   }
@@ -131,7 +152,8 @@ function bind(cur,el,rerender,dr,reload){
   if($("qgBuild")) $("qgBuild").onclick=function(){
     if(!o.systems.length){ toast("請至少勾選一個系統"); return; }
     var d=dr||null;
-    st.q=G.build({systems:o.systems,brands:o.brands,smart:o.smart,grade:o.grade,sources:o.sources,meta:Object.assign({},o.meta),drawing:(d&&d.items)||[],mapping:{}},st.lib);
+    var pj=cur.project||{};
+    st.q=G.build({systems:o.systems,brands:o.brands,smart:o.smart,grade:o.grade,sources:o.sources,meta:Object.assign({},o.meta),drawing:(d&&d.items)||[],mapping:{},costbook:st.cb?st.cb.data:null,company:pj.company||"",site:pj.site||""},st.lib);
     st.tab="out"; re(); toast("已產生報價單，請檢查橘字標示的數量");
   };
   /* 範本庫 */
@@ -142,15 +164,26 @@ function bind(cur,el,rerender,dr,reload){
       return f.arrayBuffer().then(XLSX_LITE.read).then(function(sheets){
         var q=QUOTE.parse(sheets); q.fileName=f.name;
         var name=(q.meta.project||f.name.replace(/\.xlsx$/i,"")).slice(0,80);
-        return api("quoteLibSave",{add:{name:name,smart:forced||G.smartOf(q),fileName:f.name,data:q}}).then(function(r){ st.lib=r.templates; toast("已加入範本：「"+name+"」"); });
+        return api("quoteLibSave",{add:{name:name,smart:forced||G.smartOf(q),fileName:f.name,data:q}}).then(function(r){ splitLib(r.templates); toast("已加入範本：「"+name+"」"); });
       }).catch(function(e){ toast("「"+f.name+"」無法加入："+(e.message||e)); });
     }); },Promise.resolve()).then(function(){ b.disabled=false; re(); });
   };
   P.querySelectorAll("[data-qg-librm]").forEach(function(b){ b.onclick=function(){
     var t=st.lib.filter(function(x){ return x.id===b.dataset.qgLibrm; })[0]; if(!t||!confirm("從範本庫移除「"+t.name+"」？")) return;
-    api("quoteLibSave",{remove:t.id}).then(function(r){ st.lib=r.templates; toast("已移除"); re(); }).catch(fail); }; });
+    api("quoteLibSave",{remove:t.id}).then(function(r){ splitLib(r.templates); toast("已移除"); re(); }).catch(fail); }; });
   P.querySelectorAll("[data-qg-libsmart]").forEach(function(s){ s.onchange=function(){
-    api("quoteLibSave",{update:{id:s.dataset.qgLibsmart,smart:s.value}}).then(function(r){ st.lib=r.templates; toast("已更新範本類型"); re(); }).catch(fail); }; });
+    api("quoteLibSave",{update:{id:s.dataset.qgLibsmart,smart:s.value}}).then(function(r){ splitLib(r.templates); toast("已更新範本類型"); re(); }).catch(fail); }; });
+  /* 成本總表上傳：新增後移除舊版 */
+  if($("qgCbUp")) $("qgCbUp").onclick=function(){
+    var f=($("qgCbFile").files||[])[0]; if(!f){ toast("請先選擇成本總表（.xlsx）"); return; }
+    var b=this; b.disabled=true;
+    f.arrayBuffer().then(XLSX_LITE.read).then(function(sheets){
+      var cb=G.parseCostbook(sheets), old=(st.cbAll||[]).map(function(t){ return t.id; });
+      return api("quoteLibSave",{add:{name:"成本總表",smart:"costbook",fileName:f.name,data:cb}}).then(function(r){
+        return old.reduce(function(pr,id){ return pr.then(function(){ return api("quoteLibSave",{remove:id}); }); },Promise.resolve(r));
+      }).then(function(r){ splitLib(r.templates); toast("已更新成本總表："+cb.rows.length+" 項，公司欄 "+(cb.companies.join("、")||"無")); });
+    }).catch(function(e){ toast("成本總表無法讀取："+(e.message||e)); }).then(function(){ b.disabled=false; re(); });
+  };
   /* 報價單編輯 */
   var q=st.q; if(!q) return;
   var itOf=function(k){ var a=k.split("-"); return {s:q.sections[+a[0]], i:+a[1]}; };

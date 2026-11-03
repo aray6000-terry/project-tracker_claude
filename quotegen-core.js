@@ -99,7 +99,7 @@ function build(opt, lib) {
         var nm = smart === "none" ? stripSmart(it.name) : it.name;
         var spec = str(it.brandSpec), b = spec;
         if (brand && it.kind === "device" && spec && brandTokens(spec).some(function (t) { return mainTok.indexOf(t) >= 0; })) b = brand;
-        items.push({ name: nm, spec: it.spec || "", unit: it.unit, tqty: it.qty || 0, qty: it.qty || 0, price: it.price || 0, cost: it.cost || 0, brandSpec: b, kind: it.kind, flag: "" });
+        items.push({ name: nm, spec: it.spec || "", unit: it.unit, tqty: it.qty || 0, qty: it.qty || 0, price: it.price || 0, cost: it.cost || 0, tprice: it.price || 0, tcost: it.cost || 0, brandSpec: b, kind: it.kind, flag: "" });
       });
       var name = src.name;
       if (smart === "none") name = stripSmart(name);
@@ -110,6 +110,7 @@ function build(opt, lib) {
   var q = finalize({ sections: secs, meta: opt.meta || {} });
   var unmatched = applyDrawing(q, opt.drawing || [], opt.mapping || {});
   scaleLumps(q);
+  if (opt.costbook) q.costbook = applyCostbook(q, opt.costbook, { company: opt.company, site: opt.site });
   finalize(q);
   q.notes = notesFor(opt, lib);
   q.missing = missing; q.unmatched = unmatched; q.smart = smart; q.grade = opt.grade || "";
@@ -278,6 +279,135 @@ function toSheets(q, opt) {
   return [{ name: internal ? "報價單（內部成本）" : "報價單", cols: [6, 46, 6, 8, 12, 14, 30].concat(internal ? [9, 12, 14, 14] : []), rows: rows, merges: merges, freeze: 4 }];
 }
 
+/* ---------- 成本總表（設備＋工資） ----------
+   檔案「設備工資成本總表」：分頁「設備成本」「區域係數」「工資標準」。
+   設備成本：專案所屬公司的「XX成本」欄有值就用，否則用「共用成本」；比對順序 型號 → 品名相同 → 品名相近。
+   工資：每單位 線材／拉線工資／安裝工資（× 區域係數）；系統內「線材五金」「結線佈線工資」「設備按裝工資」＝Σ 數量 × 單位金額。 */
+function cbNum(v) { var n = typeof v === "number" ? v : parseFloat(str(v).replace(/[,，\s$]/g, "")); return isFinite(n) && n > 0 ? n : 0; }
+function cbModel(m) { return str(m).toUpperCase().replace(/\(.*?\)|（.*?）/g, "").replace(/[\s\-_.\/]/g, ""); }
+function cbName(n) { return str(n).replace(/\(預留管[路線]\)|（預留管[路線]）/g, "").replace(/[\s　"'“”]/g, "").toUpperCase(); }
+function cbSheet(sheets, re) { return (sheets || []).filter(function (s) { return re.test(str(s.name)); })[0] || null; }
+function cbHeader(sh, need) {
+  var rows = sh.rows || [];
+  for (var i = 0; i < Math.min(rows.length, 10); i++) {
+    var h = (rows[i] || []).map(function (v) { return str(v).replace(/\s/g, ""); });
+    if (h.indexOf(need) >= 0) return { i: i, h: h, col: function (re) { for (var j = 0; j < h.length; j++) if (re.test(h[j])) return j; return -1; } };
+  }
+  return null;
+}
+/** 讀成本總表 Excel（XLSX_LITE.read 的結果）→ 精簡資料（存到雲端、產生報價單時使用） */
+function parseCostbook(sheets) {
+  var sh = cbSheet(sheets, /設備成本/);
+  if (!sh) throw new Error("找不到「設備成本」分頁");
+  var H = cbHeader(sh, "品名");
+  if (!H) throw new Error("「設備成本」分頁找不到表頭（需有「品名」欄）");
+  var c = { sys: H.col(/^系統/), name: H.col(/^品名$/), brand: H.col(/^廠牌$/), model: H.col(/^型號$/), unit: H.col(/^單位$/), kind: H.col(/^類型$/), shared: H.col(/^共用成本$/),
+    sale: H.col(/^建議售價$/), wire: H.col(/^線材/), pull: H.col(/^拉線/), install: H.col(/^安裝/) };
+  if (c.shared < 0) throw new Error("「設備成本」分頁需有「共用成本」欄");
+  var cos = [];
+  H.h.forEach(function (h, j) { var m = /^(.+?)成本$/.exec(h); if (m && m[1] !== "共用" && !/單位|施工|小計/.test(m[1])) cos.push({ co: m[1], j: j }); });
+  var rows = [];
+  (sh.rows || []).slice(H.i + 1).forEach(function (r) {
+    r = r || []; var g = function (j) { return j >= 0 ? r[j] : ""; };
+    var name = str(g(c.name)), model = str(g(c.model));
+    if (!name && !model) return;
+    var o = { n: name, b: str(g(c.brand)), m: model, u: str(g(c.unit)), k: str(g(c.kind)) || "設備", s: str(g(c.sys)), c: cbNum(g(c.shared)), w: cbNum(g(c.wire)), p: cbNum(g(c.pull)), i: cbNum(g(c.install)) };
+    var cc = {}, any = false; cos.forEach(function (x) { var v = cbNum(r[x.j]); if (v) { cc[x.co] = v; any = true; } });
+    if (any) o.cc = cc;
+    if (!o.c && !any && !o.w && !o.p && !o.i) return;   /* 沒有成本也沒有工資的列不需要 */
+    rows.push(o);
+  });
+  var regions = [], rs = cbSheet(sheets, /區域/);
+  if (rs) { var RH = cbHeader(rs, "區域"); if (RH) { var kc = RH.col(/關鍵字/), lc = RH.col(/^工資係數/), wc = RH.col(/^線材係數/), cc2 = RH.col(/^公司/);
+    rs.rows.slice(RH.i + 1).forEach(function (r) { r = r || []; var nm = str(r[0]), keys = str(r[kc]).split(/[,，、\s]+/).filter(Boolean); if (!nm || !keys.length || !cbNum(r[lc])) return;   /* 沒填工資係數的列（說明文字）不是區域 */
+      regions.push({ name: nm, keys: keys, labor: cbNum(r[lc]) || 1, wire: cbNum(r[wc]) || 1, co: cc2 >= 0 ? str(r[cc2]) : "" }); }); } }
+  var std = [], ss = cbSheet(sheets, /工資標準/);
+  if (ss) { var SH = cbHeader(ss, "設備類別"); if (SH) { var rc = SH.col(/關鍵字/), w2 = SH.col(/^線材/), p2 = SH.col(/^拉線/), i2 = SH.col(/^安裝/);
+    ss.rows.slice(SH.i + 1).forEach(function (r) { r = r || []; var re = str(r[rc]); if (!str(r[0]) || !re) return; try { new RegExp(re); } catch (e) { return; }
+      std.push({ cls: str(r[0]), re: re, w: cbNum(r[w2]), p: cbNum(r[p2]), i: cbNum(r[i2]) }); }); } }
+  if (!rows.length) throw new Error("「設備成本」分頁沒有任何成本或工資");
+  return { costbook: 1, rows: rows, companies: cos.map(function (x) { return x.co; }), regions: regions, std: std };
+}
+function cbRegion(cb, company, site) {
+  var t = str(site), co = str(company), hit = null;
+  (cb.regions || []).forEach(function (r) {
+    if (!r.keys.some(function (k) { return t.indexOf(k) >= 0; })) return;
+    if (r.co && co.indexOf(r.co) < 0 && r.co.indexOf(co) < 0) return;
+    if (!hit || (r.co && !hit.co)) hit = r;
+  });
+  return hit || { name: "", labor: 1, wire: 1 };
+}
+function cbIndex(cb) {
+  if (cb._ix) return cb._ix;
+  var byModel = {}, byName = {}, dev = [];
+  cb.rows.forEach(function (r) {
+    var mk = cbModel(r.m); if (mk.length >= 4 && !byModel[mk]) byModel[mk] = r;
+    var nk = cbName(r.n); if (nk && !byName[nk]) byName[nk] = r;
+    if (r.k === "設備" && r.n) dev.push(r);
+  });
+  var keys = Object.keys(byModel).sort(function (a, b) { return b.length - a.length; });
+  var std = (cb.std || []).map(function (s) { return { s: s, re: new RegExp(s.re) }; });
+  Object.defineProperty(cb, "_ix", { value: { byModel: byModel, keys: keys, byName: byName, dev: dev, std: std }, enumerable: false, configurable: true });
+  return cb._ix;
+}
+function cbFind(ix, it) {
+  var txt = cbModel([it.model, it.brandSpec, it.spec].join(" "));
+  if (txt.length >= 4) for (var i = 0; i < ix.keys.length; i++) if (txt.indexOf(ix.keys[i]) >= 0) return { r: ix.byModel[ix.keys[i]], how: "型號" };
+  var r = ix.byName[cbName(it.name)]; if (r) return { r: r, how: "品名" };
+  var best = null, bs = 0;
+  ix.dev.forEach(function (d) { if (!(d.c || d.cc || d.w || d.p || d.i)) return; var sc = matchScore(it.name, d.n); if (sc > bs) { bs = sc; best = d; } });
+  return best && bs >= 0.75 ? { r: best, how: "相近品名" } : null;
+}
+/** 套用成本總表；回傳摘要（顯示在報價單上方） */
+function applyCostbook(q, cb, opt) {
+  if (!cb || !cb.rows || !cb.rows.length) return null;
+  var ix = cbIndex(cb), co = str(opt && opt.company), rg = cbRegion(cb, co, opt && opt.site);
+  var sum = { company: co, region: rg.name, labor: rg.labor, wire: rg.wire, cost: 0, labor0: 0, lumps: 0, sections: [] };
+  var coKey = (cb.companies || []).filter(function (c) { return co && (co.indexOf(c) >= 0 || c.indexOf(co) >= 0); })[0] || "";
+  q.sections.forEach(function (s) {
+    var W = 0, P = 0, I = 0, cov = 0, tot = 0;
+    s.items.forEach(function (it) {
+      if (it.kind !== "device" || isLength(it)) return;
+      var qty = Number(it.qty) || 0, f = cbFind(ix, it), note = [];
+      if (qty > 0) tot += qty;
+      if (!f) return;
+      var r = f.r, cost = (coKey && r.cc && r.cc[coKey]) || r.c || 0;
+      if (!cost && r.cc) { var any = Object.keys(r.cc)[0]; if (any) cost = r.cc[any]; }
+      if (cost) { it.cost = cost; sum.cost++; note.push("成本 " + cost.toLocaleString() + (coKey && r.cc && r.cc[coKey] ? "（" + coKey + "）" : "")); }
+      var w = r.w, p = r.p, ins = r.i;
+      if (!w && !p && !ins) { var sd = ix.std.filter(function (x) { return x.re.test(it.name); })[0]; if (sd) { w = sd.s.w; p = sd.s.p; ins = sd.s.i; note.push("工資依「" + sd.s.cls + "」標準"); } }
+      if (w || p || ins) {
+        it.wire = Math.round(w * rg.wire); it.pull = Math.round(p * rg.labor); it.install = Math.round(ins * rg.labor);
+        W += qty * it.wire; P += qty * it.pull; I += qty * it.install; cov += qty; sum.labor0++;
+        note.push("單位工資 線材 " + it.wire + "／拉線 " + it.pull + "／安裝 " + it.install);
+      }
+      it.cbNote = "成本表（" + f.how + "：" + (r.m || r.n) + "）" + (note.length ? "：" + note.join("，") : "");
+    });
+    /* 線材、工資式項目：設備有工資的數量達 60% 才改用實算 */
+    if (!tot || cov / tot < 0.6) { if (tot) sum.sections.push(s.name + "：只有 " + Math.round(cov / tot * 100) + "% 設備有工資資料，線材與工資維持範本比例"); return; }
+    /* 每類只改一個主要項目（同段有「網路控制線材及五金另料」與「五金另料」時，改有「線材」字樣、範本金額最大的那項） */
+    var typeOf = function (n) { return /線材|五金|另料/.test(n) ? "W" : /結線|佈線|配線|拉線/.test(n) ? "P" : /安裝|按裝/.test(n) ? "I" : ""; }, pick = {};
+    s.items.forEach(function (it) {
+      if (!(it.kind === "material" || it.kind === "labor" || it.kind === "service") || !lumpOf(it) || Number(it.qty) !== 1) return;
+      var n = str(it.name), ty = typeOf(n); if (!ty) return;
+      var sc = (ty === "W" && /線材/.test(n) ? 1e12 : 0) + (Number(it.tcost) || Number(it.tprice) || 0);
+      if (!pick[ty] || sc > pick[ty].sc) pick[ty] = { it: it, sc: sc };
+    });
+    s.items.forEach(function (it) {
+      var n = str(it.name), ty = typeOf(n);
+      if (!ty || !pick[ty] || pick[ty].it !== it) return;
+      var target = ty === "W" ? W : ty === "P" ? P : I;
+      if (!(target > 0)) return;
+      var ratio = it.tcost > 0 ? it.tprice / it.tcost : (it.cost > 0 ? it.price / it.cost : 0);
+      it.cost = Math.round(target / 10) * 10;
+      if (ratio > 0) it.price = roundPrice(it.cost * ratio);
+      it.flag = "依成本表計算：Σ數量×單位" + (/線材|五金|另料/.test(n) ? "線材" : /安裝|按裝/.test(n) ? "安裝工資" : "拉線工資") + (rg.name ? "（" + rg.name + " ×" + (/線材|五金|另料/.test(n) ? rg.wire : rg.labor) + "）" : "");
+      sum.lumps++;
+    });
+  });
+  return sum;
+}
+
 /* ---------- 依成本與利潤率訂價 ----------
    mode "margin"（毛利率，預設）：售價＝成本 ÷ (1 − 利潤率)；mode "markup"（加成率）：售價＝成本 × (1 + 利潤率)
    售價 1,000 以上取整到 10 元，以下取整到 1 元。沒有成本的項目不動。 */
@@ -304,6 +434,6 @@ function applyProfit(q, pct, mode, secIdx) {
   finalize(q);
   return n;
 }
-var api = { priceFromCost: priceFromCost, profitOf: profitOf, applyProfit: applyProfit, toSheets: toSheets, matchScore: matchScore, SYSTEMS: SYSTEMS, GRADES: GRADES, classify: classify, smartOf: smartOf, candidates: candidates, build: build, finalize: finalize, stripSmart: stripSmart };
+var api = { parseCostbook: parseCostbook, applyCostbook: applyCostbook, priceFromCost: priceFromCost, profitOf: profitOf, applyProfit: applyProfit, toSheets: toSheets, matchScore: matchScore, SYSTEMS: SYSTEMS, GRADES: GRADES, classify: classify, smartOf: smartOf, candidates: candidates, build: build, finalize: finalize, stripSmart: stripSmart };
 if (typeof module === "object" && module.exports) module.exports = api; else root.QUOTEGEN = api;
 })(typeof self !== "undefined" ? self : this);
