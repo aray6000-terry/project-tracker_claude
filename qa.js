@@ -10,15 +10,23 @@ var REVIEW_LABEL={"":"待主管抽查",pass:"抽查通過",return:"退回重檢"
 
 /* ---------- 自主檢查表範本（依各結點查驗關卡與《專案工程師養成計畫》整理；key 不可重複、不可改，改了舊紀錄會對不到） ---------- */
 var ITP={
+  1:{title:"開工前檢查（全案共用）",items:[
+    ["s1","合約系統、設備型號、數量與不含項目已列清單"],["s2","平面圖與合約數量核對，差異已提問並有書面回覆"],
+    ["s3","介面分工表（配管、110V、箱體、消防連動）已簽認"],["s4","設備已送審核可才請購"],
+    ["s5","工地主任、水電、小包聯絡資料已登錄"],["s6","小包合約、保險、勞安文件齊全"],["s7","已現場勘查工地位置與出入、作業時間規定"]]},
   2:{title:"配管查驗（封板、灌漿前）",items:[
     ["p1","配管路徑、管徑、數量與配管圖相符"],["p2","強弱電分管，間距符合規定"],["p3","管內佔用率不超過約 40%"],
     ["p4","每管預留拉線，管口封堵"],["p5","出線盒位置、高度與圖面相符"],["p6","封板／灌漿前逐管拍照存證"]]},
   3:{title:"佈線與結線查驗",items:[
+    ["w7","使用水電最新版平面圖（門窗、單線、箱體）"],["w8","穿線前配管通暗確認，不通已登記缺失"],["w9","打水線後才定位出線高度"],
     ["w1","線材規格與送審核可型號相符"],["w2","穿線後測線：通斷"],["w3","穿線後測線：絕緣"],
-    ["w4","線材兩端標示清楚、與結線表一致"],["w5","依結線表顏色結線"],["w6","線路測試紀錄已填寫"]]},
+    ["w4","線材兩端標示清楚、與結線表一致"],["w5","依結線表顏色結線"],["w6","線路測試紀錄已填寫"],
+    ["w10","門窗磁簧線全數套管保護，坎縫前拍照"],["w11","門窗坎縫後磁簧迴路複測正常"],["w12","預留線長足夠，線頭已包覆防水"]]},
   4:{title:"設備安裝查驗",items:[
     ["i1","安裝位置、高度與設備配置圖相符"],["i2","設備固定牢靠、外觀無損"],["i3","箱體標示與配線圖一致"],
-    ["i4","接地與電源（110V）已確認"],["i5","與消防廠商實測連動（門禁釋放、柵欄開啟）"]]},
+    ["i4","接地與電源（110V）已確認"],["i5","與消防廠商實測連動（門禁釋放、柵欄開啟）"],
+    ["i6","TU／IO 編表定版，與現場線號一致"],["i7","已向優得美申請 BA 軟體並取得交付日（標準 4 週、急件 2 週、特急件 1 週）"],
+    ["i8","粉刷前出線盒已加蓋保護；粉刷油漆完成後才裝外露設備"]]},
   5:{title:"系統測試查驗（單機 → 系統 → 整合）",items:[
     ["t1","單機測試全數完成"],["t2","系統測試完成"],["t3","整合（介面）測試完成"],
     ["t4","全系統時間對時"],["t5","IP 位址表定版並移交"],["t6","機櫃整線、標示完成"]]}
@@ -102,12 +110,12 @@ function render(cur,el,d,photos){
   h+='</section>';
 
   /* ---- 自主檢查表 ---- */
-  var ks=T.sysList(p); if(!st.insSys||ks.indexOf(st.insSys)<0) st.insSys=ks[0]||"common";
+  var ks=T.sysList(p), common=st.insNode===1; if(common) st.insSys="common"; else if(!st.insSys||ks.indexOf(st.insSys)<0) st.insSys=ks[0]||"common";
   var cur0=insp.filter(function(x){ return x.node===st.insNode && x.sys===st.insSys; })[0];
   var res=(cur0&&cur0.result)||{}, items=itpItems(st.insNode,st.insSys);
   h+='<section class="panel"><h3>自主檢查表（三級品管）</h3><p class="meta">工程師在各停留點逐項自主檢查並附照片，送出後由主管抽查；退回時需重新檢查後再送出。</p>'
     +'<div class="uprow"><select id="insNode" class="fld">'+Object.keys(ITP).map(function(n){ return '<option value="'+n+'"'+(+n===st.insNode?" selected":"")+'>結點'+(+n+1)+' '+esc(T.NODES[n].name)+'｜'+esc(ITP[n].title)+'</option>'; }).join("")+'</select>'
-    +'<select id="insSys" class="fld">'+(ks.length?sysOptions(p,st.insSys,false):'<option value="common">共用</option>')+'</select></div>';
+    +'<select id="insSys" class="fld">'+(ks.length&&!common?sysOptions(p,st.insSys,false):'<option value="common">共用</option>')+'</select></div>';
   if(cur0) h+='<p class="meta">上次檢查：'+esc(T.userName(cur0.by))+' '+fmtTime(cur0.at)+'｜'+esc(REVIEW_LABEL[cur0.review||""])+(cur0.reviewer?'（'+esc(T.userName(cur0.reviewer))+' '+fmtTime(cur0.reviewAt)+'）':'')+(cur0.reviewNote?'｜意見：'+esc(cur0.reviewNote):'')+'</p>';
   h+='<div class="tblwrap"><table class="cards"><thead><tr><th>#</th><th>檢查項目</th><th>結果</th><th>說明</th></tr></thead><tbody>'
     +items.map(function(it,i){
