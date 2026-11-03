@@ -215,8 +215,35 @@ function quoteIo(){
   (q.sections||[]).forEach(function(s){ (s.items||[]).forEach(function(it){ var m=/DI\s*[:：]\s*(\d+)/i.exec(it.name||""); if(m&&!out){ var d=/DO\s*[:：]\s*(\d+)/i.exec(it.name), c=/通訊協定\s*[:：]\s*(\d+)/.exec(it.name); out={di:+m[1],do:d?+d[1]:null,comm:c?+c[1]:null,name:it.name}; } }); });
   return out;
 }
+/* IO 接線編表逐點修改（params.ioEdit，依點位編號 tag 記錄）與 DI 警報／不警報 */
+var ALARM_RE=/警報|故障|跳脫|異常|過高|過低|高水位|低水位|滿水|溢水|枯水|求救|漏水|濃度|防盜|侵入|破壞|火警|消防|緊急|超溫|過熱|漏電|斷線|停電|失壓|過載|alarm|fault|trip/i;
+function alarmDef(r){
+  if(!(r.ch&&/^DI/.test(r.ch)&&r.name!=="預留")) return false;
+  var pt=String(r.point||"").trim();
+  /* 以點位內容判斷（消防泵浦「運轉」不警報、「故障」警報）；點位內容空白或只是「狀態」時才看設備名稱 */
+  if(pt&&!/^(狀態|DI-?\d+)$/i.test(pt)) return ALARM_RE.test(pt);
+  return ALARM_RE.test((r.dev||r.name||"")+" "+(r.note||""));
+}
+function ioOrig(r){ return (r.dev||r.name||"")+"|"+(r.point||""); }
+function applyIoEdits(P){
+  var ed=st.params.ioEdit||{}, n={alarm:0,normal:0,edited:0,stale:0};
+  P.io.panels.forEach(function(p){ p.rows.forEach(function(r){
+    if(r.__ioe) return; r.__ioe=1;
+    var e=ed[r.tag]; r.origDev=r.dev||r.name; r.origPoint=r.point||""; r.origLoc=r.loc||"";
+    if(e){
+      if(e.o!==undefined&&e.o!==ioOrig(r)) r.stale=e.o.replace("|","－");
+      if(e.dev!==undefined){ r.dev=e.dev; r.name=e.dev||"預留"; }
+      if(e.point!==undefined) r.point=e.point;
+      if(e.loc!==undefined) r.loc=e.loc;
+      r.edited=e.dev!==undefined||e.point!==undefined||e.loc!==undefined;
+    }
+    if(/^DI/.test(r.ch||"")) r.alarm=e&&e.alarm!==undefined?!!e.alarm:alarmDef(r);
+  }); });
+  P.io.panels.forEach(function(p){ p.rows.forEach(function(r){ if(r.edited) n.edited++; if(r.stale) n.stale++; if(/^DI/.test(r.ch||"")&&r.name!=="預留"){ if(r.alarm) n.alarm++; else n.normal++; } }); });
+  return n;
+}
 function ioView(P){
-  var io=P.io, t=io.total, tb=io.table, edit=T.canEdit();
+  var io=P.io, t=io.total, tb=io.table, edit=T.canEdit(), ien=applyIoEdits(P);
   var h='<div class="row" style="flex-wrap:wrap"><h3>中央監控 I/O 管理點數表與模組配置</h3><div class="tools">'+(tb?'<button class="btn small" id="csvIoTable" type="button">下載點數表（CSV）</button>':'')+'<button class="btn small" id="csvIo" type="button">下載 IO 接線編表（CSV）</button></div></div>';
   if(tb){
     var tt=tb.totals, qi=quoteIo();
@@ -252,10 +279,20 @@ function ioView(P){
   if(shown.length){
     var used=0,spare=0; shown.forEach(function(x){ x.rows.forEach(function(r){ if(r.name==="預留") spare++; else used++; }); });
     h+='<h4 style="margin:16px 0 6px">IO 接線編表：<select id="ioFloor"><option value="all"'+(sel==="all"?" selected":"")+'>全部樓層</option>'+io.panels.map(function(x){ return '<option'+(x.floor===sel?" selected":"")+'>'+esc(x.floor)+'</option>'; }).join("")+'</select></h4>'
-      +'<p class="meta">每個點位接到哪一個模組、哪一個端子。模組 IP 與「IP 編表」的 IO 設備一致（VLAN '+esc((shown[0].modules[0]||{}).vlan||"")+'）；同一台設備的點排在相鄰端子，模組末端為預留點。使用 '+used+' 點、預留 '+spare+' 點。</p>'
-      +'<div class="tblwrap"><table><thead><tr>'+(sel==="all"?'<th>監控箱</th>':'')+'<th>模組</th><th>型號</th><th>模組 IP</th><th>端子</th><th>點位編號</th><th>設備</th><th>點位內容</th><th>位置</th></tr></thead><tbody>'
+      +'<p class="meta">每個點位接到哪一個模組、哪一個端子。模組 IP 與「IP 編表」的 IO 設備一致（VLAN '+esc((shown[0].modules[0]||{}).vlan||"")+'）；同一台設備的點排在相鄰端子，模組末端為預留點。使用 '+used+' 點、預留 '+spare+' 點。'
+      +'<br>DI 分<b style="color:var(--bad)">警報</b>（故障、跳脫、高低水位、漏水、濃度、求救、防盜等，發生時中央監控要跳警報、響鈴、記錄）與<b>不警報</b>（運轉、開關、位置等狀態顯示）：全部 DI 中警報 '+ien.alarm+' 點、不警報 '+ien.normal+' 點。系統依點位內容自動判斷，可逐點修改。'
+      +(ien.edited?'<br>已手動修改 '+ien.edited+' 點（底色標示）。':'')+'</p>'
+      +(ien.stale?'<div class="tipbox" style="border-color:var(--warn,#b7791f)"><b>有 '+ien.stale+' 個點位的自動編排已變動</b>（數量或樓層改過，端子重新排列），手動修改仍套用在原點位編號上，請確認標示「⚠」的列是否正確。</div>':'')
+      +(edit?'<div class="tools" style="margin:6px 0">'+(st.ioEditing?'<button class="btn small primary" id="btnIoeSave" type="button">儲存點位修改</button><button class="btn small" id="btnIoeCancel" type="button">取消</button><span class="meta">可改設備、點位內容、位置；預留點也可以填入新的點位。清空設備名稱＝改回預留。</span>':'<button class="btn small" id="btnIoeOn" type="button">修改點位</button>')
+        +(Object.keys(st.params.ioEdit||{}).length?'<button class="btn small danger" id="btnIoeReset" type="button">清除全部點位修改</button>':'')+'</div>':'')
+      +'<div class="tblwrap"><table><thead><tr>'+(sel==="all"?'<th>監控箱</th>':'')+'<th>模組</th><th>型號</th><th>模組 IP</th><th>端子</th><th>點位編號</th><th>設備</th><th>點位內容</th><th>DI 類別</th><th>位置</th></tr></thead><tbody>'
       +shown.map(function(x){ var last=""; return x.rows.map(function(r){ var first=r.mod!==last; last=r.mod;
-        return '<tr'+(r.name==="預留"?' class="muted"':'')+(first?' style="border-top:2px solid var(--line)"':'')+'>'+(sel==="all"?'<td>'+(first?esc(x.panel):'')+'</td>':'')+'<td class="mono">'+(first?esc(r.mod||r.module):'')+'</td><td>'+(first?esc(r.type||""):'')+'</td><td class="mono">'+(first?esc(r.ip||""):'')+'</td><td class="mono">'+esc(r.ch)+'</td><td class="mono">'+esc(r.tag)+'</td><td>'+esc(r.dev||r.name)+'</td><td>'+esc(r.point||"")+'</td><td>'+esc(r.loc||r.note||"")+'</td></tr>'; }).join(""); }).join("")+'</tbody></table></div>';
+        var ing=edit&&st.ioEditing&&r.ch!=="COM", di=/^DI/.test(r.ch||""), spareRow=r.name==="預留"&&!r.edited;
+        var inp=function(k,v,w){ return '<input class="fld" data-ioe="'+esc(r.tag)+'" data-k="'+k+'" value="'+esc(v)+'" style="width:'+w+'px;padding:3px 6px">'; };
+        var alm=di&&!spareRow?(edit?'<select class="alm'+(r.alarm?' on':'')+'" data-ioa="'+esc(r.tag)+'" aria-label="'+esc(r.tag)+' 警報類別"><option value="1"'+(r.alarm?' selected':'')+'>警報</option><option value="0"'+(r.alarm?'':' selected')+'>不警報</option></select>':(r.alarm?'<b style="color:var(--bad)">警報</b>':'不警報')):(di?'':'<span class="hint">—</span>');
+        var cls=(spareRow?'muted':'')+(r.edited?' ioed':'');
+        return '<tr'+(cls.trim()?' class="'+cls.trim()+'"':'')+(first?' style="border-top:2px solid var(--line)"':'')+(r.stale?' title="原自動編排：'+esc(r.stale)+'"':'')+'>'+(sel==="all"?'<td>'+(first?esc(x.panel):'')+'</td>':'')+'<td class="mono">'+(first?esc(r.mod||r.module):'')+'</td><td>'+(first?esc(r.type||""):'')+'</td><td class="mono">'+(first?esc(r.ip||""):'')+'</td><td class="mono">'+esc(r.ch)+'</td><td class="mono">'+esc(r.tag)+(r.stale?' ⚠':'')+'</td>'
+          +'<td>'+(ing?inp("dev",r.name==="預留"&&!r.edited?"":(r.dev||r.name),170):esc(r.dev||r.name))+'</td><td>'+(ing?inp("point",r.point||"",120):esc(r.point||""))+'</td><td>'+alm+'</td><td>'+(ing?inp("loc",r.loc||"",110):esc(r.loc||r.note||""))+'</td></tr>'; }).join(""); }).join("")+'</tbody></table></div>';
   }
   return h;
 }
@@ -446,7 +483,37 @@ function bind(P,cur,el){
     var np=Object.assign({},st.params,{ioFloor:m});
     api("analysisSave",{id:cur.id,kind:"design",data:np}).then(function(){ st.params=np; toast("「"+sel.dataset.iofl+"」接到 "+(sel.value||"自動判斷")); re(); }).catch(fail);
   }; });
-  if($("csvIo")) $("csvIo").onclick=function(){ var rows=[["樓層","監控箱","模組","型號","模組IP","遮罩","閘道","端子","點位編號","設備","點位內容","位置","說明"]]; P.io.panels.forEach(function(p){ var mm={}; p.modules.forEach(function(m){ mm[m.id]=m; }); p.rows.forEach(function(r){ var m=mm[r.mod]||{}; rows.push([p.floor,p.panel,r.mod||r.module,r.type||"",r.ip||"",m.mask?maskOf(m.mask):"",m.gw||"",r.ch,r.tag,r.dev||r.name,r.point||"",r.loc||"",r.note||""]); }); }); csv(name+"_IO接線編表.csv",rows); };
+  if($("csvIo")) $("csvIo").onclick=function(){ var rows=[["樓層","監控箱","模組","型號","模組IP","遮罩","閘道","端子","點位編號","設備","點位內容","DI類別","位置","說明"]]; P.io.panels.forEach(function(p){ var mm={}; p.modules.forEach(function(m){ mm[m.id]=m; }); p.rows.forEach(function(r){ var m=mm[r.mod]||{}; rows.push([p.floor,p.panel,r.mod||r.module,r.type||"",r.ip||"",m.mask?maskOf(m.mask):"",m.gw||"",r.ch,r.tag,r.dev||r.name,r.point||"",/^DI/.test(r.ch||"")&&r.name!=="預留"?(r.alarm?"警報":"不警報"):"",r.loc||"",(r.note||"")+(r.edited?"（手動修改）":"")]); }); }); csv(name+"_IO接線編表.csv",rows); };
+  var ioeSave=function(m,msg){ var np=Object.assign({},st.params,{ioEdit:m}); return api("analysisSave",{id:cur.id,kind:"design",data:np}).then(function(){ st.params=np; toast(msg); re(); }).catch(fail); };
+  var rowByTag=function(tag){ var hit=null; P.io.panels.forEach(function(p){ p.rows.forEach(function(r){ if(r.tag===tag) hit=r; }); }); return hit; };
+  el.querySelectorAll("[data-ioa]").forEach(function(s2){ s2.onchange=function(){
+    var r=rowByTag(s2.dataset.ioa); if(!r) return;
+    var m=JSON.parse(JSON.stringify(st.params.ioEdit||{})), e=m[r.tag]||{}, v=s2.value==="1";
+    if(e.o===undefined) e.o=ioOrig({dev:r.origDev,point:r.origPoint});
+    var probe={ch:r.ch,name:r.name,dev:r.dev,point:r.point,note:r.note};
+    if(v===alarmDef(probe)) delete e.alarm; else e.alarm=v?1:0;
+    if(Object.keys(e).filter(function(k){ return k!=="o"; }).length) m[r.tag]=e; else delete m[r.tag];
+    ioeSave(m,r.tag+" 設為"+(v?"警報":"不警報"));
+  }; });
+  if($("btnIoeOn")) $("btnIoeOn").onclick=function(){ st.ioEditing=true; re(); };
+  if($("btnIoeCancel")) $("btnIoeCancel").onclick=function(){ st.ioEditing=false; re(); };
+  if($("btnIoeReset")) $("btnIoeReset").onclick=function(){ if(!confirm("清除全部點位修改（含警報設定），恢復系統自動編排？")) return; st.ioEditing=false; ioeSave({},"已恢復自動編排"); };
+  if($("btnIoeSave")) $("btnIoeSave").onclick=function(){
+    var m=JSON.parse(JSON.stringify(st.params.ioEdit||{})), ch=0;
+    var byTag={}; el.querySelectorAll("[data-ioe]").forEach(function(inp){ (byTag[inp.dataset.ioe]=byTag[inp.dataset.ioe]||{})[inp.dataset.k]=inp.value.trim().slice(0,80); });
+    Object.keys(byTag).forEach(function(tag){
+      var r=rowByTag(tag); if(!r) return;
+      var v=byTag[tag], orig={dev:r.origDev==="預留"?"":r.origDev,point:r.origPoint,loc:r.origLoc}, e=m[tag]||{};
+      ["dev","point","loc"].forEach(function(k){ if(v[k]===undefined) return; if(v[k]===orig[k]) delete e[k]; else e[k]=v[k]; });
+      if(e.o===undefined) e.o=ioOrig({dev:r.origDev,point:r.origPoint});
+      var keep=Object.keys(e).filter(function(k){ return k!=="o"; }).length;
+      if(JSON.stringify(keep?e:null)!==JSON.stringify(m[tag]||null)) ch++;
+      if(keep) m[tag]=e; else delete m[tag];
+    });
+    st.ioEditing=false;
+    if(!ch){ toast("沒有變更"); re(); return; }
+    ioeSave(m,"已儲存 "+ch+" 個點位的修改");
+  };
   if($("csvIp")) $("csvIp").onclick=function(){ csv(name+"_IP編表.csv",[["VLAN","用途","IP","遮罩","閘道","設備名稱","樓層","設備"]].concat(P.ip.rows.map(function(r){ return [r.vlan,r.sys,r.ip,maskOf(r.mask),r.gw,r.name,r.floor,r.device]; }))); };
   if($("csvSw")) $("csvSw").onclick=function(){ csv(name+"_交換器.csv",[["層級","樓層","編號","埠數","使用","PoE(W)","上連"]].concat(P.net.access.map(function(a){ var d=P.net.dist.filter(function(d){ return d.floors.indexOf(a.floor)>=0; })[0]; return ["接取",a.floor,a.id,a.ports,a.used,a.poe?a.poeW:"",d?d.id:""]; }),P.net.dist.map(function(d){ return ["匯聚",d.at,d.id,d.ports,d.downlinks,"",P.net.core.id]; }),[["核心",P.net.core.floor,P.net.core.id,P.net.core.ports,"","",""]])); };
   if($("routePlan")) $("routePlan").onchange=function(){ st.plan=+this.value; re(); };
@@ -455,7 +522,7 @@ function bind(P,cur,el){
     P.wiring.plans.forEach(function(p){ p.runs.forEach(function(r){ rows.push([p.title,p.floors.join(" "),r.n,r.cable,r.m,r.x,r.y,r.tx,r.ty]); }); }); csv(name+"_配線清單.csv",rows); };
   if($("csvCable")) $("csvCable").onclick=function(){ csv(name+"_線材估算.csv",[["線材","用途","條數","米數","依據"]].concat(P.cables.map(function(c){ return [c.type,c.use,c.runs,c.meters,c.basis||"估算"]; }))); };
   if($("btnDsSave")) $("btnDsSave").onclick=function(){
-    var np={ioQty:st.params.ioQty||{}, ioFloor:st.params.ioFloor||{}, ioRules:{}, extraIo:xio().filter(function(x){ return String(x.name).trim()&&+x.n>0; }).map(function(x){ return {floor:x.floor,name:String(x.name).trim().slice(0,60),n:Math.min(200,+x.n)}; })};
+    var np={ioQty:st.params.ioQty||{}, ioFloor:st.params.ioFloor||{}, ioEdit:st.params.ioEdit||{}, ioRules:{}, extraIo:xio().filter(function(x){ return String(x.name).trim()&&+x.n>0; }).map(function(x){ return {floor:x.floor,name:String(x.name).trim().slice(0,60),n:Math.min(200,+x.n)}; })};
     ["baseNet","spare","growth","floorHeight","avgRun","slack","distGroup","coreFloor","separateCctv","unitM","drop"].forEach(function(k){ var e=$("p_"+k); if(e) np[k]=e.value; });
     if(!/^\d{1,3}\.\d{1,3}$/.test(np.baseNet)){ toast("IP 前兩段格式例：10.10"); return; }
     var items=(st.dr.items||[]).filter(function(it){ return it.total>0; });

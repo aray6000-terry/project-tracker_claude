@@ -31,9 +31,9 @@
 前端（本儲存庫）與後端（Apps Script）要同時更新，否則畫面會出現「後端尚未部署「xxx」功能」。
 
 1. 前端：推送到 GitHub，`index.html` 內所有 `?v=` 改成新版本號（`dxf-worker.js`、`analysis.js`、`sld.js` 內的 Worker 網址也要改）。
-2. 後端：Apps Script「弱電專案進度追蹤-後端」貼上新版 .gs 檔（順序：Code → Analysis → Catalog → QA），「管理部署作業 → 編輯 → 建立新版本 → 部署」。
-3. 備份：在雲端「弱電專案平台_程式版本」建立 `v版本號_日期（說明）` 資料夾，放入本版變更的前端檔與**全部** .gs 檔（Code.gs、Analysis.gs、Catalog.gs、QA.gs）與部署說明。
+2. 後端：Apps Script「弱電專案進度追蹤-後端」貼上新版 .gs 檔（順序：Code → Analysis → Catalog → QA → Contract），「管理部署作業 → 編輯 → 建立新版本 → 部署」。
+3. 備份：在雲端「弱電專案平台_程式版本」建立 `v版本號_日期（說明）` 資料夾，放入本版變更的前端檔與**全部** .gs 檔（Code.gs、Analysis.gs、Catalog.gs、QA.gs、Contract.gs）與部署說明。
 4. 驗證：登入後打開一個專案，各分頁不應出現「後端尚未部署」。
 
 前端目前會呼叫的後端操作（後端 ACTIONS 需全部存在）：
-`adminAudit`、`adminSaveCompanies`、`adminSaveUser`、`adminUsers`、`analysisGet`、`analysisOne`、`analysisSave`、`billAct`、`billTermsSave`、`bills`、`catalogFile`、`catalogList`、`catalogUpload`、`changes`、`create`、`dashboard`、`dealGet`、`deviceAdd`、`devices`、`fileDelete`、`fileGet`、`files`、`get`、`inspectReview`、`inspectSave`、`issueSave`、`issues`、`list`、`me`、`punchSave`、`qaGet`、`quoteLibGet`、`quoteLibSave`、`remove`、`reqAct`、`reqCreate`、`reqs`、`save`、`setOwner`、`share`、`standardGet`、`standardSave`、`submittalBuild`、`upload`
+`addendaGet`、`addendaSave`、`adminAudit`、`adminSaveCompanies`、`adminSaveUser`、`adminUsers`、`analysisGet`、`analysisOne`、`analysisSave`、`billAct`、`billTermsSave`、`bills`、`catalogFile`、`catalogList`、`catalogUpload`、`changes`、`contractGet`、`contractSave`、`contractSummary`、`create`、`dashboard`、`dealGet`、`deviceAdd`、`devices`、`fileDelete`、`fileGet`、`files`、`get`、`inspectReview`、`inspectSave`、`issueSave`、`issues`、`list`、`me`、`punchSave`、`qaGet`、`quoteLibGet`、`quoteLibSave`、`remove`、`reqAct`、`reqCreate`、`reqs`、`save`、`setOwner`、`share`、`standardGet`、`standardSave`、`submittalBuild`、`upload`

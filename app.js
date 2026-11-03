@@ -495,6 +495,7 @@ function renderNav(){
   if(caps.projects) items.push(["projects","專案"]);
   if(caps.reqCreate||caps.reqConfirm||caps.reqShip||caps.reqViewAll) items.push(["reqs","領料"]);
   if(caps.billView) items.push(["bills","請款"]);
+  if(caps.billAmounts||caps.quote||session.me.role==="admin"||session.me.role==="ceo") items.push(["contracts","合約彙整"]);
   if(caps.manageUsers) items.push(["admin","權限管理"]);
   var curH=(location.hash.replace(/^#/,"")||"home").split("/")[0];
   if(/^p=/.test(curH)) curH="projects";
@@ -934,7 +935,7 @@ function route(){
   cur=null;
   if(h==="admin"){ renderAdmin(); return; }
   if(h==="projects"){ if(data.users.length) renderListFresh(); else loadList(); return; }
-  if((h==="reqs"||h==="bills") && window.TR){ TR.views[h](); return; }
+  if((h==="reqs"||h==="bills"||h==="contracts") && window.TR){ TR.views[h](); return; }
   if(window.TR && TR.views.home){ TR.views.home(); return; }
   loadList();
 }

@@ -212,10 +212,10 @@ function moneyFiles(cur,reload){
     var up=canUpMoney(cur)&&T.canEdit();
     var li=function(f){ var mine=f.by===me().email||cur.myRole==="admin"||cur.myRole==="manager";
       return '<li><div class="main"><b>'+esc(f.name)+'</b><span class="meta">'+sizeTxt(f.size)+(f.caption?'｜'+esc(f.caption):'')+'｜'+esc(T.userName(f.by))+' '+fmtTime(f.at)+'</span></div><button class="btn small" data-dl="'+esc(f.id)+'" type="button">下載</button>'+(up&&mine?'<button class="btn small danger" data-del="'+esc(f.id)+'" data-name="'+esc(f.name)+'" type="button">刪除</button>':'')+'</li>'; };
-    var h='<section class="panel"><h3>合約（'+r[0].files.length+'）</h3><p class="meta">存放在專案資料夾「合約」，只有業務、主管、會計、採購與 CEO 看得到。支援 PDF、Word、Excel、圖片、ZIP。</p>';
+    var h='<section class="panel"><h3>合約（'+r[0].files.length+'）</h3><p class="meta">存放在專案資料夾「合約」，只有業務、主管、會計、採購與 CEO 看得到。支援 PDF、Word、Excel、圖片、ZIP。<br>要辨識合約的付款方式與請款比例，請到 <a href="#p='+esc(cur.id)+'/bills">請款</a> 分頁的「合約資料」。</p>';
     if(up) h+='<div class="uprow"><input type="text" id="ctCap" class="fld" maxlength="200" placeholder="說明（例：工程合約 2026-10-30 用印版）"><input type="file" id="ctFile" multiple accept=".pdf,.doc,.docx,.xlsx,.xls,.jpg,.jpeg,.png,.zip"><button class="btn primary small" id="btnCt" type="button">上傳合約</button></div>';
     h+=r[0].files.length?'<ul class="list">'+r[0].files.map(li).join("")+'</ul>':'<p class="meta">尚未上傳合約。</p>';
-    h+='</section><section class="panel"><h3>成交報價單原始檔（'+r[1].files.length+'）</h3><p class="meta">請在「領料」分頁上傳成交報價單，系統會同時解析品項並保存原始檔。</p>'
+    h+='</section><section class="panel"><h3>成交報價單原始檔（'+r[1].files.length+'）</h3><p class="meta">成交報價單、追加報價單請在「領料」分頁上傳（上傳一次即可），系統會同時解析品項並保存原始檔。</p>'
       +(r[1].files.length?'<ul class="list">'+r[1].files.map(li).join("")+'</ul>':'<p class="meta">尚未上傳。</p>')+'</section>';
     box.innerHTML=h;
     bindFiles(box,cur,reload);
@@ -302,16 +302,25 @@ function dealRows(deal){
   deal.sections.forEach(function(s){ (s.items||[]).forEach(function(it){ if(Number(it.qty)>0&&it.row) out.push({ref:"r"+it.row,sec:s.name||"",name:it.name,unit:it.unit||"",qty:Number(it.qty),type:it.kind||"",brand:it.brand||""}); }); });
   return out;
 }
+/* 追加報價單品項：ref 用 a<追加ID>r<列號>，與後端 dealItems_ 一致 */
+function addendaRows(adds){
+  var out=[];
+  (adds||[]).forEach(function(a){ ((a.data&&a.data.sections)||[]).forEach(function(s){ (s.items||[]).forEach(function(it){
+    if(Number(it.qty)>0&&it.row) out.push({ref:"a"+a.id+"r"+it.row,sec:"追加"+a.no+"｜"+(s.name||""),name:it.name,unit:it.unit||"",qty:Number(it.qty),type:it.kind||"",brand:it.brand||"",add:a.no}); }); }); });
+  return out;
+}
 function canUpMoney(cur){ var c=caps(); return !!(c.quote||c.billTerms||(cur&&(cur.myRole==="admin"||cur.myRole==="manager"))); }
 function canSeeMoney(){ var c=caps(); return !!(c.quote||c.cost||c.billAmounts); }
 function reqsView(el,cur){
   var app=el||$("app"); loading(app);
   var c=caps();
-  Promise.all([api("reqs",cur?{id:cur.id}:{}), cur?api("dealGet",{id:cur.id}).catch(function(){ return {deal:null}; }):Promise.resolve({deal:null})]).then(function(res){
-    var r=res[0], deal=res[1].deal, list=r.reqs, h='';
+  Promise.all([api("reqs",cur?{id:cur.id}:{}), cur?api("dealGet",{id:cur.id}).catch(function(){ return {deal:null}; }):Promise.resolve({deal:null}),
+    cur?api("addendaGet",{id:cur.id}).catch(function(e){ return {addenda:[],off:e.code==="NOT_DEPLOYED"}; }):Promise.resolve({addenda:[]})]).then(function(res){
+    var r=res[0], deal=res[1].deal, adds=res[2].addenda||[], list=r.reqs, h='';
+    var plan=dealRows(deal).concat(addendaRows(adds));
     if(!cur) h+='<section class="panel" style="margin-bottom:14px"><h3>領料單</h3><p class="meta" style="margin:0">流程：工務申請 →（超出成交報價單時：直屬主管簽核異常單）→ 採購確認 → 倉管出貨；每一步都會記錄處理人與時間。'+(c.reqCreate?'要申請領料請到該專案的「領料」分頁。':'')+'</p></section>';
-    if(cur) h+=dealPanel(cur,deal);
-    if(cur && c.reqCreate && T.canEdit()) h+=reqForm(deal);
+    if(cur) h+=dealPanel(cur,deal,adds,res[2].off);
+    if(cur && c.reqCreate && T.canEdit()) h+=reqForm(plan,adds.length);
     var filter=view.reqFilter||"active";
     h+='<div class="filters"><div class="seg">'+[["active","處理中"],["all","全部"],["shipped","已出貨"]].map(function(f){ return '<button type="button" data-rf="'+f[0]+'" class="'+(filter===f[0]?"on":"")+'">'+f[1]+'</button>'; }).join("")+'</div></div>';
     var shown=list.filter(function(q){ return filter==="all"||(filter==="shipped"?q.status==="shipped":["approval","submitted","confirmed","rejected"].indexOf(q.status)>=0); });
@@ -327,19 +336,35 @@ function reqsView(el,cur){
       api("reqAct",{reqId:b.dataset.rid,act:act,note:note}).then(function(){ toast("已更新領料單"); reqsView(el,cur); }).catch(fail);
     }; });
     app.querySelectorAll("[data-rprint]").forEach(function(b){ b.onclick=function(){ var q=list.filter(function(x){return x.id===b.dataset.rprint;})[0]; if(q) printReq(q); }; });
-    if(cur) bindDealPanel(cur,function(){ reqsView(el,cur); });
-    if(cur && c.reqCreate && T.canEdit()) bindReqForm(cur,deal,usedByRef(list,cur.id),function(){ reqsView(el,cur); });
+    if(cur) bindDealPanel(cur,deal,adds,function(){ reqsView(el,cur); });
+    if(cur && c.reqCreate && T.canEdit()) bindReqForm(cur,plan,usedByRef(list,cur.id),function(){ reqsView(el,cur); });
   }).catch(function(e){ app.innerHTML='<div class="empty">'+esc(e.message)+'</div>'; });
 }
 var view={};
-/* 成交報價單：上傳（業務／主管）與摘要 */
-function dealPanel(cur,deal){
-  var rows=dealRows(deal), cnt={};
+/* 成交報價單（上傳一次即可）＋追加報價單 */
+function dealPanel(cur,deal,adds,off){
+  var rows=dealRows(deal), cnt={}, up=canUpMoney(cur)&&T.canEdit();
   rows.forEach(function(x){ cnt[x.type]=(cnt[x.type]||0)+1; });
   var h='<section class="panel"><h3>成交報價單</h3>';
-  if(deal) h+='<p class="meta">目前：<b>'+esc(deal.fileName||"成交報價單")+'</b>｜'+esc(T.userName(deal.savedBy||""))+' '+fmtTime(deal.savedAt)+'｜共 '+rows.length+' 項（'+Object.keys(cnt).map(function(k){ return (TYPE_LABEL[k]||"其他")+' '+cnt[k]; }).join("、")+'）。領料表會依這份報價單產生，超出數量需填異常單給直屬主管簽核。</p>';
-  else h+='<p class="meta">尚未上傳成交報價單。上傳後，「申請領料」會依報價單自動列出所有品項（含工資發包），超出報價數量時需填異常單給直屬主管簽核。'+(canUpMoney(cur)?'':'請業務或主管上傳。')+'</p>';
-  if(canUpMoney(cur)&&T.canEdit()) h+='<div class="uprow"><input type="file" id="dealFile" accept=".xlsx,.xls"><button class="btn small'+(deal?'':' primary')+'" id="btnDeal" type="button">'+(deal?'更新成交報價單':'上傳成交報價單')+'</button></div><p class="hint" id="dealMsg">格式同公司估價單範本（Excel）；原始檔會一併存到專案資料夾「成交報價單」。</p>';
+  if(deal){
+    h+='<p class="meta">✅ 已上傳：<b>'+esc(deal.fileName||"成交報價單")+'</b>｜'+esc(T.userName(deal.savedBy||""))+' '+fmtTime(deal.savedAt)+'｜共 '+rows.length+' 項（'+Object.keys(cnt).map(function(k){ return (TYPE_LABEL[k]||"其他")+' '+cnt[k]; }).join("、")+'）。'
+      +'不需要每次領料都重新上傳；業主追加的項目請用下方「追加報價單」。</p>';
+    if(up) h+='<details class="mini"><summary>更換成交報價單（合約變更、上傳錯檔時才需要）</summary><div class="uprow"><input type="file" id="dealFile" accept=".xlsx,.xls"><button class="btn small" id="btnDeal" type="button">更換成交報價單</button></div><p class="hint" id="dealMsg">更換後，已送出的領料單仍保留，但會依新報價單的列號比對剩餘數量。</p></details>';
+  } else {
+    h+='<p class="meta">尚未上傳成交報價單。上傳後，「申請領料」會依報價單自動列出所有品項（含工資發包），超出報價數量時需填異常單給直屬主管簽核。'+(up?'':'請業務或主管上傳。')+'</p>';
+    if(up) h+='<div class="uprow"><input type="file" id="dealFile" accept=".xlsx,.xls"><button class="btn small primary" id="btnDeal" type="button">上傳成交報價單</button></div><p class="hint" id="dealMsg">格式同公司估價單範本（Excel）；原始檔會一併存到專案資料夾「成交報價單」。</p>';
+  }
+  h+='</section><section class="panel"><h3>追加報價單（'+(adds||[]).length+'）</h3>';
+  if(off) h+='<p class="meta">追加報價單功能需要更新後端（Contract.gs），請管理員部署 v2.10.0。</p>';
+  else {
+    h+='<p class="meta">業主追加、變更設計的品項。上傳後會併入「申請領料」清單（標示「追加N」），領料超量檢查也會一起計算。</p>';
+    h+=(adds||[]).length?'<ul class="list">'+adds.map(function(a){
+      var n=addendaRows([a]).length;
+      return '<li><div class="main"><b>追加'+esc(a.no)+'：'+esc(a.name)+'</b><span class="meta">'+esc(a.fileName||"")+'｜'+n+' 項'+(a.total!==undefined&&a.total!==null?'｜'+money(a.total):'')+'｜'+esc(T.userName(a.savedBy))+' '+fmtTime(a.savedAt)+(a.note?'<br>'+esc(a.note):'')+'</span></div>'
+        +(a.fileId?'<button class="btn small" data-dl="'+esc(a.fileId)+'" type="button">下載</button>':'')+(up?'<button class="btn small danger" data-addrm="'+esc(a.id)+'" data-name="'+esc(a.name)+'" type="button">移除</button>':'')+'</li>'; }).join("")+'</ul>'
+      :'<p class="meta">目前沒有追加報價單。</p>';
+    if(up) h+='<div class="uprow"><input type="text" id="addName" class="fld" maxlength="80" placeholder="名稱（例：2F 東側門禁追加）" style="min-width:200px"><input type="text" id="addNote" class="fld" maxlength="300" placeholder="說明（選填，例：業主 11/2 簽認）" style="flex:1;min-width:160px"><input type="file" id="addFile" accept=".xlsx,.xls"><button class="btn small primary" id="btnAdd" type="button">上傳追加報價單</button></div><p class="hint" id="addMsg">格式同成交報價單（公司估價單範本 Excel）。</p>';
+  }
   return h+'</section>';
 }
 function readQuoteFile(f){
@@ -348,7 +373,29 @@ function readQuoteFile(f){
     return XLSX_LITE.read(buf);
   }).then(function(sheets){ return QUOTE.parse(sheets); });
 }
-function bindDealPanel(cur,reload){
+function bindDealPanel(cur,deal,adds,reload){
+  var app=$("app"); if(app) bindFiles(app,cur,reload);
+  document.querySelectorAll("[data-addrm]").forEach(function(x){ x.onclick=function(){
+    if(!confirm("確定移除追加報價單「"+x.dataset.name+"」？已送出的領料單不受影響，但之後不會再列出這些品項。")) return;
+    api("addendaSave",{id:cur.id,remove:x.dataset.addrm}).then(function(){ toast("已移除"); reload(); }).catch(fail);
+  }; });
+  var ba=$("btnAdd");
+  if(ba) ba.onclick=function(){
+    var f=$("addFile").files[0], name=$("addName").value.trim(), msg=$("addMsg");
+    if(!f){ toast("請先選擇追加報價單"); return; }
+    if(f.size>25*1024*1024){ toast("檔案超過 25MB"); return; }
+    msg.textContent="解析中…";
+    readQuoteFile(f).then(function(q){
+      var n=dealRows(q).length;
+      if(!n) throw new Error("讀不到品項，請確認是公司估價單格式");
+      if(!name) name=f.name.replace(/\.[^.]+$/,"");
+      if(!confirm("追加報價單「"+name+"」：讀到 "+(q.sections||[]).length+" 個系統、"+n+" 個品項，總價 "+money(q.total&&q.total.price)+"。確定新增？")){ msg.textContent=""; return; }
+      msg.textContent="上傳原始檔…"; ba.disabled=true;
+      return b64FromFile(f).then(function(d){ return api("upload",{id:cur.id,kind:"deal",name:f.name,data:d,caption:"追加報價單："+name}); })
+        .then(function(r){ msg.textContent="儲存中…"; return api("addendaSave",{id:cur.id,add:{name:name,note:$("addNote").value,fileName:f.name,fileId:(r&&r.file&&r.file.id)||"",data:q}}); })
+        .then(function(){ toast("已新增追加報價單「"+name+"」"); reload(); });
+    }).catch(function(e){ ba.disabled=false; msg.textContent=""; fail(e); });
+  };
   var b=$("btnDeal"); if(!b) return;
   b.onclick=function(){
     var f=$("dealFile").files[0]; if(!f){ toast("請先選擇成交報價單"); return; }
@@ -392,9 +439,9 @@ function overTable(over){
   return '<div class="tblwrap"><table><thead><tr><th>品名</th><th>報價數量</th><th>先前已申請</th><th>本次</th><th>超出</th></tr></thead><tbody>'+over.map(function(o){
     return '<tr><td>'+esc(o.name)+(o.extra?'（報價單外）':'')+'</td><td>'+esc(o.extra?"—":o.quote)+'</td><td>'+esc(o.extra?"—":o.before)+'</td><td>'+esc(o.now)+'</td><td><b>'+esc(o.extra?o.now:Math.round((o.before+o.now-o.quote)*100)/100)+'</b></td></tr>'; }).join("")+'</tbody></table></div>';
 }
-function reqForm(deal){
-  var hasDeal=dealRows(deal).length>0;
-  return '<section class="panel"><h3>申請領料</h3><p class="meta">'+(hasDeal?'下表依<b>成交報價單</b>列出所有品項（含工資發包），在「本次申請」填數量即可；報價單沒有的品項可從下方加入，會列為異常。':'尚未上傳成交報價單，請從設備資料庫搜尋加入品項，或直接輸入。')+'送出後由採購確認、倉管出貨；系統會記錄送出人與時間。</p>'
+function reqForm(plan,nAdd){
+  var hasDeal=plan.length>0;
+  return '<section class="panel"><h3>申請領料</h3><p class="meta">'+(hasDeal?'下表依<b>成交報價單</b>'+(nAdd?'＋<b>'+nAdd+' 份追加報價單</b>':'')+'列出所有品項（含工資發包），在「本次申請」填數量即可；報價單沒有的品項可從下方加入，會列為異常。':'尚未上傳成交報價單，請從設備資料庫搜尋加入品項，或直接輸入。')+'送出後由採購確認、倉管出貨；系統會記錄送出人與時間。</p>'
     +(hasDeal?'<div class="uprow"><input type="text" id="dealQ" class="fld" placeholder="篩選品項（品名、系統）" style="flex:1;min-width:180px"><label class="meta"><input type="checkbox" id="dealLeft"> 只顯示尚有剩餘的</label></div><div class="tblwrap" style="max-height:420px;overflow:auto"><table class="items"><thead><tr><th>系統</th><th>類別</th><th>品名</th><th>報價</th><th>已申請</th><th>剩餘</th><th>本次申請</th></tr></thead><tbody id="dealItems"></tbody></table></div>':'')
     +'<h4 style="margin:12px 0 6px">'+(hasDeal?'報價單外品項（會列為異常）':'品項')+'</h4>'
     +'<div class="uprow"><input type="text" id="devQ" class="fld" placeholder="搜尋設備（品名、廠牌、型號，例：AR-727、攝影機）" style="flex:1;min-width:200px"><button class="btn small" id="btnDevQ" type="button">搜尋</button><button class="btn small" id="btnAddBlank" type="button">手動新增一列</button></div>'
@@ -413,9 +460,9 @@ function renderDraft(){
   tb.querySelectorAll("[data-di]").forEach(function(inp){ inp.oninput=function(){ draft.items[+inp.dataset.di][inp.dataset.k]=inp.value; if(draft.onChange) draft.onChange(); }; });
   tb.querySelectorAll("[data-drm]").forEach(function(b){ b.onclick=function(){ draft.items.splice(+b.dataset.drm,1); renderDraft(); if(draft.onChange) draft.onChange(); }; });
 }
-function bindReqForm(cur,deal,used,reload){
+function bindReqForm(cur,plan,used,reload){
   if(draft.pid!==cur.id) draft={pid:cur.id,items:[],q:{}};
-  var rows=dealRows(deal), hasDeal=rows.length>0;
+  var rows=plan, hasDeal=rows.length>0;
   function renderDeal(){
     var tb=$("dealItems"); if(!tb) return;
     var kw=($("dealQ").value||"").trim(), left=$("dealLeft").checked;
@@ -513,13 +560,142 @@ function billsTab(cur,el){
       :'<p class="meta">尚未設定請款期別。'+(editTerms?'請在下方設定。':'請業務設定付款條件。')+'</p>';
     h+='</section>';
     if(editTerms) h+=termsEditor(list,p);
+    if(c.billAmounts||c.quote||c.billTerms) h='<div id="ctBox"></div>'+h;
     el.innerHTML=h;
+    if($("ctBox")) contractPanel(cur,list,$("ctBox"),function(){ billsTab(cur,el); });
     bindBillActs(el,function(){ billsTab(cur,el); });
     var setAmt=function(v){ setContractAmount(cur,v).then(function(){ toast("已更新合約總價 "+money(v)); billsTab(cur,el); }).catch(fail); };
     if($("btnCAmt")) $("btnCAmt").onclick=function(){ var v=Math.round(Number(String($("cAmt").value).replace(/[,\s$]/g,""))); if(!(v>=0)){ toast("請輸入正確金額"); return; } setAmt(v); };
     if($("btnCAmtDeal")) $("btnCAmtDeal").onclick=function(){ if(confirm("把合約總價改為成交報價單總價 "+money(dealTotal)+"？各期金額會依比例重新計算（已指定金額的期別不變）。")) setAmt(dealTotal); };
     if(editTerms) bindTermsEditor(cur,list,function(){ billsTab(cur,el); });
   }).catch(function(e){ el.innerHTML='<div class="empty">'+esc(e.message)+'</div>'; });
+}
+/* --- 合約資料：上傳合約檔 → 辨識請款方式與比例 → 人工確認 → 存檔、套用到請款期別 --- */
+var ctDraft=null;
+function contractPanel(cur,bills,box,reload){
+  box.innerHTML='<section class="panel"><h3>合約資料</h3><div class="loading">讀取中…</div></section>';
+  Promise.all([api("contractGet",{id:cur.id}),api("files",{id:cur.id,kind:"contract"}).catch(function(){ return {files:[]}; })]).then(function(r){
+    var ct=r[0].contract, canE=r[0].canEdit&&T.canEdit(), files=(r[1].files||[]).filter(function(f){ return /\.(pdf|docx|xlsx)$/i.test(f.name); });
+    if(ctDraft&&ctDraft.pid!==cur.id) ctDraft=null;
+    var h='<section class="panel"><h3>合約資料</h3>';
+    if(ct&&!ctDraft) h+=contractView(ct);
+    else if(!ctDraft) h+='<p class="meta">尚未建立合約資料。上傳合約（PDF、Word .docx、Excel）後按「辨識合約」，系統會找出合約金額、簽約日、付款方式、各期請款比例，確認後可直接套用到下方請款期別。</p>';
+    if(canE&&!ctDraft){
+      h+='<div class="uprow">'+(files.length?'<select id="ctPick" class="fld" style="max-width:320px">'+files.map(function(f){ return '<option value="'+esc(f.id)+'" data-name="'+esc(f.name)+'">'+esc(f.name)+'</option>'; }).join("")+'</select><button class="btn small primary" id="btnCtParse" type="button">辨識合約</button><span class="meta">或</span>':'')
+        +'<input type="file" id="ctLocal" accept=".pdf,.docx,.xlsx"><button class="btn small'+(files.length?'':' primary')+'" id="btnCtLocal" type="button">上傳並辨識</button>'
+        +(ct?'<button class="btn small" id="btnCtEdit" type="button">手動修改</button>':'<button class="btn small" id="btnCtBlank" type="button">手動填寫</button>')+'</div>'
+        +'<p class="hint" id="ctMsg">掃描檔（圖片型 PDF）讀不到文字，請改用手動填寫。辨識結果一定要人工確認後才會儲存。</p>';
+    }
+    if(ctDraft) h+=contractForm(ctDraft);
+    box.innerHTML=h+'</section>';
+    if(ctDraft){ bindContractForm(cur,bills,box,reload); return; }
+    if(ct&&canE&&$("btnCtApply")) $("btnCtApply").onclick=function(){ applyContract(cur,ct,bills,reload); };
+    if(!canE) return;
+    var msg=$("ctMsg");
+    var run=function(name,bytes,fileId){
+      msg.textContent="辨識中…（"+name+"）";
+      return CONTRACT.extract(name,bytes).then(function(text){
+        if(text===null) throw new Error("這個格式無法辨識，請用 PDF、Word（.docx）或 Excel，或改用手動填寫");
+        var compact=String(text||"").replace(/\s+/g,"");
+        if(compact.length<80) throw new Error("讀不到文字（可能是掃描檔），請改用手動填寫");
+        var d=CONTRACT.parse(text); d.sourceFile=name; d.sourceFileId=fileId||""; d.parsedBy="auto"; d.pid=cur.id;
+        if(!d.contractNo&&cur.project.contractNo) d.contractNo=cur.project.contractNo;
+        ctDraft=d; contractPanel(cur,bills,box,reload);
+      });
+    };
+    if($("btnCtParse")) $("btnCtParse").onclick=function(){
+      var sel=$("ctPick"), fid=sel.value, name=sel.options[sel.selectedIndex].dataset.name;
+      msg.textContent="下載合約中…";
+      api("fileGet",{fileId:fid}).then(function(f){ var bin=atob(f.data), u=new Uint8Array(bin.length); for(var i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i); return run(name,u,fid); })
+        .catch(function(e){ msg.textContent=""; fail(e); });
+    };
+    $("btnCtLocal").onclick=function(){
+      var f=$("ctLocal").files[0]; if(!f){ toast("請先選擇合約檔"); return; }
+      if(f.size>25*1024*1024){ toast("檔案超過 25MB"); return; }
+      msg.textContent="上傳合約中…";
+      var fileId="";
+      b64FromFile(f).then(function(d){ return api("upload",{id:cur.id,kind:"contract",name:f.name,data:d,caption:"合約（辨識用）"}); })
+        .then(function(r2){ fileId=(r2&&r2.file&&r2.file.id)||""; return f.arrayBuffer(); })
+        .then(function(buf){ return run(f.name,new Uint8Array(buf),fileId); })
+        .catch(function(e){ msg.textContent=""; fail(e); });
+    };
+    var manual=function(){ var d=JSON.parse(JSON.stringify(ct||{terms:[]})); d.pid=cur.id; d.parsedBy=ct?ct.parsedBy||"manual":"manual"; d.warnings=[];
+      if(!ct){ d.contractNo=cur.project.contractNo||""; d.amount=Number(cur.project.contractAmount)||0; d.payMethod=""; }
+      ctDraft=d; contractPanel(cur,bills,box,reload); };
+    if($("btnCtEdit")) $("btnCtEdit").onclick=manual;
+    if($("btnCtBlank")) $("btnCtBlank").onclick=manual;
+  }).catch(function(e){
+    box.innerHTML=e.code==="FORBIDDEN"?'':'<section class="panel"><h3>合約資料</h3><p class="meta">'+(e.code==="NOT_DEPLOYED"?'合約辨識需要更新後端（Contract.gs），請管理員部署 v2.10.0。':esc(e.message))+'</p></section>';
+  });
+}
+function termsTxt(terms){ return (terms||[]).map(function(t){ return t.name+" "+t.pct+"%"; }).join("／"); }
+function contractView(ct){
+  var kv=function(k,v){ return v?'<div><b>'+esc(k)+'</b>'+esc(v)+'</div>':''; };
+  return '<div class="info">'+kv("合約編號",ct.contractNo)+kv("工程名稱",ct.title)+kv("甲方",ct.party)+kv("簽約日",ct.signDate)
+    +kv("合約金額",ct.amount?money(ct.amount)+(ct.amountTaxIncl?"（含稅）":"（未稅）"):"")+kv("付款方式",ct.payMethod)+kv("保留款",ct.retentionPct?ct.retentionPct+"%":"")
+    +kv("保固",ct.warranty)+kv("工期",ct.period)+kv("逾期罰則",ct.penalty)+'</div>'
+    +(ct.terms&&ct.terms.length?'<div class="tblwrap"><table><thead><tr><th>#</th><th>期別</th><th>比例</th><th>金額</th><th>請款條件（合約原文）</th><th>觸發結點</th></tr></thead><tbody>'+ct.terms.map(function(t,i){
+      return '<tr><td>'+(i+1)+'</td><td>'+esc(t.name)+'</td><td>'+esc(t.pct)+'%</td><td>'+money(t.amount||Math.round((ct.amount||0)*t.pct/100))+'</td><td class="meta">'+esc(t.cond||"")+'</td><td>'+esc(t.trigger>=0?"結點"+(t.trigger+1):"—")+'</td></tr>'; }).join("")+'</tbody></table></div>':'<p class="meta">沒有請款期別。</p>')
+    +'<p class="hint">來源：'+esc(ct.sourceFile||"手動填寫")+(ct.parsedBy==="auto"?"（自動辨識後確認）":"")+'｜'+esc(T.userName(ct.savedBy||""))+' '+fmtTime(ct.savedAt)+'</p>'
+    +'<div class="tools"><button class="btn small primary" id="btnCtApply" type="button">套用到請款期別</button></div>';
+}
+function contractForm(d){
+  var f=function(k,label,w,ph){ return '<label class="meta">'+label+' <input class="fld" data-ck="'+k+'" value="'+esc(d[k]===undefined||d[k]===null?"":d[k])+'" style="width:'+(w||160)+'px" placeholder="'+esc(ph||"")+'"></label>'; };
+  var sum=(d.terms||[]).reduce(function(a,t){ return a+(Number(t.pct)||0); },0);
+  return '<div class="anomaly" style="background:var(--surface);border-color:var(--accent)"><b>'+(d.parsedBy==="auto"?'辨識結果（請逐項確認，有錯直接修改）':'合約資料')+'</b>'+(d.sourceFile?'<span class="meta">　來源：'+esc(d.sourceFile)+'</span>':'')
+    +((d.warnings||[]).length?'<ul class="meta" style="color:var(--warn);margin:6px 0">'+d.warnings.map(function(w){ return '<li>'+esc(w)+'</li>'; }).join("")+'</ul>':'')
+    +'<div class="uprow" style="flex-wrap:wrap">'+f("contractNo","合約編號",150)+f("title","工程名稱",240)+f("party","甲方",200)+f("signDate","簽約日",120,"YYYY-MM-DD")+'</div>'
+    +'<div class="uprow" style="flex-wrap:wrap">'+f("amount","合約金額",130)+'<label class="meta"><input type="checkbox" data-ck="amountTaxIncl"'+(d.amountTaxIncl?" checked":"")+'> 金額含稅</label>'+f("tax","稅額",100)+f("retentionPct","保留款%",60)+f("warranty","保固",90)+f("period","工期",110)+'</div>'
+    +'<div class="uprow" style="flex-wrap:wrap">'+f("payMethod","付款方式",360,"例：每期請款後 30 天匯款")+f("penalty","逾期罰則",300)+'</div>'
+    +'<div class="tblwrap"><table class="items"><thead><tr><th>期別名稱</th><th>比例%</th><th>金額</th><th>請款條件</th><th>觸發結點</th><th></th></tr></thead><tbody>'+(d.terms||[]).map(function(t,i){
+      return '<tr><td><input data-cti="'+i+'" data-k="name" maxlength="40" value="'+esc(t.name)+'" style="width:130px"></td><td><input data-cti="'+i+'" data-k="pct" type="number" min="0" max="100" step="any" value="'+esc(t.pct)+'" style="width:70px"></td>'
+        +'<td class="meta">'+money(Math.round((Number(d.amount)||0)*(Number(t.pct)||0)/100))+'</td><td><input data-cti="'+i+'" data-k="cond" maxlength="200" value="'+esc(t.cond||"")+'" style="width:100%;min-width:220px"></td>'
+        +'<td><select data-cti="'+i+'" data-k="trigger">'+nodeOptions(t.trigger,true)+'</select></td><td><button class="btn small danger" data-ctrm="'+i+'" type="button">刪除</button></td></tr>'; }).join("")+'</tbody></table></div>'
+    +'<div class="tools"><button class="btn small" id="btnCtAddT" type="button">新增一期</button><span class="meta" style="'+(Math.abs(sum-100)>0.01?"color:var(--bad)":"")+'">比例合計 '+(Math.round(sum*100)/100)+'%</span>'
+    +'<span style="flex:1"></span><button class="btn small" id="btnCtCancel" type="button">取消</button><button class="btn small" id="btnCtSave" type="button">儲存合約資料</button><button class="btn small primary" id="btnCtSaveApply" type="button">儲存並套用到請款期別</button></div></div>';
+}
+function bindContractForm(cur,bills,box,reload){
+  var d=ctDraft, redraw=function(){ contractPanel(cur,bills,box,reload); };
+  box.querySelectorAll("[data-ck]").forEach(function(inp){ inp.onchange=function(){ var k=inp.dataset.ck;
+    d[k]=inp.type==="checkbox"?inp.checked:(["amount","tax","retentionPct"].indexOf(k)>=0?Number(String(inp.value).replace(/[,\s$]/g,""))||0:inp.value);
+    if(k==="amount") redraw(); }; });
+  box.querySelectorAll("[data-cti]").forEach(function(inp){ inp.onchange=function(){ var t=d.terms[+inp.dataset.cti], k=inp.dataset.k;
+    t[k]=k==="trigger"?+inp.value:k==="pct"?Number(inp.value)||0:inp.value; if(k==="pct") redraw(); }; });
+  box.querySelectorAll("[data-ctrm]").forEach(function(b){ b.onclick=function(){ d.terms.splice(+b.dataset.ctrm,1); redraw(); }; });
+  $("btnCtAddT").onclick=function(){ d.terms.push({name:"第"+(d.terms.length+1)+"期",pct:0,amount:0,cond:"",trigger:-1}); redraw(); };
+  $("btnCtCancel").onclick=function(){ ctDraft=null; redraw(); };
+  var save=function(apply){
+    var sum=d.terms.reduce(function(a,t){ return a+(Number(t.pct)||0); },0);
+    if(d.terms.length&&Math.abs(sum-100)>0.01&&!confirm("請款比例合計 "+sum+"%，不是 100%。仍要儲存？")) return;
+    d.terms.forEach(function(t){ t.amount=Math.round((Number(d.amount)||0)*(Number(t.pct)||0)/100); });
+    var body={}; ["contractNo","title","party","signDate","amount","amountTaxIncl","tax","payMethod","retentionPct","warranty","period","penalty","note","terms","sourceFile","sourceFileId","parsedBy"].forEach(function(k){ body[k]=d[k]; });
+    api("contractSave",{id:cur.id,contract:body}).then(function(r){
+      ctDraft=null; toast("已儲存合約資料");
+      if(apply) return applyContract(cur,r.contract,bills,reload);
+      reload();
+    }).catch(fail);
+  };
+  $("btnCtSave").onclick=function(){ save(false); };
+  $("btnCtSaveApply").onclick=function(){ save(true); };
+}
+/** 合約期別 → 請款期別（沿用既有期別的 ID，已請款的期別不會被刪除）；同步專案的合約編號、合約總價（未稅）、付款條件 */
+function applyContract(cur,ct,bills,reload){
+  var terms=ct.terms||[];
+  if(!terms.length){ toast("合約資料沒有請款期別"); return; }
+  var started=bills.filter(function(b){ return b.status!=="pending"; });
+  var msg="會把請款期別改成合約的 "+terms.length+" 期（"+termsTxt(terms)+"）";
+  if(started.length) msg+="\n\n注意：已有 "+started.length+" 期有完工／請款紀錄，這些期別會依順序保留紀錄並更新名稱與比例。";
+  if(!confirm(msg+"\n\n確定套用？")) return;
+  var untaxed=ct.amount?(ct.amountTaxIncl?Math.round(ct.tax?ct.amount-ct.tax:ct.amount/1.05):Math.round(ct.amount)):0;
+  var payload=terms.map(function(t,i){ var b=bills[i]; return {id:b?b.id:undefined,name:t.name,pct:Number(t.pct)||0,amount:"",trigger:t.trigger,note:String(t.cond||"").slice(0,200)}; });
+  api("billTermsSave",{id:cur.id,terms:payload}).then(function(){
+    var p=cur.project, ch=false;
+    if(ct.contractNo&&p.contractNo!==ct.contractNo){ p.contractNo=ct.contractNo; ch=true; }
+    if(untaxed&&Number(p.contractAmount)!==untaxed){ p.contractAmount=untaxed; ch=true; }
+    var pc=termsTxt(terms)+(ct.payMethod?"；"+ct.payMethod:"")+(ct.retentionPct?"；保留款 "+ct.retentionPct+"%":"");
+    if(p.payCondition!==pc){ p.payCondition=pc.slice(0,300); ch=true; }
+    return ch?(T.saveProject?T.saveProject():api("save",{id:cur.id,version:cur.version,project:p}).then(function(r){ cur.version=r.version; })):null;
+  }).then(function(){ toast("已套用到請款期別"+(untaxed?"，合約總價（未稅）"+money(untaxed):"")); reload(); }).catch(fail);
 }
 function setContractAmount(cur,v){
   cur.project.contractAmount=v;
@@ -608,6 +784,71 @@ T.views.bills=function(){
     bindBillActs(app,T.views.bills);
   }).catch(function(e){ app.innerHTML='<div class="empty">'+esc(e.message)+'</div>'; });
 };
+
+/* --- 合約・設備彙整（所有可見專案：合約金額、付款方式、請款比例、設備廠牌型號數量） --- */
+var CS={tab:"proj",q:"",sys:""};
+function csSys(x){ return String(x||"").replace(/^[一二三四五六七八九十\d]+[、.．\s]*/,"").trim()||"未分類"; }
+function csAgg(items){
+  var agg={};
+  items.forEach(function(i){ var sys=csSys(i.sys), k=[sys,i.name,i.brand,i.model].join("\u0001");
+    var a=agg[k]||(agg[k]={sys:sys,name:i.name,brand:i.brand,model:i.model,unit:i.unit,qty:0,amount:0,projects:{}});
+    a.qty+=Number(i.qty)||0; a.amount+=Number(i.amount)||0; a.projects[i.project]=(a.projects[i.project]||0)+(Number(i.qty)||0); });
+  return Object.keys(agg).map(function(k){ return agg[k]; }).sort(function(a,b){ return a.sys===b.sys?b.qty-a.qty:(a.sys<b.sys?-1:1); });
+}
+function csExport(d){
+  var head=function(arr){ return arr.map(function(v){ return {v:v,s:2}; }); }, t=function(v){ return {v:v,s:3}; }, n=function(v){ return {v:Number(v)||0,s:4}; }, q=function(v){ return {v:Number(v)||0,s:12}; };
+  var P=d.projects, I=d.items, A=csAgg(I), tr=[];
+  P.forEach(function(x){ (x.terms||[]).forEach(function(tm,i){ tr.push([t(x.name),q(i+1),t(tm.name),{v:(Number(tm.pct)||0)/100,s:8},n(tm.amount||Math.round((x.contractAmount||0)*(tm.pct||0)/100)),t(tm.cond||""),t(x.termsFrom)]); }); });
+  var sheets=[
+    {name:"專案合約",cols:[30,16,16,12,16,12,14,14,14,8,36,8,10,14,14,10],freeze:1,rows:[head(["專案","業主","公司","業務","合約編號","簽約日","合約金額","成交報價單","追加金額","追加份數","付款方式","保留款%","保固","已請款","已收款","狀態"])].concat(P.map(function(x){
+      return [t(x.name),t(x.client),t(x.company),t(T.userName(x.salesRep||"")),t(x.contractNo),t(x.signDate),n(x.contractAmount),n(x.dealTotal),n(x.addendaTotal),q(x.addendaCount),t(x.payMethod),q(x.retentionPct||0),t(x.warranty||""),n(x.billed),n(x.paid),t(x.closed?"已結案":"進行中")]; }))},
+    {name:"請款期別",cols:[30,6,20,9,14,50,10],freeze:1,rows:[head(["專案","期","名稱","比例","金額","條件","來源"])].concat(tr)},
+    {name:"型號統計",cols:[16,30,16,22,10,8,14,8,60],freeze:1,rows:[head(["系統","品名","廠牌","型號","總數量","單位","總金額","專案數","各專案數量"])].concat(A.map(function(a){
+      return [t(a.sys),t(a.name),t(a.brand),t(a.model),q(a.qty),t(a.unit),n(a.amount),q(Object.keys(a.projects).length),t(Object.keys(a.projects).map(function(p){ return p+" "+a.projects[p]; }).join("、"))]; }))},
+    {name:"設備明細",cols:[30,18,18,30,16,22,8,6,12,14],freeze:1,rows:[head(["專案","來源","系統","品名","廠牌","型號","數量","單位","單價","複價"])].concat(I.map(function(i){
+      return [t(i.project),t(i.src),t(i.sys),t(i.name),t(i.brand),t(i.model),q(i.qty),t(i.unit),n(i.price),n(i.amount)]; }))}
+  ];
+  var b=XLSX_WRITE.build(sheets), a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([b],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
+  a.download="合約設備彙整_"+T.today()+".xlsx"; document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },1500);
+}
+T.views.contracts=function(){
+  var app=$("app"); loading(app);
+  api("contractSummary",{}).then(function(d){ CS.data=d; csRender(app); })
+    .catch(function(e){ app.innerHTML='<div class="empty">'+(e.code==="NOT_DEPLOYED"?'合約彙整需要更新後端（Contract.gs），請管理員部署 v2.10.0。':esc(e.message))+'</div>'; });
+};
+function csRender(app){
+  var d=CS.data, c=caps(), kw=CS.q.trim().toLowerCase();
+  var hit=function(s){ return !kw||String(s).toLowerCase().indexOf(kw)>=0; };
+  var P=d.projects.filter(function(x){ return hit([x.name,x.client,x.company,x.contractNo,x.payMethod].join(" ")); });
+  var I=d.items.filter(function(i){ return (!CS.sys||csSys(i.sys)===CS.sys)&&hit([i.project,i.sys,i.name,i.brand,i.model].join(" ")); });
+  var sysList=Object.keys(d.items.reduce(function(m,i){ m[csSys(i.sys)]=1; return m; },{})).sort();
+  var tot=P.reduce(function(m,x){ m.amt+=Number(x.contractAmount)||0; m.add+=Number(x.addendaTotal)||0; m.paid+=Number(x.paid)||0; return m; },{amt:0,add:0,paid:0});
+  var h='<section class="panel" style="margin-bottom:14px"><h3>合約・設備彙整</h3><p class="meta" style="margin:0">彙整每個專案的合約（金額、付款方式、請款比例）與成交／追加報價單的設備（系統、品名、廠牌、型號、數量）。型號以「數量・報價 → 設備型號對應」為準，沒有對應時取報價單上的型號。</p>'
+    +'<div class="kpis" style="margin-top:10px">'+kpi(P.length,"專案")+kpi(money(tot.amt),"合約金額合計")+kpi(money(tot.add),"追加金額合計")+kpi(money(tot.paid),"已收款")+'</div>'
+    +'<div class="tools"><button class="btn small" id="csXlsx" type="button">下載 Excel</button>'+((c.billAmounts||me().role==="admin"||me().role==="ceo")?'<button class="btn small primary" id="csSync" type="button">同步到雲端彙整檔</button>':'')+'<span class="meta" id="csLink">'+(CS.url?'<a href="'+esc(CS.url)+'" target="_blank" rel="noopener">開啟雲端「合約設備彙整」</a>':'')+'</span></div></section>';
+  h+='<div class="filters"><div class="seg">'+[["proj","專案合約"],["terms","請款比例"],["model","型號統計"],["items","設備明細"]].map(function(t){ return '<button type="button" data-cst="'+t[0]+'" class="'+(CS.tab===t[0]?"on":"")+'">'+t[1]+'</button>'; }).join("")+'</div>'
+    +'<input type="search" id="csQ" class="fld" placeholder="搜尋專案、品名、廠牌、型號" value="'+esc(CS.q)+'" style="min-width:220px">'
+    +(CS.tab==="model"||CS.tab==="items"?'<select id="csSys" class="fld"><option value="">全部系統</option>'+sysList.map(function(s){ return '<option'+(s===CS.sys?" selected":"")+'>'+esc(s)+'</option>'; }).join("")+'</select>':'')+'</div>';
+  var tbl=function(head,rows){ return '<section class="panel"><div class="tblwrap" style="max-height:640px;overflow:auto"><table class="ct"><thead><tr>'+head.map(function(x){ return '<th>'+x+'</th>'; }).join("")+'</tr></thead><tbody>'+(rows.length?rows.join(""):'<tr><td colspan="'+head.length+'" class="meta">沒有資料</td></tr>')+'</tbody></table></div></section>'; };
+  var pl=function(x){ return '<a href="#p='+esc(x.id||x.pid)+'/bills">'+esc(x.name||x.project)+'</a>'; };
+  if(CS.tab==="proj") h+=tbl(["專案","業主","合約編號","簽約日","合約金額","成交報價單","追加","付款方式","請款比例","已請款","已收款"],P.map(function(x){
+    return '<tr><td>'+pl(x)+(x.closed?' <span class="meta">已結案</span>':'')+'</td><td>'+esc(x.client)+'</td><td>'+esc(x.contractNo)+'</td><td>'+esc(x.signDate)+'</td><td>'+money(x.contractAmount)+'</td><td>'+(x.dealTotal?money(x.dealTotal):'—')+'</td><td>'+(x.addendaCount?money(x.addendaTotal)+'（'+x.addendaCount+' 份）':'—')+'</td>'
+      +'<td class="wrap">'+esc(x.payMethod||"")+'</td><td class="wrap">'+esc(termsTxt(x.terms))+(x.termsFrom?' <span class="meta">（'+esc(x.termsFrom)+'）</span>':'')+'</td><td>'+money(x.billed)+'</td><td>'+money(x.paid)+'</td></tr>'; }));
+  else if(CS.tab==="terms"){ var rs=[]; P.forEach(function(x){ (x.terms||[]).forEach(function(t,i){ rs.push('<tr><td>'+(i?'':pl(x))+'</td><td>'+(i+1)+'</td><td>'+esc(t.name)+'</td><td>'+esc(t.pct)+'%</td><td>'+money(t.amount||Math.round((x.contractAmount||0)*(t.pct||0)/100))+'</td><td class="wrap meta">'+esc(t.cond||"")+'</td></tr>'); }); });
+    h+=tbl(["專案","期","名稱","比例","金額","條件"],rs); }
+  else if(CS.tab==="model") h+=tbl(["系統","品名","廠牌","型號","總數量","總金額","專案數","各專案數量"],csAgg(I).map(function(a){
+    return '<tr><td>'+esc(a.sys)+'</td><td>'+esc(a.name)+'</td><td>'+esc(a.brand)+'</td><td class="mono">'+esc(a.model||"—")+'</td><td><b>'+esc(Math.round(a.qty*100)/100)+'</b> '+esc(a.unit)+'</td><td>'+money(a.amount)+'</td><td>'+Object.keys(a.projects).length+'</td><td class="wrap meta">'+esc(Object.keys(a.projects).map(function(p){ return p+" "+a.projects[p]; }).join("、"))+'</td></tr>'; }));
+  else h+=tbl(["專案","來源","系統","品名","廠牌","型號","數量","單價","複價"],I.slice(0,3000).map(function(i){
+    return '<tr><td>'+pl(i)+'</td><td>'+esc(i.src)+'</td><td>'+esc(i.sys)+'</td><td>'+esc(i.name)+'</td><td>'+esc(i.brand)+'</td><td class="mono">'+esc(i.model||"—")+'</td><td>'+esc(i.qty)+' '+esc(i.unit)+'</td><td>'+money(i.price)+'</td><td>'+money(i.amount)+'</td></tr>'; }));
+  app.innerHTML=h;
+  app.querySelectorAll("[data-cst]").forEach(function(b){ b.onclick=function(){ CS.tab=b.dataset.cst; csRender(app); }; });
+  var q=$("csQ"); q.oninput=function(){ CS.q=q.value; clearTimeout(CS.t); CS.t=setTimeout(function(){ csRender(app); var n=$("csQ"); n.focus(); n.setSelectionRange(n.value.length,n.value.length); },300); };
+  if($("csSys")) $("csSys").onchange=function(){ CS.sys=this.value; csRender(app); };
+  $("csXlsx").onclick=function(){ csExport({projects:P,items:I}); };
+  if($("csSync")) $("csSync").onclick=function(){ var b=this; b.disabled=true; b.textContent="同步中…";
+    api("contractSummary",{sync:true}).then(function(r){ CS.data=r; CS.url=r.sheetUrl; toast("已更新雲端彙整檔"); csRender(app); }).catch(function(e){ b.disabled=false; b.textContent="同步到雲端彙整檔"; fail(e); }); };
+}
 
 /* --- 廠牌確認表 --- */
 function brandsTab(cur,el){
