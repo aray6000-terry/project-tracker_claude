@@ -265,10 +265,11 @@ function floorRank(f) {
 
 /* ---------- 系統分類（可由呼叫端覆寫） ---------- */
 var SYS_RULES = [
+  ["other", /接地|避雷/],   /* 「接地測試箱，內附接地監視器」不是監視系統 */
   ["parking", /線圈|車道|柵欄|紅綠燈|警示燈|閃光燈|車牌|E-?TAG|出車|字幕機|車輛偵測/i],
   ["cctv", /攝影機|CCTV|錄影|監視/i],
   ["intercom", /對講|門口機|門口子機|管理總機|智慧家庭|門鈴/],
-  ["access", /讀卡機|讀碼機|陽極|電鎖|門鎖|開門按鈕|門禁|Smart ?Key|感應卡/i],
+  ["access", /讀卡機|讀碼機|陽極|電鎖|門鎖|開門按鈕|開門按扭|門禁|Smart ?Key|感應卡/i],
   ["energy.meter", /電錶|電表/], ["energy.water", /水錶|水表/], ["energy.solar", /太陽能/],
   ["air", /溫濕度|空氣品質|CO2|PM2\.5/i],
   ["media", /佈告欄|布告欄|遊戲機|學習平台|生活服務平台|多媒體|血壓計/],
@@ -648,12 +649,22 @@ function analyze(text, opt) {
   });
   if (tables.some(function (tb) { return tb.transposed; })) warnings = warnings.filter(function (w) { return !/讀不到欄位標題/.test(w); });
   var legendInfo = null;
-  if (!tables.length && !opt.noLegend) {   /* 沒有數量表：依圖例數符號 */
-    legendInfo = legendCount(T, d.inserts, opt, d.blocks, d.segs);
+  /* 沒有數量表，或讀到的「表」都不是設備（綜合水電圖裡給排水的管件小表）：依圖例數符號 */
+  if ((!tables.length || !Object.keys(items).length) && !opt.noLegend) {
+    var sheetFrames = [];   /* 圖框圖塊：給圖例計數劃分圖紙範圍 */
+    var planTxt = T.filter(function (t) { return /平面圖$/.test(t.s) && t.s.length <= 30; });
+    d.inserts.forEach(function (s) {
+      if (s.rot) return;
+      var b = center.box(s); if (!b) return;
+      var w = b[2] - b[0], h = b[3] - b[1];
+      if (w > 0 && h > 0 && w / h > 1.2 && w / h < 1.6 && planTxt.some(function (t) { return t.x > b[0] && t.x < b[2] && t.y > b[1] && t.y < b[3] && w > t.h * 40; })) sheetFrames.push(b);
+    });
+    legendInfo = legendCount(T, d.inserts, opt, d.blocks, d.segs, sheetFrames);
     if (legendInfo) {
       legendInfo.items.forEach(function (it) { if (!items[it.name]) items[it.name] = it; });
       legendInfo.floors.forEach(function (f) { floors[f] = 1; });
-      warnings = warnings.filter(function (w) { return !/附近找不到數量表|沒有數量表，已改用圖上符號計數/.test(w); }).concat(legendInfo.warnings);
+      warnings = warnings.filter(function (w) { return !/附近找不到數量表|沒有數量表，已改用圖上符號計數|讀不到欄位標題/.test(w); }).concat(legendInfo.warnings);
+      if (tables.length) tables = [];   /* 非設備的小表不列出，也不提示「看不出是哪一層」 */
     }
   }
   var floorList = Object.keys(floors).sort(function (a, b) { return floorRank(a) - floorRank(b); });
@@ -694,7 +705,7 @@ function blockSig(blocks, name) {
   var sz = Math.max(x1 - x0, y1 - y0); if (!sz) return null;
   return es.map(function (e) { return e.t; }).sort().join(",") + "|" + pts.map(function (p) { return p[0] + ":" + Math.round((p[1] - x0) / sz * 20) + "," + Math.round((p[2] - y0) / sz * 20); }).sort().join(";");
 }
-function legendCount(T, inserts, opt, blocks, segs) {
+function legendCount(T, inserts, opt, blocks, segs, frames) {
   var warnings = [];
   /* 圖例表頭：「圖例」或分開寫的「圖」「例」 */
   var heads = [];
@@ -723,7 +734,7 @@ function legendCount(T, inserts, opt, blocks, segs) {
       var code = T.filter(function (t) { return t !== r && Math.abs(t.y - r.y) < rh * 0.45 && t.x < r.x && t.x > g.x - hh * 3 && /^[A-Za-z0-9\-]{1,5}$/.test(t.s.trim()); })[0];
       var blk = inserts.filter(function (s) { return Math.abs(s.y - r.y) < rh * 0.6 && s.x < r.x + hh && s.x > g.x - hh * 3; })[0];
       if (!code && !blk) return;
-      legend.push({ name: r.s.replace(/\s+/g, " ").trim(), code: code ? code.s.trim() : null, block: blk ? blk.name : null, box: [g.x - hh * 4, r.y - rh * 0.6, ds.x + hh * 30, g.y + hh] });
+      legend.push({ name: r.s.replace(/\s+/g, " ").trim(), code: code ? code.s.trim() : null, block: blk ? blk.name : null, box: [g.x - hh * 4, r.y - rh * 0.6, ds.x + hh * 30, g.y + hh], gx: g.x, gy: g.y });
     });
   });
   if (!legend.length) return null;
@@ -750,11 +761,24 @@ function legendCount(T, inserts, opt, blocks, segs) {
     if (grp.length >= 3) idx.push(a);
   });
   titles = titles.filter(function (a) { return idx.indexOf(a) < 0 && (a.riser || a.floor); });
-  var isMobile = legend.some(function (l) { return /強波|天線|分路器|同軸/.test(l.name); });
+  var WEAK = /弱電|監控|對講|門禁|保全|監視|CCTV/i, mixed = false;
+  /* 「公共天線」「同軸」也出現在一般弱電圖例：圖名有弱電字樣時不算行動強波圖 */
+  var isMobile = legend.some(function (l) { return /強波|分路器/.test(l.name); }) || (legend.some(function (l) { return /天線|同軸/.test(l.name); }) && !titles.some(function (t) { return WEAK.test(t.s); }));
   if (isMobile && titles.some(function (t) { return /強波|行動/.test(t.s); })) titles = titles.filter(function (t) { return /強波|行動/.test(t.s); });   /* 綜合弱電圖：只看本系統的圖紙 */
+  /* 綜合水電圖（給排水、電氣、通風、弱電同一檔）：只看弱電系統的圖紙 */
+  if (!isMobile && titles.some(function (t) { return WEAK.test(t.s); }) && !titles.every(function (t) { return WEAK.test(t.s); })) {
+    titles = titles.filter(function (t) { return WEAK.test(t.s); }); mixed = true;
+  }
   var hMax = titles.reduce(function (m, t) { return Math.max(m, t.h); }, 0);
-  titles = titles.filter(function (t) { return t.h >= hMax * 0.8; });   /* 圖紙內的小字註記（「電信系統詳昇位圖」）不是圖紙標題 */
+  /* 圖紙內的小字註記（「電信系統詳昇位圖」）不是圖紙標題；各層平面圖比例不同時字高也不同，平面圖標題放寬 */
+  titles = titles.filter(function (t) { return t.h >= hMax * 0.8 || (!t.riser && t.floor && t.h >= hMax * 0.5); });
   if (!titles.length) return null;
+  /* 有圖框圖塊時，以圖框為圖紙範圍 */
+  if (mixed && frames && frames.length) titles.forEach(function (t) {
+    var best = null, ba = Infinity;
+    frames.forEach(function (b) { if (t.x > b[0] && t.x < b[2] && t.y > b[1] && t.y < b[3]) { var a = (b[2] - b[0]) * (b[3] - b[1]); if (a < ba) { ba = a; best = b; } } });
+    t.box = best;
+  });
   /* 圖紙間距（圖紙排成格狀時，標題在每張圖紙的同一個位置） */
   var W = Infinity, H = Infinity;
   titles.forEach(function (a) { titles.forEach(function (b) {
@@ -775,10 +799,23 @@ function legendCount(T, inserts, opt, blocks, segs) {
     t.R = isFinite(R) ? R : t.x + W * 0.12; t.B = isFinite(B) ? B : t.y - H * 0.15;
   });
   function sheetOf(x, y) {
-    if (titles.length === 1) return titles[0];
+    if (titles.length === 1 && !mixed) return titles[0];
+    var inBox = titles.filter(function (t) { var b = t.box; return b && x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]; });
+    if (inBox.length === 1) return inBox[0];
+    if (inBox.length > 1) {   /* 一張圖紙有多個平面圖：歸給最近的標題（符號多在標題上方） */
+      var bs = Infinity, bt = null;
+      inBox.forEach(function (t) { var sc = Math.abs(x - t.x) + 0.5 * Math.max(y - t.y, 0) + 3 * Math.max(t.y - y, 0); if (sc < bs) { bs = sc; bt = t; } });
+      return bt;
+    }
+    if (mixed) return null;   /* 綜合圖：不在弱電圖紙內的符號不算 */
     var best = null;
-    titles.forEach(function (t) { if (!best && x <= t.R && x >= t.R - W && y >= t.B && y <= t.B + H) best = t; });
+    titles.forEach(function (t) { if (!best && !t.box && x <= t.R && x >= t.R - W && y >= t.B && y <= t.B + H) best = t; });
     return best;
+  }
+  if (mixed) {   /* 只用弱電圖紙上的圖例 */
+    legend = legend.filter(function (l) { return sheetOf(l.gx, l.gy); });
+    lboxes = legend.map(function (l) { return l.box; });
+    if (!legend.length) return null;
   }
   /* 圖例的圖塊在平面圖上沒出現時，找外形相同的其他圖塊（複製時被改成匿名圖塊） */
   var used = {}; inserts.forEach(function (s) { if (!inLegend(s.cx !== undefined ? s.cx : s.x, s.cy !== undefined ? s.cy : s.y)) used[s.name] = (used[s.name] || 0) + 1; });
@@ -791,12 +828,25 @@ function legendCount(T, inserts, opt, blocks, segs) {
     var sg = sigOf(l.block); if (!sg) return;
     Object.keys(used).forEach(function (n) { if (!taken[n] && sigOf(n) === sg) { l.blocks.push(n); taken[n] = 1; } });
   });
+  /* 同名設備的圖例（每張圖紙各附一份）合併成一列，避免同一個符號被數好幾次 */
+  var merged = [], byName = {};
+  legend.forEach(function (l) {
+    var m = byName[l.name];
+    if (!m) { m = byName[l.name] = { name: l.name, block: l.block, blocks: [], codes: [] }; merged.push(m); }
+    l.blocks.forEach(function (b) { if (m.blocks.indexOf(b) < 0) m.blocks.push(b); });
+    if (l.code && m.codes.indexOf(l.code) < 0) m.codes.push(l.code);
+    if (!m.block && l.block) m.block = l.block;
+  });
+  legend = merged;
+  /* 同一個圖塊被兩列圖例抓到（列距小、符號跨列）：有代號的列只用代號 */
+  var claim = {}; legend.forEach(function (l) { l.blocks.forEach(function (b) { claim[b] = (claim[b] || 0) + 1; }); });
+  legend.forEach(function (l) { if (l.codes.length) l.blocks = l.blocks.filter(function (b) { return claim[b] < 2; }); });
   /* 數符號 */
   var cnt = {};   /* name -> sheetIdx -> n */
   function add(l, x, y) { if (inLegend(x, y)) return; var sh = sheetOf(x, y); if (!sh) return; var k = titles.indexOf(sh); var c = cnt[l.name] = cnt[l.name] || {}; c[k] = (c[k] || 0) + 1; }
   legend.forEach(function (l) {
-    if (l.blocks.length) inserts.forEach(function (s) { if (l.blocks.indexOf(s.name) >= 0) add(l, s.cx !== undefined ? s.cx : s.x, s.cy !== undefined ? s.cy : s.y); });
-    if (l.code) T.forEach(function (t) { if (!t.att && t.s.trim() === l.code) add(l, t.x, t.y); });
+    if (l.blocks.length) inserts.forEach(function (s) { if (l.blocks.indexOf(s.name) >= 0 && !inLegend(s.x, s.y)) add(l, s.cx !== undefined ? s.cx : s.x, s.cy !== undefined ? s.cy : s.y); });   /* 圖形中心偏離插入點的圖塊：插入點在圖例內也不算 */
+    if (l.codes.length) T.forEach(function (t) { if (!t.att && l.codes.indexOf(t.s.trim()) >= 0) add(l, t.x, t.y); });
   });
   var anyRiser = titles.some(function (t) { return t.riser; });
   var items = [], floors = {}, mism = [], onlyRiser = [];
@@ -806,7 +856,11 @@ function legendCount(T, inserts, opt, blocks, segs) {
     Object.keys(c).forEach(function (k) {
       var t = titles[k];
       if (t.riser) rTot += c[k];
-      else { pTot += c[k]; var f = cnFloor(t.floor.replace(/\s/g, "")); f = /夾層/.test(t.floor) ? cnFloor(t.floor.replace(/夾層/, "")) + "夾層" : f; pf[f] = (pf[f] || 0) + c[k]; }
+      else {
+        var f = cnFloor(t.floor.replace(/\s/g, "")); f = /夾層/.test(t.floor) ? cnFloor(t.floor.replace(/夾層/, "")) + "夾層" : f;
+        var fl = floorsOf(f); if (!fl.length || !fl.every(function (x) { return FLOOR_RE.test(x); })) fl = [f];   /* 「三至十層」標準層平面：每層各一份 */
+        fl.forEach(function (x) { pTot += c[k]; pf[x] = (pf[x] || 0) + c[k]; });
+      }
     });
     var it = { name: l.name, sys: isMobile ? "mobile" : sysOf(l.name, opt && opt.rules), block: l.block, total: 0, floors: {}, fromLegend: true };
     if (pTot) { it.total = pTot; it.floors = pf; if (rTot && rTot !== pTot) mism.push(l.name + "（平面圖 " + pTot + "、昇位圖 " + rTot + "）"); }
