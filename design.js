@@ -338,11 +338,14 @@ function ipView(P){
 }
 
 /* ---------- IP／IO 標註回圖面（另存 DXF） ---------- */
+var AN_KEYS=[];
+function keysOff(){ return AN_KEYS.filter(function(k){ return !AN.sys[k[0]]; }).map(function(k){ return k[1].replace(/（.*$/,""); }); }
 var AN={mode:"layers",scale:1,table:false,sys:null,out:"strip",noPend:true,hide:""};
 function annotView(P){
   if(!window.DXF_ANNOT) return '<p class="meta">標註元件未載入，請重新整理頁面。</p>';
   applyIoEdits(P);
   var keys=P.ip.subnets.map(function(s){ return [s.key,s.name+"（"+s.hosts+"）"]; }).concat([["io","中央監控 IO 點位（"+P.io.panels.reduce(function(m,p){ return m+p.rows.filter(function(r){ return r.key; }).length; },0)+"）"]]);
+  AN_KEYS=keys;
   if(!AN.sys) AN.sys={};
   keys.forEach(function(k){ if(!(k[0] in AN.sys)) AN.sys[k[0]]=true; });   /* 新出現的系統（例如新增對講室內機規則後）預設要標 */
   var ann=DXF_ANNOT.labels(st.dr,P,{systems:AN.sys,scale:AN.scale,table:AN.table}), S=ann.stat;
@@ -670,6 +673,7 @@ function bind(P,cur,el){
         w.onerror=function(e){ w.terminate(); no(new Error(e.message||"瀏覽器不支援背景分析")); };
         w.postMessage({buf:buf,name:f.name},[buf]);
       }).then(function(dr2){
+        if(window.DXF&&DXF.CORE_VERSION&&(dr2.core||0)<DXF.CORE_VERSION) throw new Error("瀏覽器用到舊版的圖面分析程式（"+(dr2.core||"舊")+"，最新 "+DXF.CORE_VERSION+"），結果會不準。請關掉這個分頁重新開，或按 Ctrl＋Shift＋R，過幾分鐘再試");
         if(!(dr2.plans||[]).length) throw new Error("這份圖讀不到平面圖標題與設備位置，無法標註（數量表 "+((dr2.tables||[]).length)+" 張）");
         msg.textContent="寫入標註中…";
         applyIoEdits(P);
@@ -686,6 +690,7 @@ function bind(P,cur,el){
         var ezd=(AN.out==="merge"||AN.out==="strip")&&/WRITTEN_BY_EZDXF|ezdxf/i.test(new TextDecoder("latin1").decode(keep.subarray(0,Math.min(keep.length,200000))));
         if(ezd) msg.textContent+="。注意：原 DXF 是線上網站／ezdxf 轉出的，AutoCAD 若開不完整，請用 AutoCAD 開原圖另存一次 DXF 再產生，或改選「只輸出標註」";
         var C=DXF_ANNOT.check(dr2,P,ann,AN.sys), ck=$("anCheck");
+        var off=keysOff(); if(off.length) msg.textContent+="。注意：這些系統沒有勾選，所以沒標："+off.join("、");
         if(ck) ck.innerHTML='<details open><summary><b>IP 標註檢查（沒算到？沒標到？）</b></summary><table class="tbl"><thead><tr><th>設備</th><th>IP 編表台數</th><th>圖上符號</th><th>已標</th><th>判斷</th></tr></thead><tbody>'
           +C.rows.map(function(r){ return '<tr'+(r.lab<r.ip?' class="iopend"':'')+'><td>'+esc(r.dev)+'</td><td>'+r.ip+'</td><td>'+r.sym+'</td><td>'+r.lab+'</td><td>'+esc(r.why)+'</td></tr>'; }).join("")+'</tbody></table>'
           +(C.noIp.length?'<p class="hint">圖上有符號、但 IP 編表沒有（多半本來就不需要 IP，例如磁簧、瓦斯、陽極鎖、宅內箱；若其中有需要 IP 的設備，代表「沒算到」，請告訴我們補規則）：'+C.noIp.map(function(x){ return esc(x.dev)+" "+x.sym; }).join("、")+'</p>':'')+'<p class="hint">交換器、伺服器、IO 模組在平面圖上通常沒有符號，一律列在待配置。</p></details>';
