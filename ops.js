@@ -924,5 +924,83 @@ function logTab(cur,el){
   }).catch(function(e){ el.innerHTML='<div class="empty">'+esc(e.message)+'</div>'; });
 }
 /* 給 qa.js（品管・缺失）共用 */
+/* --- 施工進度各結點的附件（會議紀錄、協調單、缺失改善單、施工日誌、自主檢查表、進場檢驗、測試紀錄…） ---
+   參考公共工程三級品管的文件：每份文件掛在某個結點，可再指定對應的勾選項目（上傳後自動打勾）。
+   檔案存專案資料夾「施工紀錄」（kind=record）；說明欄格式「［類型｜項目代碼］標題」。 */
+var REC_TYPES=["會議紀錄","協調單／工作聯繫單","缺失改善單","施工日誌","自主檢查表","材料／設備進場檢驗","測試紀錄","查驗照片","圖說／變更","其他"];
+var REC_RE=/^［([^｜］]+)(?:｜([a-z]+\d+))?］\s*(.*)$/;
+var recState={pid:null,list:null,loading:false,open:{}};
+function recParse(f){ var m=REC_RE.exec(String(f.caption||"")); return m?{type:m[1],item:m[2]||"",title:m[3]||""}:null; }
+function recLoad(cur,force){
+  if(recState.pid!==cur.id){ recState={pid:cur.id,list:null,loading:false,open:{}}; }
+  if(recState.list&&!force) return Promise.resolve(recState.list);
+  recState.loading=true;
+  return Promise.all([api("files",{id:cur.id,kind:"record"}).catch(function(){ return {files:[]}; }),api("files",{id:cur.id,kind:"drawing"}).catch(function(){ return {files:[]}; })]).then(function(r){
+    var seen={}, list=[];
+    r[0].files.concat(r[1].files).forEach(function(f){ if(seen[f.id]) return; var x=recParse(f); if(!x) return; seen[f.id]=1; x.f=f; list.push(x); });
+    list.sort(function(a,b){ return String(b.f.at).localeCompare(String(a.f.at)); });
+    recState.list=list; recState.loading=false; return list;
+  });
+}
+function itemText(i,id){ var g=/^[a-z]+/.exec(id)[0], j=+id.slice(g.length), n=T.NODES[i]; return n&&n[g]&&n[g][j]||id; }
+T.views.nodeRecords=function(cur,ro){
+  recLoad(cur).then(function(list){ if(T.getCur()!==cur) return; T.NODES.forEach(function(_,i){ recRender(cur,i,list,ro); }); });
+};
+function recRender(cur,i,list,ro){
+  var box=$("rec-"+i); if(!box) return;
+  var mine=list.filter(function(x){ return +x.f.node===i; }), edit=!ro&&T.canEdit();
+  document.querySelectorAll('[data-rc^="'+i+':"]').forEach(function(e){ var id=e.dataset.rc.split(":")[1], n=mine.filter(function(x){ return x.item===id; }).length; e.textContent=n?"📎"+n:""; e.title=n?"已附 "+n+" 份文件":""; });
+  var opts=REC_TYPES.map(function(t){ return '<option>'+esc(t)+'</option>'; }).join("");
+  var items=[["task","完成事項"],["gate","查驗關卡"],["form","產出表單"]].map(function(g){
+    return '<optgroup label="'+g[1]+'">'+(T.NODES[i][g[0]]||[]).map(function(txt,j){ return '<option value="'+g[0]+j+'">'+esc(txt)+'</option>'; }).join("")+'</optgroup>'; }).join("");
+  var h='<details class="recs"'+(recState.open[i]||mine.length?' open':'')+'><summary>附件・紀錄（'+mine.length+'）<span class="meta">　會議紀錄、協調單、缺失改善單、施工日誌、檢查表、測試紀錄等</span></summary>';
+  h+=mine.length?'<ul class="list">'+mine.map(function(x){ var f=x.f, del=edit&&(f.by===me().email||cur.myRole==="admin"||cur.myRole==="manager");
+    return '<li><div class="main"><b><span class="rtag">'+esc(x.type)+'</span> '+esc(x.title||f.name)+'</b><span class="meta">'+esc(f.name)+'｜'+sizeTxt(f.size)+(x.item?'｜對應：'+esc(itemText(i,x.item)):'')+'｜'+esc(T.userName(f.by))+' '+fmtTime(f.at)+'</span></div>'
+      +'<button class="btn small" data-rdl="'+esc(f.id)+'" type="button">下載</button>'+(del?'<button class="btn small danger" data-rdel="'+esc(f.id)+'" data-name="'+esc(f.name)+'" type="button">刪除</button>':'')+'</li>'; }).join("")+'</ul>'
+    :'<p class="meta">尚未附加文件。</p>';
+  if(edit) h+='<div class="uprow"><select class="fld" id="rt'+i+'" aria-label="文件類型">'+opts+'</select>'
+    +'<select class="fld" id="ri'+i+'" aria-label="對應項目" style="max-width:240px"><option value="">對應項目（選填，上傳後自動打勾）</option>'+items+'</select>'
+    +'<input type="text" class="fld" id="rn'+i+'" maxlength="80" placeholder="標題（例：開工前協調會議 11/3）" style="flex:1;min-width:180px">'
+    +'<input type="file" id="rf'+i+'" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.zip">'
+    +'<button class="btn small primary" id="rb'+i+'" type="button">上傳</button></div>'
+    +'<label class="meta" id="rpw'+i+'" hidden><input type="checkbox" id="rp'+i+'" checked> 同時登錄到「品管・缺失」缺失管制表追蹤改善</label>'
+    +'<p class="hint" id="rm'+i+'">PDF、Word、Excel、照片、ZIP，單檔 25MB 以內；檔案存在專案資料夾「施工紀錄」。</p>';
+  box.innerHTML=h+'</details>';
+  var det=box.querySelector("details"); det.ontoggle=function(){ recState.open[i]=det.open; };
+  box.querySelectorAll("[data-rdl]").forEach(function(b){ b.onclick=function(){ download(b.dataset.rdl); }; });
+  box.querySelectorAll("[data-rdel]").forEach(function(b){ b.onclick=function(){
+    if(!confirm("確定刪除「"+b.dataset.name+"」？檔案會移到管理員雲端硬碟的垃圾桶（30 天內可還原）。")) return;
+    api("fileDelete",{fileId:b.dataset.rdel}).then(function(){ toast("已刪除"); return recLoad(cur,true); }).then(function(l){ recRender(cur,i,l,ro); }).catch(fail);
+  }; });
+  if(!edit) return;
+  var ts=$("rt"+i), pw=$("rpw"+i);
+  /* 依類型預選對應項目（例：施工日誌→產出表單的「施工日誌」） */
+  ts.onchange=function(){
+    pw.hidden=ts.value!=="缺失改善單";
+    var key=ts.value.replace(/／.*$/,"").replace(/單$/,""), sel=$("ri"+i);
+    if(!sel.value) Array.prototype.some.call(sel.options,function(o){ if(o.value&&o.text.indexOf(key)>=0){ sel.value=o.value; return true; } return false; });
+  };
+  $("rb"+i).onclick=function(){
+    var files=Array.prototype.slice.call($("rf"+i).files||[]), type=ts.value, item=$("ri"+i).value, title=$("rn"+i).value.trim(), msg=$("rm"+i);
+    if(!files.length){ toast("請先選擇檔案"); return; }
+    var big=files.filter(function(f){ return f.size>25*1024*1024; }); if(big.length){ toast("「"+big[0].name+"」超過 25MB"); return; }
+    var cap="［"+type+(item?"｜"+item:"")+"］"+(title||files[0].name.replace(/\.[^.]+$/,""));
+    var btn=this; btn.disabled=true;
+    var k=0, ok=0, legacy=false;
+    (function next(){
+      if(k>=files.length){
+        var after=function(){ recLoad(cur,true).then(function(l){ recState.open[i]=true; recRender(cur,i,l,ro); if(ok&&item&&T.markCheck) T.markCheck(i,item); toast("已上傳 "+ok+" 個檔案"+(legacy?"（後端未更新，暫存於圖面資料夾）":"")); }); };
+        if(ok&&type==="缺失改善單"&&$("rp"+i)&&$("rp"+i).checked) api("punchSave",{id:cur.id,item:{desc:title||files[0].name,loc:"",sys:"",owner:"",due:""}}).then(function(){ toast("已登錄到缺失管制表"); }).catch(function(e){ toast("缺失管制表未登錄："+e.message); }).then(after);
+        else after();
+        return;
+      }
+      var f=files[k++]; msg.textContent="上傳中 "+k+" / "+files.length+"：「"+f.name+"」…";
+      b64FromFile(f).then(function(d){ return api("upload",{id:cur.id,kind:"record",name:f.name,data:d,node:i,caption:cap}); })
+        .then(function(r){ ok++; if(r&&r.file&&r.file.kind&&r.file.kind!=="record") legacy=true; next(); })
+        .catch(function(e){ fail(e); next(); });
+    })();
+  };
+}
+
 T.opsUtil={uploadFiles:uploadFiles,lightbox:lightbox,printHtml:printHtml,chip:chip,thumbHtml:thumbHtml,bindFiles:bindFiles,nodeName:nodeName,loading:loading};
 })();

@@ -467,16 +467,17 @@ function renderDetail(keepNode){
       h+='<div class="group"><h4>'+g[1]+'</h4>';
       NODES[i][g[0]].forEach(function(txt,j){
         var id=g[0]+j, on=!!n.checks[id];
-        h+='<label class="chk'+(on?' done':'')+'"><input type="checkbox" data-n="'+i+'" data-id="'+id+'"'+(on?' checked':'')+dis+'><span>'+esc(txt)+'</span></label>';
+        h+='<label class="chk'+(on?' done':'')+'"><input type="checkbox" data-n="'+i+'" data-id="'+id+'"'+(on?' checked':'')+dis+'><span>'+esc(txt)+'</span><em class="rcnt" data-rc="'+i+':'+id+'"></em></label>';
       });
       h+='</div>';
     });
-    h+='</div><textarea class="note" data-n="'+i+'" maxlength="1000" placeholder="此結點的備註、問題或待辦（例：缺失編號、協調單號）"'+(ro?' readonly':'')+'>'+esc(n.note)+'</textarea></div></details>';
+    h+='</div><div class="recbox" id="rec-'+i+'"></div><textarea class="note" data-n="'+i+'" maxlength="1000" placeholder="此結點的備註、問題或待辦（例：缺失編號、協調單號）"'+(ro?' readonly':'')+'>'+esc(n.note)+'</textarea></div></details>';
   });
   h+='</div>';
   $("app").innerHTML=h;
   showSaveState();
   bindDetail();
+  if(window.TR && TR.views.nodeRecords) TR.views.nodeRecords(cur, ro);
 }
 function info(k,v){ return '<div><b>'+k+'</b>'+esc(v||"—")+'</div>'; }
 /* 簽核領料異常單的角色（權限表「簽核領料異常單」）：沒有領料權限也要看得到專案的領料頁 */
@@ -954,7 +955,8 @@ var APP_VERSION=(function(){ var sc=document.querySelector('script[src*="app.js"
 (function(){ var v=document.getElementById("appVer"); if(v&&APP_VERSION) v.textContent="版本 v"+APP_VERSION; })();
 window.TR={views:{}, saveProject:saveProjectNow, api:api, esc:esc, toast:toast, fmt:fmt, normDate:normDate, fmtTime:fmtTime, fail:fail, userName:userName, userLabel:userLabel,
   session:session, data:data, NODES:NODES, SYS_KEYS:SYS_KEYS, sysName:sysName, sysLabel:sysLabel, sysList:sysList, brandOf:brandOf,
-  go:go, today:today, getCur:function(){ return cur; }, canEdit:canEdit, ROLE_NAME:ROLE_NAME, sumStat:sumStat, PST_LABEL:PST_LABEL,
+  go:go, today:today, getCur:function(){ return cur; },
+  markCheck:function(i,id){ if(!cur||!canEdit()) return; var p=cur.project, n=p.nodes[i]; if(!n||n.checks[id]||(i===7&&id==="gate0")) return; n.checks[id]=true; afterNodeChange(p,i,false); queueSave(); rerender(i); }, canEdit:canEdit, ROLE_NAME:ROLE_NAME, sumStat:sumStat, PST_LABEL:PST_LABEL,
   loadUsers:function(){ return data.users.length?Promise.resolve(data):api("list").then(function(d){ data.projects=d.projects||[]; data.users=d.users||[]; return data; }); }};
 (function start(){
   /* LINE 內建瀏覽器：自動改用手機預設瀏覽器開啟 */
