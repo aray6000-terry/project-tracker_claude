@@ -195,6 +195,13 @@ function api(action,payload){
   });
 }
 function fail(e){ if(e && e.code!=="AUTH") toast(e.message||"發生錯誤"); }
+/* 儲存類按鈕：送出期間停用，避免連點造成重複寫入（v2.10.26） */
+function withBusy(btn,run){
+  if(btn&&btn.disabled) return new Promise(function(){});  /* 已在處理中：不再送出，也不觸發後續提示 */
+  if(btn) btn.disabled=true;
+  var p; try{ p=Promise.resolve(run()); }catch(e){ p=Promise.reject(e); }
+  return p.then(function(v){ if(btn) btn.disabled=false; return v; },function(e){ if(btn) btn.disabled=false; throw e; });
+}
 
 /* ---------- 登入 ---------- */
 function decodeJwt(tok){
@@ -691,6 +698,7 @@ $("frm").addEventListener("submit",function(e){
   var f=e.target, d={};
   FIELDS.forEach(function(k){ d[k]=f.elements[k].value.trim(); });
   if(!d.name){ e.preventDefault(); return; }
+  if(!editingExisting && !d.engineer && !confirm("尚未填「負責工程師」，之後報表與指派會顯示空白。確定先建立？（可稍後在「編輯專案資料」補上）")){ e.preventDefault(); f.elements.engineer.focus(); return; }
   var picked=SYS_KEYS.filter(function(k){ var cb=document.querySelector('#sysPick input[value="'+k+'"]'); return cb&&cb.checked; });
   var otherName=f.elements.otherName.value.trim().slice(0,30);
   var bv=currentBrandValues(), brands={};

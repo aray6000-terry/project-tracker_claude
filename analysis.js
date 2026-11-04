@@ -402,14 +402,14 @@ function bindModels(cur,el){
   if($("btnMdlSave")) $("btnMdlSave").onclick=function(){
     /* 儲存時把自動配對／預填的型號一起存下來，之後資料庫變動也不會跑掉 */
     rows.forEach(function(r){ if(!st.models[r.key]&&r.pick&&r.pick.model!=="-") st.models[r.key]=r.pick.src?Object.assign({},r.pick):pickOf(r.pick); });
-    api("analysisSave",{id:cur.id,kind:"models",data:st.models}).then(function(){ toast("已儲存型號對應"); }).catch(fail); };
+    var b=this; withBusy(b,function(){ return api("analysisSave",{id:cur.id,kind:"models",data:st.models}); }).then(function(){ toast("已儲存型號對應"); }).catch(fail); };
   function chosenRows(){ return rows.filter(function(r){ return r.pick&&r.pick.model!=="-"; }); }
   function picked(){ return chosenRows().map(function(r){ var c=catOf(r.pick); return {sys:T.sysName({},r.sys),name:r.pick.name||r.name,brand:r.pick.brand,model:r.pick.model,qty:r.qty,unit:r.unit,link:r.pick.link||(c.files[0]?driveUrl(c.files[0].id):"")}; }); }
   if($("btnSubmittal")) $("btnSubmittal").onclick=function(){
     var items=picked(), todo=rows.filter(function(r){ return !r.pick; }).length;
     if(!items.length){ toast("還沒有選定任何型號"); return; }
     if(todo&&!confirm("還有 "+todo+" 項未選型號，要先用已選的 "+items.length+" 項產生送審資料嗎？")) return;
-    api("analysisSave",{id:cur.id,kind:"models",data:st.models}).then(function(){ return api("submittalBuild",{id:cur.id,items:items}); }).then(function(r){
+    withBusy(this,function(){ return api("analysisSave",{id:cur.id,kind:"models",data:st.models}).then(function(){ return api("submittalBuild",{id:cur.id,items:items}); }); }).then(function(r){ if(!r) return;
       var c={copied:0,link:0,none:0,failed:0}; r.items.forEach(function(x){ c[x.status]++; }); st.subResult=c; toast("送審資料已建立"); render(cur,el);
     }).catch(fail);
   };
@@ -486,7 +486,7 @@ function bind(cur,el){
     }).catch(fail);
   };
   if($("btnDxfSave")) $("btnDxfSave").onclick=function(){
-    var data=st.draft; api("analysisSave",{id:cur.id,kind:"drawing",fileName:data.fileName,data:data}).then(function(){ toast("已儲存圖面分析"); st.draft=null; T.views.qtyTab(cur,el); }).catch(fail);
+    var data=st.draft; if(!data) return; withBusy(this,function(){ return api("analysisSave",{id:cur.id,kind:"drawing",fileName:data.fileName,data:data}); }).then(function(){ toast("已儲存圖面分析"); st.draft=null; T.views.qtyTab(cur,el); }).catch(fail);
   };
   if($("btnDxfCancel")) $("btnDxfCancel").onclick=function(){ st.draft=null; render(cur,el); };
   if($("btnXls")) $("btnXls").onclick=function(){
@@ -497,7 +497,7 @@ function bind(cur,el){
     }).then(function(){ render(cur,el); toast("估價單分析完成"); }).catch(function(e){ toast("無法讀取估價單："+e.message); });
   };
   if($("btnXlsSave")) $("btnXlsSave").onclick=function(){
-    var q=st.qdraft; api("analysisSave",{id:cur.id,kind:"quote",fileName:q.fileName,data:q}).then(function(){ toast("已儲存估價單"); st.qdraft=null; T.views.qtyTab(cur,el); }).catch(fail);
+    var q=st.qdraft; if(!q) return; withBusy(this,function(){ return api("analysisSave",{id:cur.id,kind:"quote",fileName:q.fileName,data:q}); }).then(function(){ toast("已儲存估價單"); st.qdraft=null; T.views.qtyTab(cur,el); }).catch(fail);
   };
   if($("btnXlsCancel")) $("btnXlsCancel").onclick=function(){ st.qdraft=null; render(cur,el); };
   if($("btnStd")) $("btnStd").onclick=function(){
@@ -506,7 +506,7 @@ function bind(cur,el){
     api("standardSave",{fileName:q.fileName,data:q}).then(function(r){ st.data.standard=r.info; st.std=q; toast("已設為標準範本"); render(cur,el); }).catch(fail);
   };
   if($("btnMapSave")) $("btnMapSave").onclick=function(){
-    api("analysisSave",{id:cur.id,kind:"mapping",data:st.mapping}).then(function(){ toast("已儲存對照"); }).catch(fail);
+    withBusy(this,function(){ return api("analysisSave",{id:cur.id,kind:"mapping",data:st.mapping}); }).then(function(){ toast("已儲存對照"); }).catch(fail);
   };
   /* 載入標準範本（審查用） */
   if(caps().quote && st.data.standard && !st.std && !st.loadingStd){
