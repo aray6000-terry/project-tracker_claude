@@ -110,7 +110,7 @@ function build(opt, lib) {
   var q = finalize({ sections: secs, meta: opt.meta || {} });
   var unmatched = applyDrawing(q, opt.drawing || [], opt.mapping || {});
   scaleLumps(q);
-  if (opt.costbook) q.costbook = applyCostbook(q, opt.costbook, { company: opt.company, site: opt.site });
+  if (opt.costbook) q.costbook = applyCostbook(q, opt.costbook, { company: opt.company, site: opt.site, today: opt.today });
   finalize(q);
   q.notes = notesFor(opt, lib);
   q.missing = missing; q.unmatched = unmatched; q.smart = smart; q.grade = opt.grade || "";
@@ -296,7 +296,49 @@ function cbHeader(sh, need) {
   return null;
 }
 /** 讀成本總表 Excel（XLSX_LITE.read 的結果）→ 精簡資料（存到雲端、產生報價單時使用） */
+function cbDate(v) {
+  if (typeof v === "number" && v > 20000 && v < 80000) return new Date(Math.round((v - 25569) * 864e5)).toISOString().slice(0, 10);   /* Excel 日期序號 */
+  var m = /(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/.exec(str(v)); if (!m) return "";
+  return m[1] + "-" + ("0" + m[2]).slice(-2) + "-" + ("0" + m[3]).slice(-2);
+}
+function cbExtras(sheets) {
+  var regions = [], rs = cbSheet(sheets, /區域/);
+  if (rs) { var RH = cbHeader(rs, "區域"); if (RH) { var kc = RH.col(/關鍵字/), lc = RH.col(/^工資係數/), wc = RH.col(/^線材係數/), cc2 = RH.col(/^公司/);
+    rs.rows.slice(RH.i + 1).forEach(function (r) { r = r || []; var nm = str(r[0]), keys = str(r[kc]).split(/[,，、\s]+/).filter(Boolean); if (!nm || !keys.length || !cbNum(r[lc])) return;   /* 沒填工資係數的列（說明文字）不是區域 */
+      regions.push({ name: nm, keys: keys, labor: cbNum(r[lc]) || 1, wire: cbNum(r[wc]) || 1, co: cc2 >= 0 ? str(r[cc2]) : "" }); }); } }
+  var std = [], ss = cbSheet(sheets, /工資標準/);
+  if (ss) { var SH = cbHeader(ss, "設備類別"); if (SH) { var rc = SH.col(/關鍵字/), w2 = SH.col(/^線材/), p2 = SH.col(/^拉線/), i2 = SH.col(/^安裝/);
+    ss.rows.slice(SH.i + 1).forEach(function (r) { r = r || []; var re = str(r[rc]); if (!str(r[0]) || !re) return; try { new RegExp(re); } catch (e) { return; }
+      std.push({ cls: str(r[0]), re: re, w: cbNum(r[w2]), p: cbNum(r[p2]), i: cbNum(r[i2]) }); }); } }
+  return { regions: regions, std: std };
+}
+/** V2：「品項」＋「廠牌型號價格」兩層（一次詢價一列，不覆蓋；公司空白＝共用） */
+function parseCostbook2(sheets, ish, psh) {
+  var IH = cbHeader(ish, "品項代碼"), PH = cbHeader(psh, "品項代碼");
+  if (!IH) throw new Error("「品項」分頁找不到表頭（需有「品項代碼」欄）");
+  if (!PH) throw new Error("「廠牌型號價格」分頁找不到表頭（需有「品項代碼」欄）");
+  var ic = { code: IH.col(/^品項代碼$/), sys: IH.col(/^系統/), name: IH.col(/^標準品名$|^品名$/), alias: IH.col(/^別名/), unit: IH.col(/^單位$/), wire: IH.col(/^線材/), pull: IH.col(/^拉線/), install: IH.col(/^安裝/) };
+  var pc = { code: PH.col(/^品項代碼$/), brand: PH.col(/^廠牌$/), model: PH.col(/^型號$/), co: PH.col(/^公司/), cost: PH.col(/^採購成本$|^成本$/), sale: PH.col(/^建議售價$/), date: PH.col(/^報價日期$/), exp: PH.col(/^有效到期/), def: PH.col(/^預設$/), src: PH.col(/^來源$/) };
+  if (ic.name < 0) throw new Error("「品項」分頁需有「標準品名」欄");
+  if (pc.cost < 0) throw new Error("「廠牌型號價格」分頁需有「採購成本」欄");
+  var items = [], prices = [], g = function (r, j) { return j >= 0 ? r[j] : ""; };
+  (ish.rows || []).slice(IH.i + 1).forEach(function (r, k) { r = r || []; var code = str(g(r, ic.code)), name = str(g(r, ic.name)); if (!code || !name) return;
+    var o = { c: code, s: str(g(r, ic.sys)), n: name, u: str(g(r, ic.unit)), w: cbNum(g(r, ic.wire)), p: cbNum(g(r, ic.pull)), i: cbNum(g(r, ic.install)), row: IH.i + k + 2 };
+    var al = str(g(r, ic.alias)).split(/[｜|]/).map(str).filter(Boolean); if (al.length) o.a = al;
+    items.push(o); });
+  (psh.rows || []).slice(PH.i + 1).forEach(function (r, k) { r = r || []; var code = str(g(r, pc.code)), cost = cbNum(g(r, pc.cost)); if (!code || !cost) return;
+    var o = { c: code, b: str(g(r, pc.brand)), m: str(g(r, pc.model)), co: str(g(r, pc.co)), v: cost, d: cbDate(g(r, pc.date)), row: PH.i + k + 2 };
+    var sp = cbNum(g(r, pc.sale)), x = cbDate(g(r, pc.exp)), df = /^(是|Y|V|✓|1)$/i.test(str(g(r, pc.def))), src = str(g(r, pc.src)).slice(0, 60);
+    if (sp) o.sp = sp; if (x) o.x = x; if (df) o.df = 1; if (src) o.src = src;
+    prices.push(o); });
+  if (!items.length) throw new Error("「品項」分頁沒有任何品項");
+  var ex = cbExtras(sheets), cos = {};
+  prices.forEach(function (r) { if (r.co) cos[r.co] = 1; });
+  return { costbook: 2, items: items, prices: prices, companies: Object.keys(cos), regions: ex.regions, std: ex.std };
+}
 function parseCostbook(sheets) {
+  var ish = cbSheet(sheets, /^品項$/), psh = cbSheet(sheets, /廠牌型號價格/);
+  if (ish && psh) return parseCostbook2(sheets, ish, psh);
   var sh = cbSheet(sheets, /設備成本/);
   if (!sh) throw new Error("找不到「設備成本」分頁");
   var H = cbHeader(sh, "品名");
@@ -317,16 +359,9 @@ function parseCostbook(sheets) {
     if (!o.c && !any && !o.w && !o.p && !o.i) return;   /* 沒有成本也沒有工資的列不需要 */
     rows.push(o);
   });
-  var regions = [], rs = cbSheet(sheets, /區域/);
-  if (rs) { var RH = cbHeader(rs, "區域"); if (RH) { var kc = RH.col(/關鍵字/), lc = RH.col(/^工資係數/), wc = RH.col(/^線材係數/), cc2 = RH.col(/^公司/);
-    rs.rows.slice(RH.i + 1).forEach(function (r) { r = r || []; var nm = str(r[0]), keys = str(r[kc]).split(/[,，、\s]+/).filter(Boolean); if (!nm || !keys.length || !cbNum(r[lc])) return;   /* 沒填工資係數的列（說明文字）不是區域 */
-      regions.push({ name: nm, keys: keys, labor: cbNum(r[lc]) || 1, wire: cbNum(r[wc]) || 1, co: cc2 >= 0 ? str(r[cc2]) : "" }); }); } }
-  var std = [], ss = cbSheet(sheets, /工資標準/);
-  if (ss) { var SH = cbHeader(ss, "設備類別"); if (SH) { var rc = SH.col(/關鍵字/), w2 = SH.col(/^線材/), p2 = SH.col(/^拉線/), i2 = SH.col(/^安裝/);
-    ss.rows.slice(SH.i + 1).forEach(function (r) { r = r || []; var re = str(r[rc]); if (!str(r[0]) || !re) return; try { new RegExp(re); } catch (e) { return; }
-      std.push({ cls: str(r[0]), re: re, w: cbNum(r[w2]), p: cbNum(r[p2]), i: cbNum(r[i2]) }); }); } }
   if (!rows.length) throw new Error("「設備成本」分頁沒有任何成本或工資");
-  return { costbook: 1, rows: rows, companies: cos.map(function (x) { return x.co; }), regions: regions, std: std };
+  var ex = cbExtras(sheets);
+  return { costbook: 1, rows: rows, companies: cos.map(function (x) { return x.co; }), regions: ex.regions, std: ex.std };
 }
 function cbRegion(cb, company, site) {
   var t = str(site), co = str(company), hit = null;
@@ -358,30 +393,83 @@ function cbFind(ix, it) {
   ix.dev.forEach(function (d) { if (!(d.c || d.cc || d.w || d.p || d.i)) return; var sc = matchScore(it.name, d.n); if (sc > bs) { bs = sc; best = d; } });
   return best && bs >= 0.75 ? { r: best, how: "相近品名" } : null;
 }
+function cbIndex2(cb) {
+  if (cb._ix) return cb._ix;
+  var byCode = {}, byName = {}, names = [], byModel = {}, rowsOf = {};
+  cb.items.forEach(function (it) { byCode[it.c] = it; [it.n].concat(it.a || []).forEach(function (n) { var k = cbName(n); if (k && !byName[k]) byName[k] = it; names.push({ it: it, n: n }); }); });
+  cb.prices.forEach(function (r) { (rowsOf[r.c] = rowsOf[r.c] || []).push(r); var mk = cbModel(r.m); if (mk.length >= 4) (byModel[mk] = byModel[mk] || []).push(r); });
+  var keys = Object.keys(byModel).sort(function (a, b) { return b.length - a.length; });
+  var std = (cb.std || []).map(function (s) { return { s: s, re: new RegExp(s.re) }; });
+  Object.defineProperty(cb, "_ix", { value: { byCode: byCode, byName: byName, names: names, byModel: byModel, keys: keys, rowsOf: rowsOf, std: std }, enumerable: false, configurable: true });
+  return cb._ix;
+}
+function cbCoMatch(a, b) { a = str(a); b = str(b); return !!a && !!b && (a.indexOf(b) >= 0 || b.indexOf(a) >= 0); }
+function cbBrandTok(b) { return str(b).toUpperCase().split(/[\s,，、\/.()（）&＆\-]+/).filter(function (x) { return x.length >= 2; }); }
+function cbBrandMatch(chosen, rowBrand) {
+  var a = cbBrandTok(chosen), b = cbBrandTok(rowBrand);
+  return a.length > 0 && a.some(function (t) { return b.some(function (x) { return x === t || x.indexOf(t) >= 0 || t.indexOf(x) >= 0; }); });
+}
+/** 同條件多列：本公司優先，沒有才用共用（公司空白）；再來 預設 → 報價日期最新 */
+/** 同條件多列：本公司優先，沒有才用共用（公司空白）；本公司價格已過期而共用有未過期的報價時，用共用。再來 預設 → 報價日期最新 */
+function cbPick(rows, co, today) {
+  if (!rows || !rows.length) return null;
+  var best = function (list) { return list.length ? list.slice().sort(function (a, b) { return (b.df ? 1 : 0) - (a.df ? 1 : 0) || (a.d < b.d ? 1 : a.d > b.d ? -1 : 0); })[0] : null; };
+  var mine = best(rows.filter(function (r) { return cbCoMatch(r.co, co); })), shared = best(rows.filter(function (r) { return !r.co; }));
+  if (mine && shared && today && cbStale(mine, today) && !cbStale(shared, today)) return shared;
+  return mine || shared;
+}
+function cbStale(r, today) {
+  if (r.x && r.x < today) return "報價已過有效期（" + r.x + "）";
+  if (!r.d) return "沒有報價日期";
+  return (Date.parse(today) - Date.parse(r.d)) / 864e5 > 365 ? "報價已超過 12 個月（" + r.d + "）" : "";
+}
+function cbResolve2(cb, ix, it, ctx) {
+  var item = null, how = "", fixed = null;
+  var txt = cbModel([it.model, it.brandSpec, it.spec].join(" "));
+  if (txt.length >= 4) for (var k = 0; k < ix.keys.length; k++) if (txt.indexOf(ix.keys[k]) >= 0) { fixed = ix.byModel[ix.keys[k]]; item = ix.byCode[fixed[0].c]; how = "型號"; break; }
+  if (!item) { item = ix.byName[cbName(it.name)] || null; if (item) how = "品名"; }
+  if (!item) { var bs = 0; ix.names.forEach(function (x) { var sc = matchScore(it.name, x.n); if (sc > bs) { bs = sc; item = x.it; } }); if (bs >= 0.75) how = "相近品名"; else item = null; }
+  if (!item) return null;
+  var rows = ix.rowsOf[item.c] || [], r = null, via = "";
+  if (fixed) { r = cbPick(fixed, ctx.co, ctx.today); via = "型號"; }
+  if (!r && ctx.brand) { r = cbPick(rows.filter(function (x) { return cbBrandMatch(ctx.brand, x.b); }), ctx.co, ctx.today); via = "選定廠牌"; }
+  if (!r) { r = cbPick(rows.filter(function (x) { return x.df; }), ctx.co, ctx.today); via = "預設廠牌"; }
+  if (!r) { r = cbPick(rows, ctx.co, ctx.today); via = "最新報價"; }
+  return { label: item.c + " " + item.n, how: how, cost: r ? r.v : 0, costTag: r ? via + "：" + [r.b, r.m].filter(Boolean).join(" ") + (r.co ? "，" + r.co : "，共用") : "", stale: r ? cbStale(r, ctx.today) : "", w: item.w, p: item.p, i: item.i };
+}
+function cbResolve1(cb, ix, it, ctx) {
+  var f = cbFind(ix, it); if (!f) return null;
+  var r = f.r, cost = (ctx.coKey && r.cc && r.cc[ctx.coKey]) || r.c || 0;
+  if (!cost && r.cc) { var any = Object.keys(r.cc)[0]; if (any) cost = r.cc[any]; }
+  return { label: r.m || r.n, how: f.how, cost: cost, costTag: ctx.coKey && r.cc && r.cc[ctx.coKey] ? ctx.coKey : "", stale: "", w: r.w, p: r.p, i: r.i };
+}
 /** 套用成本總表；回傳摘要（顯示在報價單上方） */
 function applyCostbook(q, cb, opt) {
-  if (!cb || !cb.rows || !cb.rows.length) return null;
-  var ix = cbIndex(cb), co = str(opt && opt.company), rg = cbRegion(cb, co, opt && opt.site);
-  var sum = { company: co, region: rg.name, labor: rg.labor, wire: rg.wire, cost: 0, labor0: 0, lumps: 0, sections: [] };
-  var coKey = (cb.companies || []).filter(function (c) { return co && (co.indexOf(c) >= 0 || c.indexOf(co) >= 0); })[0] || "";
+  var v2 = cb && cb.costbook === 2;
+  if (!cb || !(v2 ? cb.items && cb.items.length : cb.rows && cb.rows.length)) return null;
+  var ix = v2 ? cbIndex2(cb) : cbIndex(cb), co = str(opt && opt.company), rg = cbRegion(cb, co, opt && opt.site);
+  var today = str(opt && opt.today) || new Date().toISOString().slice(0, 10);
+  var sum = { version: v2 ? 2 : 1, company: co, region: rg.name, labor: rg.labor, wire: rg.wire, cost: 0, labor0: 0, lumps: 0, stale: 0, sections: [] };
+  var coKey = (cb.companies || []).filter(function (c) { return cbCoMatch(c, co); })[0] || "";
   q.sections.forEach(function (s) {
     var W = 0, P = 0, I = 0, cov = 0, tot = 0;
     s.items.forEach(function (it) {
       if (it.kind !== "device" || isLength(it)) return;
-      var qty = Number(it.qty) || 0, f = cbFind(ix, it), note = [];
+      var qty = Number(it.qty) || 0, note = [];
+      var r = (v2 ? cbResolve2 : cbResolve1)(cb, ix, it, { co: co, coKey: coKey, brand: str(s.brand), today: today });
       if (qty > 0) tot += qty;
-      if (!f) return;
-      var r = f.r, cost = (coKey && r.cc && r.cc[coKey]) || r.c || 0;
-      if (!cost && r.cc) { var any = Object.keys(r.cc)[0]; if (any) cost = r.cc[any]; }
-      if (cost) { it.cost = cost; sum.cost++; note.push("成本 " + cost.toLocaleString() + (coKey && r.cc && r.cc[coKey] ? "（" + coKey + "）" : "")); }
-      var w = r.w, p = r.p, ins = r.i;
-      if (!w && !p && !ins) { var sd = ix.std.filter(function (x) { return x.re.test(it.name); })[0]; if (sd) { w = sd.s.w; p = sd.s.p; ins = sd.s.i; note.push("工資依「" + sd.s.cls + "」標準"); } }
+      if (!r) return;
+      if (r.cost) { it.cost = r.cost; sum.cost++; note.push("成本 " + r.cost.toLocaleString() + (r.costTag ? "（" + r.costTag + "）" : "")); }
+      if (r.stale) { it.cbWarn = r.stale + "，請向廠商確認"; sum.stale++; } else delete it.cbWarn;
+      var w = r.w, p = r.p, ins = r.i, est = false;
+      if (!w && !p && !ins) { var sd = ix.std.filter(function (x) { return x.re.test(it.name); })[0]; if (sd) { w = sd.s.w; p = sd.s.p; ins = sd.s.i; est = true; note.push("工資依「" + sd.s.cls + "」標準（推估）"); } }
       if (w || p || ins) {
         it.wire = Math.round(w * rg.wire); it.pull = Math.round(p * rg.labor); it.install = Math.round(ins * rg.labor);
-        W += qty * it.wire; P += qty * it.pull; I += qty * it.install; cov += qty; sum.labor0++;
+        W += qty * it.wire; P += qty * it.pull; I += qty * it.install; sum.labor0++;
+        if (!est) cov += qty;   /* 工資標準推估的不算覆蓋率：推估比例高的系統維持範本比例 */
         note.push("單位工資 線材 " + it.wire + "／拉線 " + it.pull + "／安裝 " + it.install);
       }
-      it.cbNote = "成本表（" + f.how + "：" + (r.m || r.n) + "）" + (note.length ? "：" + note.join("，") : "");
+      it.cbNote = "成本表（" + r.how + "：" + r.label + "）" + (note.length ? "：" + note.join("，") : "");
     });
     /* 線材、工資式項目：設備有工資的數量達 60% 才改用實算 */
     if (!tot || cov / tot < 0.6) { if (tot) sum.sections.push(s.name + "：只有 " + Math.round(cov / tot * 100) + "% 設備有工資資料，線材與工資維持範本比例"); return; }
@@ -406,6 +494,44 @@ function applyCostbook(q, cb, opt) {
     });
   });
   return sum;
+}
+
+/** 上傳前檢查（V2）：errors 擋下、warns 提醒、changes 與舊版比較 */
+function checkCostbook(cb, old, today) {
+  today = today || new Date().toISOString().slice(0, 10);
+  var out = { errors: [], warns: [], changes: [] };
+  if (!cb || cb.costbook !== 2) { out.warns.push("舊版格式（V1）：不做價格檢查"); return out; }
+  var codes = {}; cb.items.forEach(function (it) { if (codes[it.c]) out.errors.push("品項代碼重複：" + it.c + "（品項第 " + it.row + " 列）"); codes[it.c] = it; });
+  var bad = cb.prices.filter(function (r) { return !codes[r.c]; });
+  if (bad.length) out.errors.push("廠牌型號價格有 " + bad.length + " 列的品項代碼在「品項」找不到：" + bad.slice(0, 8).map(function (r) { return "第 " + r.row + " 列 " + r.c; }).join("、") + (bad.length > 8 ? "…" : ""));
+  var dd = {}; cb.prices.forEach(function (r) { if (!r.df) return; var k = r.c + "|" + r.co; (dd[k] = dd[k] || []).push(r.row); });
+  Object.keys(dd).forEach(function (k) { if (dd[k].length > 1) { var p = k.split("|"); out.errors.push(p[0] + "（" + (p[1] || "共用") + "）有 " + dd[k].length + " 列「預設＝是」：第 " + dd[k].join("、") + " 列"); } });
+  var hi = cb.prices.filter(function (r) { return r.sp && r.v > r.sp; });
+  if (hi.length) out.warns.push(hi.length + " 列採購成本高於建議售價：" + hi.slice(0, 5).map(function (r) { return "第 " + r.row + " 列 " + [r.b, r.m].filter(Boolean).join(" "); }).join("、") + (hi.length > 5 ? "…" : ""));
+  var hist = {}; cb.prices.forEach(function (r) { if (!r.m) return; var k = [r.c, cbModel(r.m), r.co].join("|"); (hist[k] = hist[k] || []).push(r); });
+  var jump = [];
+  Object.keys(hist).forEach(function (k) { var a = hist[k].filter(function (r) { return r.d; }).sort(function (x, y) { return x.d < y.d ? -1 : 1; }); for (var i = 1; i < a.length; i++) if (Math.abs(a[i].v - a[i - 1].v) / a[i - 1].v > 0.2) jump.push(a[i].m + " " + a[i - 1].v + "→" + a[i].v); });
+  if (jump.length) out.warns.push(jump.length + " 個型號這次報價比上次漲跌超過 20%：" + jump.slice(0, 5).join("、") + (jump.length > 5 ? "…" : ""));
+  var st = staleRows(cb, today).length; if (st) out.warns.push(st + " 個型號報價超過 12 個月或已過有效期，需重新詢價（可下載清單）");
+  var ix = cbIndex2(cb), noLab = cb.items.filter(function (it) { return !it.w && !it.p && !it.i && !ix.std.some(function (x) { return x.re.test(it.n); }) && (ix.rowsOf[it.c] || []).length; }).length;
+  if (noLab) out.warns.push(noLab + " 個有價格的品項沒有工資，工資標準也對不到");
+  if (old && old.costbook === 2) {
+    var key = function (r) { return [r.c, r.b, cbModel(r.m), r.co].join("|"); }, last = {};
+    old.prices.forEach(function (r) { var k = key(r); if (!last[k] || r.d > last[k].d) last[k] = r; });
+    var add = 0, chg = 0; cb.prices.forEach(function (r) { var o = last[key(r)]; if (!o) add++; else if (r.d > o.d && r.v !== o.v) chg++; });
+    out.changes.push("與目前版本比較：品項 " + old.items.length + " → " + cb.items.length + "，價格列 " + old.prices.length + " → " + cb.prices.length + "（新型號／新公司 " + add + "，價格更新 " + chg + "）");
+  } else if (old) out.changes.push("目前是 V1 格式，這次會改用 V2");
+  return out;
+}
+/** 需重新詢價：每個（品項、廠牌、型號、公司）最新一列已超過 12 個月或過有效期 */
+function staleRows(cb, today) {
+  if (!cb || cb.costbook !== 2) return [];
+  today = today || new Date().toISOString().slice(0, 10);
+  var last = {}; cb.prices.forEach(function (r) { var k = [r.c, r.b, cbModel(r.m), r.co].join("|"); if (!last[k] || r.d > last[k].d) last[k] = r; });
+  var name = {}; cb.items.forEach(function (it) { name[it.c] = it.n; });
+  return Object.keys(last).map(function (k) { return last[k]; }).filter(function (r) { return cbStale(r, today); })
+    .sort(function (a, b) { return a.d < b.d ? -1 : a.d > b.d ? 1 : 0; })
+    .map(function (r) { return { code: r.c, name: name[r.c] || "", brand: r.b, model: r.m, company: r.co || "共用", cost: r.v, date: r.d, exp: r.x || "", why: cbStale(r, today), src: r.src || "" }; });
 }
 
 /* ---------- 依成本與利潤率訂價 ----------
@@ -434,6 +560,6 @@ function applyProfit(q, pct, mode, secIdx) {
   finalize(q);
   return n;
 }
-var api = { parseCostbook: parseCostbook, applyCostbook: applyCostbook, priceFromCost: priceFromCost, profitOf: profitOf, applyProfit: applyProfit, toSheets: toSheets, matchScore: matchScore, SYSTEMS: SYSTEMS, GRADES: GRADES, classify: classify, smartOf: smartOf, candidates: candidates, build: build, finalize: finalize, stripSmart: stripSmart };
+var api = { parseCostbook: parseCostbook, applyCostbook: applyCostbook, checkCostbook: checkCostbook, staleRows: staleRows, priceFromCost: priceFromCost, profitOf: profitOf, applyProfit: applyProfit, toSheets: toSheets, matchScore: matchScore, SYSTEMS: SYSTEMS, GRADES: GRADES, classify: classify, smartOf: smartOf, candidates: candidates, build: build, finalize: finalize, stripSmart: stripSmart };
 if (typeof module === "object" && module.exports) module.exports = api; else root.QUOTEGEN = api;
 })(typeof self !== "undefined" ? self : this);
