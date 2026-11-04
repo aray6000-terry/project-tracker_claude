@@ -13,6 +13,7 @@
 | --- | --- |
 | `index.html` | 畫面與樣式（含 Content-Security-Policy） |
 | `app.js` | 登入、專案列表、專案頁、分享、權限管理、舊資料匯入 |
+| `plan.js` | 週計畫（Last Planner：前置條件、承諾、PPC 計畫完成率、未完成原因統計）與測試驗收・竣工（FAT／SAT 測試紀錄、IO 點位帶入、竣工資料包、結案檢查）；資料存在專案「分析」資料夾 weekPlan.json、accept.json |
 | `qa.js` | 品管・缺失：缺失管制表（改善前／後照片、期限、結案）與自主檢查表（各結點×系統檢查項目、主管抽查） |
 | `config.js` | `CLIENT_ID`（Google OAuth 用戶端 ID）、`API_URL`（Apps Script 網址） |
 | `submittal-pdf.js` | 送審型錄 PDF 合併（封面、送審目錄、送審資料表＋原廠型錄，瀏覽器端產生） |
@@ -42,4 +43,4 @@ V2 格式（建議）：分頁「品項」（品項代碼、標準品名、別�
 4. 驗證：登入後打開一個專案，各分頁不應出現「後端尚未部署」。
 
 前端目前會呼叫的後端操作（後端 ACTIONS 需全部存在）：
-`addendaGet`、`addendaSave`、`adminAudit`、`adminSaveCompanies`、`adminSaveUser`、`adminUsers`、`analysisGet`、`analysisOne`、`analysisSave`、`billAct`、`billTermsSave`、`bills`、`catalogFile`、`catalogList`、`catalogUpload`、`changes`、`contractGet`、`contractSave`、`contractSummary`、`expectSave`、`create`、`dashboard`、`dealGet`、`deviceAdd`、`devices`、`fileDelete`、`fileGet`、`files`、`get`、`inspectReview`、`inspectSave`、`issueSave`、`issues`、`list`、`me`、`punchSave`、`qaGet`、`quoteLibGet`、`quoteLibSave`、`remove`、`reqAct`、`reqCreate`、`reqs`、`save`、`setOwner`、`share`、`standardGet`、`standardSave`、`submittalBuild`、`upload`
+`addendaGet`、`addendaSave`、`adminAudit`、`adminSaveCompanies`、`adminSaveUser`、`adminUsers`、`analysisGet`、`analysisOne`、`analysisSave`（kind 需含 `weekPlan`、`accept`）、`billAct`、`billTermsSave`、`bills`、`catalogFile`、`catalogList`、`catalogUpload`、`changes`、`contractGet`、`contractSave`、`contractSummary`、`expectSave`、`create`、`dashboard`、`dealGet`、`deviceAdd`、`devices`、`fileDelete`、`fileGet`、`files`、`get`、`inspectReview`、`inspectSave`、`issueSave`、`issues`、`list`、`me`、`punchSave`、`qaGet`、`quoteLibGet`、`quoteLibSave`、`remove`、`reqAct`、`reqCreate`、`reqs`、`save`、`setOwner`、`share`、`standardGet`、`standardSave`、`submittalBuild`、`upload`

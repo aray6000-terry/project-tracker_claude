@@ -127,6 +127,13 @@ function normDate(v){
   var m=/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/.exec(s);
   return m ? m[1]+"-"+pad(+m[2])+"-"+pad(+m[3]) : s.slice(0,10);
 }
+/** 專案 ID：試算表可能把純數字 ID 轉成數字（606342424201 → 606342424201.0）或吃掉前導 0，統一還原成 12 碼字串（v2.10.30） */
+function normId(v){
+  var s=String(v==null?"":v).trim();
+  if(/^\d+(\.0+)?$/.test(s)){ s=s.replace(/\.0+$/,""); while(s.length<12) s="0"+s; }
+  return s.toLowerCase();
+}
+function normProjects(list){ (list||[]).forEach(function(x){ if(x) x.id=normId(x.id); }); return list||[]; }
 function addDays(iso,n){ var d=new Date(iso+"T00:00:00"); d.setDate(d.getDate()+n); return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()); }
 function fmt(iso){ return iso ? normDate(iso).replace(/-/g,"/") : "未設定"; }
 function fmtTime(iso){ if(!iso) return "—"; var d=new Date(iso); if(isNaN(d)) return esc(iso); return d.getFullYear()+"/"+pad(d.getMonth()+1)+"/"+pad(d.getDate())+" "+pad(d.getHours())+":"+pad(d.getMinutes()); }
@@ -342,13 +349,14 @@ setInterval(function(){
 /* ---------- 列表 ---------- */
 function loadList(){
   $("app").innerHTML='<div class="loading">讀取專案中…</div>';
-  return api("list").then(function(d){ data.projects=d.projects||[]; data.users=d.users||[]; renderList(); }).catch(fail);
+  return api("list").then(function(d){ data.projects=normProjects(d.projects); data.users=d.users||[]; renderList(); }).catch(fail);
 }
 function renderList(){
   var me=session.me;
   var ps=data.projects.map(function(x){ return {x:x,s:sumStat(x.summary||{})}; });
   var act=ps.filter(function(o){return o.s.status!=="closed";});
   var overNodes=ps.reduce(function(a,o){return a+o.s.over;},0);
+  var unas=act.filter(function(o){ return isUnassigned(o.x.summary); }).length;
   var avg=act.length?Math.round(act.reduce(function(a,o){return a+o.s.pct;},0)/act.length):0;
   var q=view.q.trim().toLowerCase();
   var list=ps.filter(function(o){
@@ -356,6 +364,7 @@ function renderList(){
     if(view.filter==="active" && o.s.status==="closed") return false;
     if(view.filter==="late" && o.s.status!=="late") return false;
     if(view.filter==="closed" && o.s.status!=="closed") return false;
+    if(view.filter==="unassigned" && (o.s.status==="closed" || !isUnassigned(sm))) return false;
     if(view.scope==="mine" && o.x.owner!==me.email) return false;
     if(view.scope==="shared" && (o.x.owner===me.email || o.x.myRole==="admin")) return false;
     if(view.co && (sm.company||"")!==(view.co==="(none)"?"":view.co)) return false;
@@ -367,9 +376,10 @@ function renderList(){
     +statBox(data.projects.length, me.role==="admin"?"專案總數（全部）":me.role==="ceo"?"管理公司的專案":"我可看的專案")
     +statBox(act.length,"進行中專案")
     +statBox(overNodes,"逾期結點",overNodes>0?"bad":"")
-    +statBox(avg+"%","進行中平均進度")+'</section>';
+    +statBox(avg+"%","進行中平均進度")
+    +(unas?statBox(unas,"未指派工程師","bad"):"")+'</section>';
   h+='<div class="filters"><div class="seg" role="group" aria-label="狀態">'
-    +seg("filter","all","全部")+seg("filter","active","進行中")+seg("filter","late","有逾期")+seg("filter","closed","已結案")
+    +seg("filter","all","全部")+seg("filter","active","進行中")+seg("filter","late","有逾期")+seg("filter","closed","已結案")+seg("filter","unassigned","待指派")
     +'</div><div class="seg" role="group" aria-label="範圍">'
     +seg("scope","all","全部")+seg("scope","mine","我負責")+seg("scope","shared","分享給我")
     +'</div>'+companyFilter()+'<input class="search" id="q" type="search" placeholder="搜尋專案、業主、工程師…" value="'+esc(view.q)+'"></div>';
@@ -387,7 +397,7 @@ function renderList(){
         +'<div class="row"><h3>'+esc(sm.name)+'</h3><span class="badge '+lb[1]+'">'+lb[0]+'</span></div>'
         +(sm.company?'<div class="meta"><span class="badge b-idle">'+esc(sm.company)+'</span></div>':'')
         +'<div class="meta">'+esc(sm.client||"—")+(sm.site?'｜'+esc(sm.site):'')+'</div>'
-        +'<div class="meta">工程師：'+esc(sm.engineer||"—")+'　師父：'+esc(sm.mentor||"—")+'</div>'
+        +'<div class="meta">工程師：'+(isUnassigned(sm)?'<span style="color:var(--bad)">待指派</span>':esc(sm.engineer))+'　師父：'+esc(sm.mentor||"—")+'</div>'
         +(sysList(sm).length?'<div class="meta">系統：'+esc(sysList(sm).map(function(k){return sysLabel(sm,k);}).join("、"))+'</div>':'')
         +'<div class="dots" aria-hidden="true">'+NODES.map(function(_,i){return '<span class="s-'+sumNodeStat(sm,i).st+'"></span>';}).join("")+'</div>'
         +'<div class="row"><div class="bar'+(s.pct===100?' ok':'')+'" style="flex:1" role="progressbar" aria-valuenow="'+s.pct+'" aria-valuemin="0" aria-valuemax="100"><i style="width:'+s.pct+'%"></i></div><b style="min-width:44px;text-align:right">'+s.pct+'%</b></div>'
@@ -421,9 +431,9 @@ function seg(k,v,l){ return '<button type="button" data-seg="'+k+'" data-v="'+v+
 /* ---------- 專案頁 ---------- */
 function openProject(id){
   if(cur && cur.id===id){ renderDetail(); return; }
-  if(!data.users.length) api("list").then(function(d){ data.projects=d.projects||[]; data.users=d.users||[]; }).catch(function(){});
+  if(!data.users.length) api("list").then(function(d){ data.projects=normProjects(d.projects); data.users=d.users||[]; }).catch(function(){});
   $("app").innerHTML='<div class="loading">讀取專案中…</div>';
-  api("get",{id:id}).then(function(v){ cur=v; renderDetail(); }).catch(function(e){ fail(e); if(e.code==="NOT_FOUND") go(""); });
+  api("get",{id:id}).then(function(v){ if(v) v.id=normId(v.id||id); cur=v; renderDetail(); }).catch(function(e){ fail(e); if(e.code==="NOT_FOUND") go(""); });
 }
 function renderDetail(keepNode){
   var p=cur.project, s=projStat(p), lb=PST_LABEL[s.status], rl=ROLE_LABEL[cur.myRole], ro=!canEdit();
@@ -489,7 +499,7 @@ function renderDetail(keepNode){
 function info(k,v){ return '<div><b>'+k+'</b>'+esc(v||"—")+'</div>'; }
 /* 簽核領料異常單的角色（權限表「簽核領料異常單」）：沒有領料權限也要看得到專案的領料頁 */
 var REQ_SIGNERS={admin:1,ceo:1,eng_mgr:1,sales_mgr:1};
-var PTABS=[["progress","施工進度"],["files","圖面檔案"],["qty","數量・報價"],["design","設計・編表"],["site","現場照片・問題"],["qa","品管・缺失"],["reqs","領料"],["bills","請款"],["brands","廠牌確認表"],["log","變更紀錄"]];
+var PTABS=[["progress","施工進度"],["plan","週計畫"],["files","圖面檔案"],["qty","數量・報價"],["design","設計・編表"],["site","現場照片・問題"],["qa","品管・缺失"],["accept","測試驗收・竣工"],["reqs","領料"],["bills","請款"],["brands","廠牌確認表"],["log","變更紀錄"]];
 function projectTabs(){
   var caps=session.me.caps||{};
   return '<nav class="ptabs" aria-label="專案功能">'+PTABS.filter(function(t){
@@ -561,7 +571,18 @@ function bindDetail(){
   };
   if(!canEdit()) return;
   $("btnEdit").onclick=function(){ openForm(true); };
-  $("btnClose").onclick=function(){ p.closed=!p.closed; queueSave(); renderDetail(); toast(p.closed?"已標記為結案":"已重新開啟"); };
+  $("btnClose").onclick=function(){
+    var doClose=function(){ p.closed=!p.closed; queueSave(); renderDetail(); toast(p.closed?"已標記為結案":"已重新開啟"); };
+    if(p.closed || !TR.acceptGate) return doClose();
+    /* 結案前檢查測試驗收與竣工包（v2.10.30）；管理員可確認後強制結案 */
+    var b=$("btnClose"); b.disabled=true;
+    TR.acceptGate(cur).then(function(why){
+      b.disabled=false;
+      if(!why) return doClose();
+      if(session.me.role==="admin" && confirm("尚未符合結案條件："+why+"\n\n您是管理員，確定仍要標記結案？")) return doClose();
+      toast("尚不能結案："+why+"（請到「測試驗收・竣工」補齊）");
+    });
+  };
   document.querySelectorAll('input[type=checkbox][data-id]').forEach(function(cb){
     cb.onchange=function(){
       var i=+cb.dataset.n, node=p.nodes[i];
@@ -576,7 +597,7 @@ function bindDetail(){
       }
       if(cb.checked) node.checks[cb.dataset.id]=true; else delete node.checks[cb.dataset.id];
       afterNodeChange(p,i,!cb.checked);
-      queueSave(); rerender(i);
+      queueSave(CLICK_SAVE_MS); rerender(i);
     };
   });
   document.querySelectorAll('select[data-sys]').forEach(function(sel){
@@ -584,7 +605,7 @@ function bindDetail(){
       var i=+sel.dataset.n, k=sel.dataset.sys, node=p.nodes[i], old=sysP(node,k), v=+sel.value;
       node.sys=node.sys||{}; node.sys[k]=node.sys[k]||{p:0,miss:""}; node.sys[k].p=v;
       afterNodeChange(p,i,v<old);
-      queueSave(); rerender(i);
+      queueSave(CLICK_SAVE_MS); rerender(i);
     };
   });
   document.querySelectorAll('input[data-miss]').forEach(function(inp){
@@ -604,6 +625,10 @@ function bindDetail(){
 }
 
 /* ---------- 自動儲存（含版本衝突處理） ---------- */
+/* 連續勾選：等最後一次點擊後 2.5 秒才送出，多次勾選合併成一筆變更紀錄（v2.10.30） */
+var CLICK_SAVE_MS=2500;
+var UNASSIGNED="待指派";
+function isUnassigned(sm){ var e=String((sm&&sm.engineer)||"").trim(); return !e||e===UNASSIGNED; }
 function queueSave(delay){
   saver.dirty=true; saver.failed=false; saver.target=cur; showSaveState();
   clearTimeout(saver.timer); saver.timer=setTimeout(flushSave, delay||600);
@@ -698,7 +723,9 @@ $("frm").addEventListener("submit",function(e){
   var f=e.target, d={};
   FIELDS.forEach(function(k){ d[k]=f.elements[k].value.trim(); });
   if(!d.name){ e.preventDefault(); return; }
-  if(!editingExisting && !d.engineer && !confirm("尚未填「負責工程師」，之後報表與指派會顯示空白。確定先建立？（可稍後在「編輯專案資料」補上）")){ e.preventDefault(); f.elements.engineer.focus(); return; }
+  /* 新增專案：工程師未定時自動填「待指派」，首頁與專案列表會列出待指派清單（v2.10.30） */
+  if(!editingExisting && !d.engineer){ d.engineer=UNASSIGNED; f.elements.engineer.value=UNASSIGNED; toast("負責工程師先填「待指派」，請主管於專案列表「待指派」篩選中指派"); }
+  if(!editingExisting && !d.company && (session.me.companyOptions||[]).length){ e.preventDefault(); toast("請選擇所屬公司"); f.elements.company.focus(); return; }
   var picked=SYS_KEYS.filter(function(k){ var cb=document.querySelector('#sysPick input[value="'+k+'"]'); return cb&&cb.checked; });
   var otherName=f.elements.otherName.value.trim().slice(0,30);
   var bv=currentBrandValues(), brands={};
@@ -938,8 +965,8 @@ function route(){
   if(!session.me) return;
   renderNav();
   var h=location.hash.replace(/^#/,"");
-  var m=h.match(/^p=([a-f0-9]{12})(?:\/(\w+))?$/);
-  if(m){ view.tab=m[2]||"progress"; openProject(m[1]); return; }
+  var m=h.match(/^p=([a-f0-9]{1,12}(?:\.0+)?)(?:\/(\w+))?$/i);
+  if(m){ var pid=normId(m[1]); if(pid!==m[1]){ location.replace("#p="+pid+(m[2]?"/"+m[2]:"")); return; } view.tab=m[2]||"progress"; openProject(pid); return; }
   if(saver.dirty) flushSave();
   cur=null;
   if(h==="admin"){ renderAdmin(); return; }
@@ -965,7 +992,7 @@ window.TR={views:{}, saveProject:saveProjectNow, api:api, withBusy:withBusy, esc
   session:session, data:data, NODES:NODES, SYS_KEYS:SYS_KEYS, sysName:sysName, sysLabel:sysLabel, sysList:sysList, brandOf:brandOf,
   go:go, today:today, getCur:function(){ return cur; },
   markCheck:function(i,id){ if(!cur||!canEdit()) return; var p=cur.project, n=p.nodes[i]; if(!n||n.checks[id]||(i===7&&id==="gate0")) return; n.checks[id]=true; afterNodeChange(p,i,false); queueSave(); rerender(i); }, canEdit:canEdit, ROLE_NAME:ROLE_NAME, sumStat:sumStat, PST_LABEL:PST_LABEL,
-  loadUsers:function(){ return data.users.length?Promise.resolve(data):api("list").then(function(d){ data.projects=d.projects||[]; data.users=d.users||[]; return data; }); }};
+  loadUsers:function(){ return data.users.length?Promise.resolve(data):api("list").then(function(d){ data.projects=normProjects(d.projects); data.users=d.users||[]; return data; }); }};
 (function start(){
   /* LINE 內建瀏覽器：自動改用手機預設瀏覽器開啟 */
   if(/\bLine\//i.test(UA) && !/[?&]openExternalBrowser=1/.test(location.search)){

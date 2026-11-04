@@ -175,6 +175,8 @@ T.views.projectTab=function(tab,el){
   if(tab==="design" && T.views.designTab) return T.views.designTab(cur,el);
   if(tab==="site") return siteTab(cur,el);
   if(tab==="qa" && T.views.qaTab) return T.views.qaTab(cur,el);
+  if(tab==="plan" && T.views.planTab) return T.views.planTab(cur,el);
+  if(tab==="accept" && T.views.acceptTab) return T.views.acceptTab(cur,el);
   if(tab==="reqs") return reqsView(el,cur);
   if(tab==="bills") return billsTab(cur,el);
   if(tab==="brands") return brandsTab(cur,el);
@@ -415,7 +417,7 @@ function bindDealPanel(cur,deal,adds,reload){
   b.onclick=function(){
     var f=$("dealFile").files[0]; if(!f){ toast("請先選擇成交報價單"); return; }
     var ex=expVal("dx");
-    if(!deal&&!ex){ toast("請先選預計完工的年度與季度"); $("dxY").focus(); return; }
+    if(!deal&&!ex){ toast("請先選預計完工的年度與季度"); if($("dxY")) $("dxY").focus(); return; }
     if(f.size>25*1024*1024){ toast("檔案超過 25MB"); return; }
     $("dealMsg").textContent="解析中…";
     readQuoteFile(f).then(function(q){

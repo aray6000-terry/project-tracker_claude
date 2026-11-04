@@ -96,6 +96,25 @@ T.views.designTab=function(cur,el){
     .catch(function(e){ el.innerHTML='<div class="empty">'+esc(e.message)+'</div>'; });
 };
 
+/** 測試驗收用：依目前的設計參數算出中央監控 IO 點數表，回傳每個設備列的測試點（v2.10.30） */
+T.ioPoints=function(cur){
+  var dr=null, params={}, pf={};
+  return api("analysisGet",{id:cur.id}).then(function(d){ dr=d.drawing; params=d.design||{};
+      return api("analysisOne",{id:cur.id,kind:"sld"}).then(function(r){ pf=sldPanelFloors(r&&r.data); },function(){ pf={}; });
+    }).then(function(){
+      if(!dr && (params.extraIo||[]).length) dr={items:[],floors:[],plans:[],tables:[],fileName:""};
+      if(!dr) return null;
+      var P=DESIGN.plan(dr, Object.assign({}, params, {systems: cur.project.systems||[], panelFloors: pf})), tb=P.io&&P.io.table, out=[];
+      if(!tb) return null;
+      tb.sections.forEach(function(sec){ sec.rows.forEach(function(r){
+        var g=r.sum||{}, pts=[]; if(g.di) pts.push("DI "+g.di); if(g.ai) pts.push("AI "+g.ai); if(g.do) pts.push("DO "+g.do); if(g.comm) pts.push("通信 "+g.comm);
+        if(!pts.length) return;
+        var fl=r.at&&r.at.floors?r.at.floors.join("、"):"";
+        out.push({k:String((sec.no||"")+"-"+(r.no||"")+"-"+r.name).slice(0,60), t:(sec.name?sec.name+"｜":"")+r.name+(r.qty?" ×"+r.qty:""), e:pts.join("、")+(fl?"（"+fl+"）":"")+" 逐點測試正確"});
+      }); });
+      return out;
+    });
+};
 function render(cur,el){
   if(!st.dr && (st.params.extraIo||[]).length) st.dr={items:[],floors:[],plans:[],tables:[],fileName:"（尚未分析平面圖，只含單線圖／手動點位）"};
   if(!st.dr){ el.innerHTML='<section class="panel"><h3>設計・編表</h3><p class="meta">請先到「數量・報價」分頁分析圖面（DXF），系統會依各樓層設備數量自動產生 IO 模組表、IP 編表、網路架構、交換器埠數與線材估算。</p></section>'; return; }
