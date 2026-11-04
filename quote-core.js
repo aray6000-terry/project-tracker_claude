@@ -26,7 +26,8 @@ function parse(sheets) {
       row.forEach(function (v, i) {
         var t = norm(v).replace(/[．.‧・·、\/]/g, "");   /* 「品　名．規　範」→ 品名規範 */
         if (t === "項次") c.no = i;
-        else if (/^(工程項目|品名|項目|品名規格|品名規範|名稱|品名及規格)$/.test(t)) c.name = i;
+        else if (t === "項目" && c.item === undefined) { c.item = i; if (c.name === undefined) c.name = i; }
+        else if (/^(工程項目|品名|品名規格|品名規範|名稱|品名及規格)$/.test(t)) c.name = i;
         else if (t === "設備成本") c.sumEq = i;
         else if (t === "線材成本") c.sumWire = i;
         else if (/^(安裝工資|工資成本)$/.test(t)) c.sumLabor = i;
@@ -36,6 +37,7 @@ function parse(sheets) {
         else if (/^(合計|複價|金額)$/.test(t)) c.amount = i;
         else if (/^(備註|廠牌)$/.test(t)) c.note = i;
       });
+      if (c.no === undefined && c.item !== undefined && c.name !== undefined && c.name !== c.item) c.no = c.item;   /* 表頭「項目｜名稱｜單位…」：項目欄是編號（宗麒 京懋水汴頭案） */
       if (c.no !== undefined && c.name !== undefined && c.qty !== undefined && c.price !== undefined) { sh = sheets[s]; hr = r; col = c; break; }
     }
   }
@@ -44,6 +46,15 @@ function parse(sheets) {
   if (col.note === undefined) col.note = col.amount + 1;
   var o = col.note;
   col.margin = o + 1; col.cost = o + 2; col.costAmt = o + 3; col.brand = o + 4; col.wire = o + 5; col.pull = o + 7; col.install = o + 9;
+  if (col.sumEq === undefined) {   /* 總表右側成本欄沒有表頭：找「複價 − 設備 − 線材 − 工資 ＝ 毛利率 × 複價」成立的一組（宗麒 京懋水汴頭案：H 設備成本、I 線材成本、J 安裝工資、K 毛利率） */
+    for (var r1 = hr + 1; r1 < Math.min(sh.rows.length, hr + 40); r1++) {
+      var rw = sh.rows[r1] || [], am = num(rw[col.amount]);
+      if (!isCnNo(rw[col.no]) || !am) continue;
+      var e1 = num(rw[o + 1]), w1 = num(rw[o + 2]), l1 = num(rw[o + 3]), m1 = num(rw[o + 4]);
+      if (e1 !== null && w1 !== null && l1 !== null && m1 !== null && Math.abs(m1) <= 1 && Math.abs((am - e1 - w1 - l1) / am - m1) < 0.002) { col.sumEq = o + 1; col.sumWire = o + 2; col.sumLabor = o + 3; }
+      break;
+    }
+  }
   var sumCost = col.sumEq !== undefined;   /* 總表右側有「設備成本／線材成本／安裝工資」（宗麒報價單格式）：明細列為 廠牌｜型號｜成本｜成本複價｜安裝工資 */
   if (sumCost) { col.margin = -1; col.brand = o; col.model = o + 1; col.cost = o + 2; col.costAmt = o + 3; col.install = o + 4; col.wire = -1; col.pull = -1; }
   var rows = sh.rows, meta = {}, households = null;
