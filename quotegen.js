@@ -12,7 +12,7 @@ function pfLabel(){ return PF.mode==="markup"?"加成率":"毛利率"; }
 var FULL={"宗亞":"宗亞資訊工業股份有限公司","宗友":"宗友資訊股份有限公司"};
 var SMART_LABEL={none:"一般（非智慧建築）","2016":"智慧建築 2016 年版","2024":"智慧建築 2024 年版",smart:"智慧建築（未標版本）"};
 /* 專案建置系統 → 報價系統 */
-var FROM_PROJECT={access:"access",cctv:"cctv",intercom:"intercom",bms:"bms",parking:"parking",visitor:"visitor",media:"media","energy.meter":"energy","energy.water":"energy","energy.solar":"energy",lighting:"lighting",mobile:"mobile"};
+var FROM_PROJECT={access:"access",cctv:"cctv",intercom:"intercom",bms:"bms",parking:"parking",visitor:"visitor",media:"media","energy.meter":"energy","energy.water":"energy","energy.solar":"energy",lighting:"lighting",mobile:"mobile",network:"network",phone:"pbx",security:"intercom"};
 
 function ls(k,v){ try{ if(v===undefined) return JSON.parse(localStorage.getItem(k)||"null"); localStorage.setItem(k,JSON.stringify(v)); }catch(e){ return null; } }
 function rocToday(){ var d=new Date(); return (d.getFullYear()-1911)+"/"+("0"+(d.getMonth()+1)).slice(-2)+"/"+("0"+d.getDate()).slice(-2); }

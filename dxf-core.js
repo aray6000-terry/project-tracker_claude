@@ -273,11 +273,19 @@ function floorRank(f) {
 
 /* ---------- 系統分類（可由呼叫端覆寫） ---------- */
 var SYS_RULES = [
-  ["other", /接地|避雷/],   /* 「接地測試箱，內附接地監視器」不是監視系統 */
+  ["other", /接地|避雷/],
+  /* [訓練修正 I] 網路系統：交換器(Switch)、無線網路基地台(AP)、防火牆、路由器、網路機櫃 */
+  ["network", /網路交換|交換器|switch|PoE|無線網路|基地台|\bAP\b|access ?point|防火牆|firewall|路由器|router|網路機櫃|資訊機櫃|光纖收發|網路設備|資訊出線/i],
+  /* [訓練修正 I] 電話交換機系統（智慧建築）：交換機、話機、電話出線 */
+  ["phone", /交換機|話機|電話|PBX/i],   /* 「接地測試箱，內附接地監視器」不是監視系統 */
   ["parking", /線圈|車道|柵欄|紅綠燈|警示燈|閃光燈|車牌|E-?TAG|出車|字幕機|車輛偵測/i],
   ["cctv", /攝影機|CCTV|錄影|監視/i],
-  ["intercom", /對講|門口機|門口子機|管理總機|智慧家庭|門鈴/],
-  ["access", /讀卡機|讀碼機|陽極|電鎖|門鎖|開門按鈕|開門按扭|門禁|Smart ?Key|感應卡/i],
+  ["intercom", /對講|門口機|門口子機|管理總機|智慧家庭|門鈴|宅內箱|室內分機|物業管理主機|電子信箱/],
+  ["access", /讀卡機|讀碼機|陽極|陰極鎖|電鎖|電子鎖|門鎖|開門按鈕|開門按扭|開門感應器|開門感知器|叫車按鈕|門禁|Smart ?Key|感應卡/i],
+  ["parking", /捲門|遙控器(控制|接收)主機|反射鏡/],   /* [訓練修正 G] 鐵捲門／車道遙控 */
+  ["cctv", /錄放影|NVR|DVR/i],
+  ["media", /音樂喇叭|廣播/],
+  ["bms", /漏水|檢知器|蜂鳴器|警報喇叭|閃光喇叭/],
   ["energy.meter", /電錶|電表/], ["energy.water", /水錶|水表/], ["energy.solar", /太陽能/],
   ["air", /溫濕度|空氣品質|CO2|PM2\.5/i],
   ["media", /佈告欄|布告欄|遊戲機|學習平台|生活服務平台|多媒體|血壓計/],
@@ -310,9 +318,32 @@ function analyze(text, opt) {
   });
   var center = makeBBox(d.blocks);
   var T = d.texts;
+  /* [訓練修正 R] 文字前的底線/上線控制碼「%%U」「%%O」去掉；圖名開頭只剩「棟」（棟別字母在別的欄位）也去掉，才看得出樓層 */
+  T.forEach(function (t) { var s0 = t.s.replace(/%%[UuOo]/g, "").trim(); if (/^棟\S*(層|樓)/.test(s0) && /平面|配置/.test(s0)) s0 = s0.slice(1); t.s = s0; });
+  /* [訓練修正 K] 同位置重複畫兩次的文字只留一份 */
+  (function () { var seen = {}; T = T.filter(function (t) { var k = t.s + "@" + Math.round(t.x) + "," + Math.round(t.y); if (seen[k]) return false; seen[k] = 1; return true; }); d.texts = T; })();
+  /* [訓練修正 K] 樓層標籤「4~12F(共9F)」「13~22F（共10層）」：去掉「共N層」後判斷樓層；表上數量是這幾層的合計 */
+  var TOTN_RE = /[（(]\s*共\s*(\d+)\s*(?:F|層|樓)\s*[)）]\s*$/i;
+  function labKey(s) { return String(s).replace(/\s/g, "").replace(TOTN_RE, ""); }
+  function totN(s) { var m = TOTN_RE.exec(String(s).replace(/\s/g, "")); return m ? +m[1] : 0; }
+  /* [訓練修正 A] 表頭字分開畫成單字（「圖」「例」、「說」「明」、「數」「量」…）時，合成一個表頭文字供各方式辨識 */
+  (function () {
+    var PAIRS = [["圖", "例"], ["說", "明"], ["數", "量"], ["名", "稱"], ["品", "名"], ["合", "計"], ["小", "計"], ["符", "號"]];
+    var add = [];
+    PAIRS.forEach(function (pr) {
+      T.forEach(function (a) {
+        if (a.s.replace(/\s/g, "") !== pr[0]) return;
+        var h = a.h || 50;
+        var b = T.filter(function (t) { return t.s.replace(/\s/g, "") === pr[1] && Math.abs(t.y - a.y) < h * 0.5 && t.x > a.x && t.x - a.x < h * 9 && Math.abs((t.h || h) - h) < h * 0.4; })
+                 .sort(function (p, q) { return p.x - q.x; })[0];
+        if (b) add.push({ s: pr[0] + pr[1], x: a.x, y: a.y, h: h, merged: true });
+      });
+    });
+    add.forEach(function (t) { T.push(t); });
+  })();
 
   /* 1. 數量表 */
-  var MULQ = /^(\d+)\s*[xX×*＊]\s*(\d+)\s*[=＝]\s*(\d+)$/;
+  var MULQ = /^(\d+)\s*[xX×*＊]\s*(\d+)\s*(?:層|樓|F|戶|組|處)?\s*[=＝]\s*(\d+)$/i;   /* [訓練修正 K] 「44×7層=308」也算 */
   var tables = [], usedD = [], noTableSym = {}, noTableTitles = [];
   function isFloorKey(s) { var f = floorsOf(String(s)); return f.length > 0 && f.every(function (x) { return /^(B|R)?\d+F$|^RF$/.test(x); }); }
   /* 方式一：有「XF 監控設備數量表」標題 */
@@ -355,10 +386,36 @@ function analyze(text, opt) {
     var hh = dh.h || 50;
     var row = T.filter(function (t) { return t !== dh && Math.abs(t.y - dh.y) < hh * 0.6 && t.x > dh.x && t.x < dh.x + hh * 40; }).sort(function (a, b) { return a.x - b.x; });
     var qh = row.filter(function (t) { return t.s.length < 12 && (/^數\s*量$/.test(t.s) || isFloorKey(t.s)); })[0];
+    /* [訓練修正 J] 數量欄分「住戶｜公共」（住宅／室內／店鋪）：住戶的感測器歸防盜保全、公共歸中央監控 */
+    var spl = [];
+    var hasFloorCol = row.some(function (t) { return t.s.length < 12 && isFloorKey(t.s.replace(/\s/g, "")); });
+    for (var si = 0; si < row.length && !hasFloorCol; si++) {
+      var ss = row[si].s.replace(/\s/g, "");
+      if (/^(住戶|住宅|室內|公共|公設|店鋪|店舖)$/.test(ss)) { spl.push(row[si]); continue; }
+      if (spl.length && (/說明|名稱|圖例/.test(ss))) break;   /* 右邊另一組表 */
+    }
+    if (spl.length) {
+      var lg2 = T.filter(function (t) { return /^圖\s*例$/.test(t.s) && Math.abs(t.y - dh.y) < hh * 0.6 && t.x < dh.x && t.x > dh.x - hh * 20; })[0];
+      var anc2 = lg2 || dh, ah2 = anc2.h || hh, key2 = "";
+      var labs2 = T.filter(function (t) { return t.y - anc2.y > ah2 * 0.8 && t.y - anc2.y < ah2 * 4 && t.x - anc2.x > -ah2 * 6 && t.x - anc2.x < ah2 * 25 && t.s.length <= 30 && isFloorKey(labKey(t.s)); })
+                   .sort(function (p, q) { return (p.y - anc2.y) - (q.y - anc2.y) || Math.abs(p.x - anc2.x) - Math.abs(q.x - anc2.x); });
+      if (labs2.length) key2 = labs2[0].s.replace(/\s/g, "");
+      usedD.push(dh);
+      var totC = row.filter(function (t) { return /^(數量|合計|小計|總計)$/.test(t.s.replace(/\s/g, "")) && t.x > spl[0].x - hh && t.x < spl[spl.length - 1].x + hh * 12; })[0];
+      buildTable(anc2, dh, spl[0], key2, true, { split: totC ? spl.concat([totC]).sort(function (a, b) { return a.x - b.x; }) : spl, top: Math.min(dh.y, spl[0].y) });
+      return;
+    }
     if (!qh) return;
     var lg = T.filter(function (t) { return /^圖\s*例$/.test(t.s) && Math.abs(t.y - dh.y) < hh * 0.6 && t.x < dh.x && t.x > dh.x - hh * 20; })[0];
     usedD.push(dh);
-    if (!isFloorKey(qh.s)) { buildTable(lg || dh, dh, qh, "", true); return; }
+    if (!isFloorKey(qh.s)) {
+      /* [訓練修正 B] 「圖例｜說明｜數量」且表格上方標樓層（2F、3,7,11F、4.8.12F、R1F~RF）時，以該樓層當表名 */
+      var anc = lg || dh, ah = anc.h || hh, key = "";
+      var labs = T.filter(function (t) { return t.y - anc.y > ah * 0.8 && t.y - anc.y < ah * 4 && t.x - anc.x > -ah * 6 && t.x - anc.x < ah * 25 && t.s.length <= 30 && isFloorKey(labKey(t.s)); })
+                  .sort(function (p, q) { return (p.y - anc.y) - (q.y - anc.y) || Math.abs(p.x - anc.x) - Math.abs(q.x - anc.x); });
+      if (labs.length) key = labs[0].s.replace(/\s/g, "");
+      buildTable(anc, dh, qh, key, true); return;
+    }
     /* 「圖例｜說明｜R1F｜R2F｜R3F」：一張表有好幾個樓層欄，每欄各建一張表（連續的樓層欄，遇到其他文字為止） */
     var qs = [], started = false;
     row.some(function (t) {
@@ -471,22 +528,78 @@ function analyze(text, opt) {
       if (rows.length === 1) gap = dy;
       rows.push({ s: col[i].s, x: col[i].x, y: col[i].y, parts: [col[i]] }); last = col[i].y;
     }
-    rows.forEach(function (r) { r.s = r.parts.sort(function (a, b) { return a.x - b.x; }).map(function (p) { return p.s; }).join("").replace(/\s+/g, " ").trim(); });
+    rows.forEach(function (r) {
+      /* [訓練修正 E] 同一位置重複畫兩次的文字只取一次（避免「接線盒接線盒」） */
+      var seenP = {};
+      r.parts = r.parts.filter(function (p) { var k = p.s + "@" + Math.round(p.x / (hh * 0.5)) + "," + Math.round(p.y / (hh * 0.5)); if (seenP[k]) return false; seenP[k] = 1; return true; });
+      r.s = r.parts.sort(function (a, b) { return a.x - b.x; }).map(function (p) { return p.s; }).join("").replace(/\s+/g, " ").trim();
+      var half = r.s.length / 2;
+      if (r.s.length >= 4 && r.s.length % 2 === 0 && r.s.slice(0, half) === r.s.slice(half)) r.s = r.s.slice(0, half);
+    });
     if (!rows.length) return;
     var ylow = rows[rows.length - 1].y;
+    if (multi && multi.split) return buildSplit(h, qh, keyRaw, multi.split, rows, top, ylow, hh);
     if (multi) return buildMulti(h, qh, keyRaw, multi, rows, top, ylow, hh);
     var nums = T.filter(function (t) { return Math.abs(t.x - qh.x) < hh * 4 && t.y < top - hh * 0.3 && t.y > ylow - hh * 1.5 && (/^[-－—\d\s.]+$/.test(t.s) || MULQ.test(t.s)); });
     var box = [h.x - hh * 4, ylow - hh * 1.6, qh.x + hh * 6, h.y + hh * 1.2];
-    var key = String(keyRaw || "").trim(), fl = key ? floorsOf(key) : [];
+    var tn = totN(keyRaw || ""), key = labKey(String(keyRaw || "").trim()), fl = key ? floorsOf(key) : [];
     var okFloor = fl.length && fl.every(function (f) { return /^(B|R)?\d+F$|^RF$/.test(f); });
-    var tb = { key: okFloor ? cnFloor(key) : "表" + (tables.length + 1), floors: okFloor ? fl : [], needFloor: !okFloor, x: h.x, y: h.y, hh: hh, box: box, rows: [] };
+    var tb = { key: okFloor ? cnFloor(key) : "表" + (tables.length + 1), floors: okFloor ? fl : [], needFloor: !okFloor, x: h.x, y: h.y, hh: hh, box: box, rows: [], totN: okFloor && tn === fl.length ? tn : 0 };
     rows.forEach(function (r) {
       var best = null, bd = Infinity;
       nums.forEach(function (t) { var dd = Math.abs(t.y - r.y); if (dd < bd) { bd = dd; best = t; } });
       var q = best && bd < hh * 0.9 ? best.s.trim() : "";
       var mq = MULQ.exec(q), qty = /^\d+$/.test(q) ? +q : 0;
       if (mq) qty = tb.floors.length && +mq[3] % tb.floors.length === 0 ? +mq[3] / tb.floors.length : +mq[1];   /* 「8x9=72」：表是多層合計，換成每層 */
+      else if (tb.totN > 1 && qty) { var pq = qty / tb.totN; if (qty % tb.totN) { pq = Math.round(pq * 100) / 100; warnings.push("數量表「" + tb.key + "（共" + tb.totN + "層）」的「" + r.s + "」合計 " + qty + " 無法平均分到 " + tb.totN + " 層，每層以 " + pq + " 計，請確認"); } qty = pq; }
+      /* [訓練修正 F] 附註、配管、電源規格列（數量 0）不列為設備 */
+      if (!qty && /^\s*(註|※|\d+\s*[.、．])|PVC|配管為|^AC\s*\d+\s*V|^\d+\/\d+\s*"/i.test(r.s)) return;
       tb.rows.push({ name: r.s, qty: qty, raw: q, y: r.y, block: null });
+    });
+    tables.push(tb);
+  }
+  function splitSys(name, colName) {
+    var s0 = sysOf(name, opt.rules);
+    if (s0 === "bms" && /^(住戶|住宅|室內)$/.test(colName) && !/配電箱|監控系統|主機/.test(name)) return "security";   /* 住戶的磁簧、求救鈕、瓦斯偵測 → 防盜保全 */
+    return s0;
+  }
+  function buildSplit(h, qh, keyRaw, cols, rows, top, ylow, hh) {
+    var lastX = cols[cols.length - 1].x;
+    var box = [h.x - hh * 4, ylow - hh * 1.6, lastX + hh * 6, h.y + hh * 1.2];
+    var tn = totN(keyRaw || ""), key = labKey(String(keyRaw || "").trim()), fl = key ? floorsOf(key) : [];
+    var okFloor = fl.length && fl.every(function (f) { return /^(B|R)?\d+F$|^RF$/.test(f); });
+    var tb = { key: okFloor ? cnFloor(key) : "表" + (tables.length + 1), floors: okFloor ? fl : [], needFloor: !okFloor, x: h.x, y: h.y, hh: hh, box: box, rows: [], cols: cols.map(function (c) { return c.s.replace(/\s/g, ""); }), split: true, totN: okFloor && tn === fl.length ? tn : 0 };
+    var cells = cols.map(function () { return []; });
+    T.forEach(function (t) {
+      if (t.y >= top - hh * 0.3 || t.y < ylow - hh * 1.5 || t.x < cols[0].x - hh * 6 || t.x > lastX + hh * 6 || !(/^[-－—\d\s.]+$/.test(t.s) || MULQ.test(t.s.trim()))) return;
+      var gapC = Infinity; for (var gi = 1; gi < cols.length; gi++) gapC = Math.min(gapC, cols[gi].x - cols[gi - 1].x);
+      var bi = -1, bd = Math.min(hh * 6, gapC / 2);
+      cols.forEach(function (c, i) { var dd = Math.abs(t.x - c.x); if (dd < bd) { bd = dd; bi = i; } });
+      if (bi >= 0) cells[bi].push(t);
+    });
+    rows.forEach(function (r) {
+      var anyRow = false, vals = {}, raws = {};
+      cols.forEach(function (c, ci) {
+        var best = null, bd = Infinity;
+        cells[ci].forEach(function (t) { var dd = Math.abs(t.y - r.y); if (dd < bd) { bd = dd; best = t; } });
+        var q = best && bd < hh * 0.9 ? best.s.trim() : "";
+        var mq = MULQ.exec(q), qty = /^\d+$/.test(q) ? +q : 0;
+        if (mq) qty = tb.floors.length && +mq[3] % tb.floors.length === 0 ? +mq[3] / tb.floors.length : +mq[1];
+        if (!qty) return;
+        var cn = c.s.replace(/\s/g, ""), g = /^(數量|合計|小計|總計)$/.test(cn) ? "合計" : /^(住戶|住宅|室內)$/.test(cn) ? "住戶" : "公共";
+        vals[g] = (vals[g] || 0) + qty; raws[g] = q;
+      });
+      if (vals["合計"] !== undefined) {
+        if (vals["公共"] === undefined && vals["合計"] > (vals["住戶"] || 0)) vals["公共"] = vals["合計"] - (vals["住戶"] || 0);
+        delete vals["合計"];
+      }
+      Object.keys(vals).forEach(function (g) {
+        if (!vals[g]) return;
+        anyRow = true;
+        if (tb.totN > 1) { var pv = vals[g] / tb.totN; if (vals[g] % tb.totN) { pv = Math.round(pv * 100) / 100; warnings.push("數量表「" + tb.key + "（共" + tb.totN + "層）」的「" + r.s + "」" + g + "合計 " + vals[g] + " 無法平均分到 " + tb.totN + " 層，每層以 " + pv + " 計，請確認"); } vals[g] = pv; }
+        tb.rows.push({ name: r.s, qty: vals[g], raw: (raws[g] || vals[g]) + "（" + g + "）", y: r.y, block: null, col: g, sys: splitSys(r.s, g) });
+      });
+      if (!anyRow && !/^\s*(註|※|\d+\s*[.、．])/.test(r.s)) tb.rows.push({ name: r.s, qty: 0, raw: "", y: r.y, block: null });
     });
     tables.push(tb);
   }
@@ -495,20 +608,42 @@ function analyze(text, opt) {
     var box = [h.x - hh * 4, ylow - hh * 1.6, lastX + hh * 6, h.y + hh * 1.2];
     var cells = cols.map(function () { return []; });
     T.forEach(function (t) {
-      if (t.y >= top - hh * 0.3 || t.y < ylow - hh * 1.5 || t.x < qh.x - hh * 3 || t.x > lastX + hh * 5 || !/^[-－—\d\s.]+$/.test(t.s)) return;
-      var bi = -1, bd = hh * 4;
+      if (t.y >= top - hh * 0.3 || t.y < ylow - hh * 1.5 || t.x < qh.x - hh * 6 || t.x > lastX + hh * 6 || !(/^[-－—\d\s.]+$/.test(t.s) || MULQ.test(t.s.trim()))) return;
+      var gapM = Infinity; for (var gj = 1; gj < cols.length; gj++) gapM = Math.min(gapM, cols[gj].x - cols[gj - 1].x);
+      var bi = -1, bd = Math.min(hh * 6, Math.max(hh * 4, gapM / 2));   /* [訓練修正 K] 「44×7層=308」寫得比欄名寬、偏左 */
       cols.forEach(function (c, i) { var dd = Math.abs(t.x - c.x); if (dd < bd) { bd = dd; bi = i; } });
       if (bi >= 0) cells[bi].push(t);
     });
     var tb = { key: key, floors: mt.floors, bld: mt.bld, needFloor: false, x: h.x, y: h.y, box: box, rows: [], cols: cols.map(function (c) { return c.s; }) };
+    var spIdx = cols.map(function (c, i) { return /^(住戶|住宅|室內|公共|公設|店鋪|店舖)$/.test(c.s.replace(/\s/g, "")) ? i : -1; }).filter(function (i) { return i >= 0; });
+    var homeCols = cols.map(function (c, i) { return /^(住戶|住宅|室內)$/.test(c.s.replace(/\s/g, "")) || /房型|戶型/.test(c.s) ? i : -1; }).filter(function (i) { return i >= 0; });
     rows.forEach(function (r) {
+      if (spIdx.length) {   /* [訓練修正 J] 分「住戶｜公共」欄：分開列，住戶的感測器歸防盜保全 */
+        var grp = {}, tot = 0, hasPub = false, perFloor = {};
+        cells.forEach(function (cs, i) {
+          var best = null, bd = Infinity; cs.forEach(function (t) { var dd = Math.abs(t.y - r.y); if (dd < bd) { bd = dd; best = t; } });
+          var v = best && bd < hh * 0.9 ? best.s.trim() : "";
+          var mq = MULQ.exec(v); if (mq) v = String(+mq[1] * n);   /* 「1x4=4」：每層 1，換成 n 層合計再平均 */
+          if (!/^\d+$/.test(v)) return;
+          var cn = cols[i].s.replace(/\s/g, "");
+          if (/^(數量|合計|小計|總計)$/.test(cn)) { tot += +v; return; }   /* 合計欄不重複計 */
+          var g = homeCols.indexOf(i) >= 0 ? "住戶" : "公共"; if (g === "公共") hasPub = true; grp[g] = (grp[g] || 0) + (+v);
+        });
+        if (!hasPub && tot > (grp["住戶"] || 0)) grp["公共"] = tot - (grp["住戶"] || 0);   /* 只有「住戶｜數量」：公共＝合計－住戶 */
+        if (!Object.keys(grp).length && tot) grp["公共"] = tot;
+        Object.keys(grp).forEach(function (g) {
+          var q2 = grp[g] / n; if (grp[g] % n) q2 = Math.round(q2 * 100) / 100;
+          tb.rows.push({ name: r.s, qty: q2, raw: grp[g] + "（" + g + (n > 1 ? "，" + n + "層合計" : "") + "）", y: r.y, block: null, col: g, sys: splitSys(r.s, g) });
+        });
+        return;
+      }
       var vals = cells.map(function (cs) {
         var best = null, bd = Infinity;
         cs.forEach(function (t) { var dd = Math.abs(t.y - r.y); if (dd < bd) { bd = dd; best = t; } });
         return best && bd < hh * 0.9 ? best.s.trim() : "";
       });
       var sum = 0, any = false;
-      vals.forEach(function (v) { if (/^\d+$/.test(v)) { sum += +v; any = true; } else if (v) any = true; });
+      vals.forEach(function (v) { var mq = MULQ.exec(v); if (mq) v = String(+mq[1] * n); if (/^\d+$/.test(v)) { sum += +v; any = true; } else if (v) any = true; });
       var qty = sum / n;
       if (sum % n) { qty = Math.round(qty * 100) / 100; warnings.push("數量表「" + key + "」的「" + r.s + "」合計 " + sum + " 無法平均分到 " + n + " 層，每層以 " + qty + " 計，請確認"); }
       tb.rows.push({ name: r.s, qty: qty, raw: any ? vals.map(function (v) { return v || "-"; }).join("+") + (n > 1 ? "（" + n + "層合計）" : "") : "", y: r.y, block: null });
@@ -652,6 +787,8 @@ function analyze(text, opt) {
     if (w > 0 && h > 0 && w / h > 1.2 && w / h < 1.6 && titles.some(function (t) { return t.x > b[0] && t.x < b[2] && t.y > b[1] && t.y < b[3] && w > t.h * 40; })) frames.push(b);
   });
   function frameOf(x, y) { for (var i = 0; i < frames.length; i++) { var b = frames[i]; if (x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]) return i; } return -1; }
+  /* [訓練修正 P] 平面圖標題在平面圖下方或圖框右下角標題欄、數量表在圖紙上方：配表時「表在標題下方」的距離 ×2（那通常是下一張圖紙的表） */
+  function tdist(tb, t) { var dy = tb.y - t.y, d0 = Math.hypot(tb.x - t.x, dy); return dy < -(t.h || 50) * 2 ? d0 * 2 : d0; }
   titles.forEach(function (t) { t.frame = frameOf(t.x, t.y); });
   tables.forEach(function (tb) { tb.frame = frameOf(tb.x, tb.y); });
   titles.forEach(function (t) {
@@ -672,7 +809,25 @@ function analyze(text, opt) {
     if (sameFloor) tables.forEach(function (tb) { if (tb.floors.join() !== sameFloor) return; var dd = Math.hypot(tb.x - t.x, tb.y - t.y); if (dd < bd) { bd = dd; best = tb; } });
     if (best && bd < t.h * 400) { t.table = best; return; }
     best = null; bd = Infinity;
-    tables.forEach(function (tb) { var dd = Math.hypot(tb.x - t.x, tb.y - t.y); if (dd < bd) { bd = dd; best = tb; } });
+    /* [訓練修正 C] 同一張圖紙（圖框）內、沒寫樓層的表：不受距離限制，優先配給該圖紙的平面圖標題（標題在圖框標題欄、離表很遠） */
+    if (t.frame >= 0) {
+      tables.forEach(function (tb) {
+        if (tb.frame !== t.frame || !tb.needFloor || titles.some(function (o) { return o !== t && o.table === tb; })) return;
+        var dd = Math.hypot(tb.x - t.x, tb.y - t.y); if (dd < bd) { bd = dd; best = tb; }
+      });
+      if (best) {
+        t.table = best;
+        var fk0 = cnFloor(t.s), ff0 = floorsOf(fk0);
+        if (ff0.every(function (f) { return /^(B|R)?\d+F$|^RF$/.test(f); })) {
+          if (ff0.length > 1 && /[^\x00-\x7f]/.test(fk0)) fk0 = ff0.join("、");
+          best.key = fk0; best.floors = ff0; best.needFloor = false;
+          t.byC = true; best.fromTitle = t;
+        }
+        return;
+      }
+      best = null; bd = Infinity;
+    }
+    tables.forEach(function (tb) { var dd = tdist(tb, t); if (dd < bd) { bd = dd; best = tb; } });   /* [訓練修正 P] 表在標題下方（下一張圖紙）距離加權 */
     var sameSheet = best && t.frame >= 0 && best.frame === t.frame;   /* 同一張圖紙上的表（例如「屋突參層至屋頂」共用一張表） */
     t.table = best && bd < t.h * 100 && (!sameFloor || best.needFloor || sameSheet) ? best : null;
     if (!t.table) { noTableTitles.push(t); return; }
@@ -680,11 +835,217 @@ function analyze(text, opt) {
       var fk = cnFloor(t.s), ff = floorsOf(fk);
       if (ff.every(function (f) { return /^(B|R)?\d+F$|^RF$/.test(f); })) {
         if (ff.length > 1 && /[^\x00-\x7f]/.test(fk)) fk = ff.join("、");   /* 「伍、陸、捌層…平面圖」→「5F、6F、8F」 */
-        t.table.key = fk; t.table.floors = ff; t.table.needFloor = false;
+        t.table.key = fk; t.table.floors = ff; t.table.needFloor = false; t.table.fromTitle = t;
       }
     }
   });
 
+  /* [訓練修正 D] 沒寫樓層、也沒配到標題的表，與沒配到表的平面圖標題「互為最近」時配成一對（圖框是線條畫的、標題在標題欄離表很遠） */
+  (function () {
+    var freeT = titles.filter(function (t) { return !t.table && isFloorKey(cnFloor(t.s)); });
+    var freeB = tables.filter(function (tb) { return tb.needFloor && isFinite(tb.x) && !titles.some(function (t) { return t.table === tb; }); });
+    var dist = function (a, b) { return a.s ? tdist(b, a) : tdist(a, b); };
+    freeB.forEach(function (tb) {
+      var t = null, td = Infinity; freeT.forEach(function (x) { if (x.table) return; var dd = dist(x, tb); if (dd < td) { td = dd; t = x; } });
+      if (!t) return;
+      var back = null, bd = Infinity; freeB.forEach(function (o) { if (!o.needFloor) return; var dd = dist(o, t); if (dd < bd) { bd = dd; back = o; } });
+      if (back !== tb || td > t.h * 600) return;
+      var fk = cnFloor(t.s), ff = floorsOf(fk);
+      if (!ff.every(function (f) { return /^(B|R)?\d+F$|^RF$/.test(f); })) return;
+      if (ff.length > 1 && /[^\x00-\x7f]/.test(fk)) fk = ff.join("、");
+      tb.key = fk; tb.floors = ff; tb.needFloor = false; t.table = tb; tb.fromTitle = t;
+      var ni = noTableTitles.indexOf(t); if (ni >= 0) noTableTitles.splice(ni, 1);
+    });
+  })();
+
+  /* [訓練修正 Q] 同一檔案的圖紙版面相同：由圖框確認的「標題↔數量表」相對位置（≥2 組一致）推回其他標題的表（標題欄在圖框右下、表在左上，最近的表常是隔壁圖紙的） */
+  (function () {
+    var pr = titles.filter(function (t) { return t.byC && t.table; }).map(function (t) { return [t.table.x - t.x, t.table.y - t.y]; });
+    if (pr.length < 2) return;
+    var mx = pr.map(function (v) { return v[0]; }).sort(function (a, b) { return a - b; })[Math.floor(pr.length / 2)];
+    var my = pr.map(function (v) { return v[1]; }).sort(function (a, b) { return a - b; })[Math.floor(pr.length / 2)];
+    var span = Math.hypot(mx, my); if (!span) return;
+    if (!pr.every(function (v) { return Math.hypot(v[0] - mx, v[1] - my) < span * 0.08; })) return;
+    titles.forEach(function (t) {
+      if (t.byC) return;
+      var fk = cnFloor(t.s), ff = floorsOf(fk);
+      if (!ff.length || !ff.every(function (f) { return /^(B|R)?\d+F$|^RF$/.test(f); })) return;
+      var ex = t.x + mx, ey = t.y + my, hit = null, hd = span * 0.08;
+      tables.forEach(function (tb) { if (!isFinite(tb.x)) return; var dd = Math.hypot(tb.x - ex, tb.y - ey); if (dd < hd) { hd = dd; hit = tb; } });
+      if (!hit || hit === t.table) return;
+      if (!hit.needFloor && !(hit.fromTitle && !hit.fromTitle.byC)) return;   /* 表頭自己寫了樓層的不動 */
+      if (hit.fromTitle && hit.fromTitle.byC) return;
+      if (t.table && t.table.fromTitle === t) { var o = t.table; o.key = "表" + (tables.indexOf(o) + 1); o.floors = []; o.needFloor = true; o.fromTitle = null; }
+      if (hit.fromTitle && hit.fromTitle !== t) hit.fromTitle.table = null;
+      if (ff.length > 1 && /[^\x00-\x7f]/.test(fk)) fk = ff.join("、");
+      hit.key = fk; hit.floors = ff; hit.needFloor = false; hit.fromTitle = t; t.table = hit; t.byQ = true;
+      var ni = noTableTitles.indexOf(t); if (ni >= 0) noTableTitles.splice(ni, 1);
+    });
+  })();
+
+  /* [訓練修正 L] 仍看不出樓層的表：
+     L1 表格正上方的樓層標籤（「17F(B棟-B)」「21'23層」「15'17'19層」「1F監控設備數量表」）
+     L2 圖紙上下疊放：圖名在表格下方的平面圖標題（表上方的圖名屬於上一張圖紙） */
+  (function () {
+    function normLab(x) {
+      var t = String(x).replace(/\s/g, "").replace(/^%%[UuOo]/, "");
+      t = t.replace(/[（(][^）)]*[）)]/g, "").replace(/['’‘`]/g, "、");
+      t = t.replace(/^([BR])(\d+)層$/i, "$1$2F").replace(/^([BR]\d+),([BR]?)(\d+)層$/i, function (_, a, b, c) { return a + "F," + (b || a[0]) + c + "F"; });   /* 「B4層」「R2,R3層」 */
+      t = t.replace(/(中央)?(監控)?(系統)?(設備)?(器材)?數量(統計|一覽|明細)?表?$/, "").replace(/(弱電)?(中央)?(監控)?(系統)?(設備)?(配置|佈置|配線)?平面(配置|佈置)?圖.*$/, "");
+      return labKey(t);
+    }
+    function fl(x) { var n0 = normLab(x); if (/^[BR]?\d+$/i.test(n0)) return null;   /* 只寫「3」「B3」「R2」沒有 F／層：多半是戶別、編號，不當樓層 */
+      var k = cnFloor(n0); return k && isFloorKey(k) ? k : null; }
+    var isTitle = function (t) { return /平面.*圖|配置圖/.test(t.s) && fl(t.s); };
+    /* 圖塊裡的樓層文字（圖框下方的「七層」「B4層」常畫在圖塊內）：展開到圖面座標，只收短的樓層字 */
+    var blkFl = {};
+    function localFl(name, depth) {
+      if (blkFl[name]) return blkFl[name];
+      blkFl[name] = [];
+      var b = (d.bases && d.bases[name]) || [0, 0], out = [];
+      (d.blocks[name] || []).forEach(function (e) {
+        var p0 = e.pts && e.pts[0]; if (!p0) return;
+        if (e.t === "TEXT" || e.t === "MTEXT") {
+          var s0 = e.t === "MTEXT" ? cleanMtext((e.v["3all"] || "") + (e.v["1"] || "")) : (e.v["1"] || "").trim();
+          if (s0 && s0.length <= 30 && /層|樓|[BR]?\d+F|屋/.test(s0) && fl(s0)) out.push({ s: s0, x: p0[0] - b[0], y: p0[1] - b[1], h: +(e.v["40"] || 0) });
+        } else if (e.t === "INSERT" && depth < 3) {
+          var sx = e.v["41"] ? +e.v["41"] : 1, sy = e.v["42"] ? +e.v["42"] : sx, a = (+(e.v["50"] || 0)) * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
+          localFl(e.v["2"], depth + 1).forEach(function (t) {
+            var lx = t.x * sx, ly = t.y * sy;
+            out.push({ s: t.s, x: p0[0] - b[0] + lx * c - ly * sn, y: p0[1] - b[1] + lx * sn + ly * c, h: t.h * Math.abs(sy) });
+          });
+        }
+      });
+      return (blkFl[name] = out);
+    }
+    var FT = T.filter(function (t) { return !(t.table && titles.indexOf(t) >= 0); });   /* 已配到表的平面圖標題不再借給別的表 */
+    d.inserts.forEach(function (i) {
+      if (!d.blocks[i.name] || /^\*/.test(i.name)) return;
+      var a = (i.rot || 0) * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
+      localFl(i.name, 0).forEach(function (t) {
+        var lx = t.x * (i.sx || 1), ly = t.y * (i.sy || 1);
+        FT.push({ s: t.s, x: i.x + lx * c - ly * sn, y: i.y + lx * sn + ly * c, h: t.h * Math.abs(i.sy || 1), inBlock: true });
+      });
+    });
+    var owned = {}; tables.forEach(function (tb) { if (tb.fromTitle) (tb.floors || []).forEach(function (f) { owned[f] = 1; }); });   /* 已由平面圖標題配到表的樓層 */
+    FT = FT.filter(function (t) { if (!/平面.*圖|配置圖/.test(t.s)) return true; var k = fl(t.s); return !k || !floorsOf(k).every(function (f) { return owned[f]; }); });   /* 只限圖名字樣（標題欄重複的圖名） */
+    tables.forEach(function (tb) {
+      if (!tb.needFloor || !isFinite(tb.x) || !isFinite(tb.y)) return;
+      var u = tb.hh || 50, key = null;
+      /* L1 */
+      var labs = FT.filter(function (t) { return t.y - tb.y > u * 0.5 && t.y - tb.y < u * 4 && t.x - tb.x > -u * 70 && t.x - tb.x < u * 6 && t.s.length <= 30 && fl(t.s) && !/平面.*圖|配置圖/.test(t.s); })
+                  .sort(function (p, q) { return Math.hypot(p.x - tb.x, p.y - tb.y) - Math.hypot(q.x - tb.x, q.y - tb.y); });
+      if (labs.length) key = fl(labs[0].s);
+      /* L2 */
+      if (!key) {
+        var below = FT.filter(function (t) { return tb.y - t.y > u * 30 && tb.y - t.y < u * 350 && Math.abs(t.x - tb.x) < u * 150 && (isTitle(t) || ((t.h || 0) >= u * 1.5 && t.s.length <= 12 && fl(t.s))); })
+                     .sort(function (p, q) { return (tb.y - p.y) - (tb.y - q.y) || Math.abs(p.x - tb.x) - Math.abs(q.x - tb.x); });
+        if (below.length) key = fl(below[0].s);
+      }
+      /* N 沒有圖框、圖名的排版：同一列左右的「樓層大字」（字高 ≥ 表格字高 5 倍，例：18F、27-28F、4-6F） */
+      if (!key) {
+        var bigs = FT.filter(function (t) { return (t.h || 0) >= u * 5 && Math.abs(t.y - tb.y) < u * 60 && Math.abs(t.x - tb.x) < u * 350 && t.s.length <= 16 && fl(t.s); })
+                    .sort(function (p, q) { return Math.abs(p.y - tb.y) / 3 + Math.abs(p.x - tb.x) - (Math.abs(q.y - tb.y) / 3 + Math.abs(q.x - tb.x)); });
+        if (bigs.length) key = fl(bigs[0].s);
+      }
+      if (!key) return;
+      var ff = floorsOf(key);
+      if (!ff.length || !ff.every(function (f) { return /^(B|R)?\d+F$|^RF$/.test(f); })) return;
+      if (ff.length > 1 && /[^\x00-\x7f]/.test(key)) key = ff.join("、");
+      tb.key = key; tb.floors = ff; tb.needFloor = false; tb.byL = true;
+    });
+  })();
+
+  /* [訓練修正 H] 左右並排的數量表（「圖例｜說明｜數量」重複 2 組）只有一組拿到樓層：另一組併入同層（左右雙向，於標題配表之後） */
+  (function () {
+    var rm = [];
+    tables.filter(function (tb) { return tb.needFloor && isFinite(tb.x) && isFinite(tb.y); }).forEach(function (tb) {
+      var u = tb.hh || 40, best = null, bd = Infinity;
+      tables.forEach(function (c) {
+        if (c === tb || c.needFloor || rm.indexOf(c) >= 0 || !isFinite(c.x) || !isFinite(c.y)) return;
+        var dx = Math.abs(c.x - tb.x);
+        if (dx > u * 80 || Math.abs(tb.y - c.y) > u * 3) return;
+        if (dx < bd) { bd = dx; best = c; }
+      });
+      if (!best) return;
+      best.rows = best.x > tb.x ? tb.rows.concat(best.rows) : best.rows.concat(tb.rows);
+      if (best.box && tb.box) best.box = [Math.min(best.box[0], tb.box[0]), Math.min(best.box[1], tb.box[1]), Math.max(best.box[2], tb.box[2]), Math.max(best.box[3], tb.box[3])];
+      titles.forEach(function (t) { if (t.table === tb) t.table = best; });
+      rm.push(tb);
+    });
+    if (rm.length) tables = tables.filter(function (tb) { return rm.indexOf(tb) < 0; });
+  })();
+
+  /* [訓練修正 O0] 已配到平面圖標題、但表還沒有樓層（標題配表時沒寫入）：用配到的標題樓層（「B棟屋突一層」＋「B棟屋突頂層」→ R1F、RF） */
+  tables.forEach(function (tb) {
+    if (!tb.needFloor) return;
+    var ts = titles.filter(function (t) { return t.table === tb; }); if (!ts.length) return;
+    var ff = [];
+    ts.forEach(function (t) { var f0 = floorsOf(cnFloor(t.s.replace(/^.{1,3}棟/, "").replace(/頂層/, "屋頂層"))); f0.forEach(function (f) { if (ff.indexOf(f) < 0) ff.push(f); }); });
+    if (!ff.length || !ff.every(function (f) { return /^(B|R)?\d+F$|^RF$/.test(f); })) { tb.titled = true; return; }
+    tb.key = ff.join("、"); tb.floors = ff; tb.needFloor = false;
+  });
+  /* [訓練修正 O] 同一列等距排開的數量表：左右兩側已知樓層、中間缺的張數剛好等於樓層差 → 依序補上（例：14F｜表｜表｜表｜表｜表｜20F → 15F~19F） */
+  (function () {
+    function num(f) { var m = /^(\d+)F$/.exec(f); return m ? +m[1] : null; }
+    var used = [];
+    tables.filter(function (t) { return isFinite(t.x) && isFinite(t.y); }).forEach(function (a) {
+      if (used.indexOf(a) >= 0) return;
+      var u = a.hh || 40;
+      var row = tables.filter(function (t) { return isFinite(t.x) && isFinite(t.y) && Math.abs(t.y - a.y) < u * 3; }).sort(function (p, q) { return p.x - q.x; });
+      row.forEach(function (t) { used.push(t); });
+      if (row.length < 3) return;
+      for (var i = 0; i < row.length; i++) {
+        if (row[i].needFloor || !(row[i].floors || []).length) continue;
+        var j = i + 1; while (j < row.length && row[j].needFloor && !row[j].titled) j++;
+        if (j < row.length && row[j].titled) continue;
+        if (j >= row.length || j === i + 1 || row[j].needFloor) continue;
+        var lf = row[i].floors.map(num), rf = row[j].floors.map(num);
+        if (lf.some(function (v) { return v === null; }) || rf.some(function (v) { return v === null; })) continue;
+        var lo = Math.max.apply(null, lf), hi = Math.min.apply(null, rf), k = j - i - 1, st = (hi - lo) / (k + 1);
+        if (st !== Math.floor(st) || st < 1) continue;
+        if (st > 1) {   /* 一列只放單數層或雙數層（3F、5F、□、9F、11F）：同列其他相鄰兩張也要是同樣的層差 */
+          var okSt = false;
+          for (var q = 0; q + 1 < row.length; q++) { var a1 = row[q], b1 = row[q + 1]; if (a1.needFloor || b1.needFloor || a1.floors.length !== 1 || b1.floors.length !== 1) continue; var na = num(a1.floors[0]), nb = num(b1.floors[0]); if (na !== null && nb !== null && nb - na === st) okSt = true; }
+          if (!okSt) continue;
+        }
+        var gaps = []; for (var g = i; g < j; g++) gaps.push(row[g + 1].x - row[g].x);
+        var mn = Math.min.apply(null, gaps), mx = Math.max.apply(null, gaps);
+        if (mx > mn * 1.25) continue;   /* 間距要一致 */
+        for (var m = 1; m <= k; m++) { var t = row[i + m], f = (lo + m * st) + "F"; t.key = f; t.floors = [f]; t.needFloor = false; t.byO = true; }
+        warnings.push("表格樓層依同列前後順序推定（" + (lo + st) + "F～" + (hi - st) + "F），請確認");
+      }
+    });
+  })();
+
+  /* [訓練修正 O2] 圖紙排成方陣（逐列由下往上或由上往下）：依閱讀順序串起來，前後已知樓層之間缺的張數剛好等於樓層差 → 依序補上 */
+  (function () {
+    function num(f) { var m = /^(\d+)F$/.exec(f); return m ? +m[1] : null; }
+    var tt = tables.filter(function (t) { return isFinite(t.x) && isFinite(t.y); });
+    if (tt.length < 4 || !tt.some(function (t) { return t.needFloor; })) return;
+    var u = tt.reduce(function (m, t) { return Math.max(m, t.hh || 40); }, 0), rows = [];
+    tt.slice().sort(function (a, b) { return b.y - a.y; }).forEach(function (t) {
+      var r = rows.filter(function (r) { return Math.abs(r.y - t.y) < u * 6; })[0];
+      if (r) r.list.push(t); else rows.push({ y: t.y, list: [t] });
+    });
+    if (rows.length < 2) return;
+    rows.forEach(function (r) { r.list.sort(function (a, b) { return a.x - b.x; }); });
+    [rows.slice().reverse(), rows].forEach(function (order) {
+      var seq = []; order.forEach(function (r) { seq = seq.concat(r.list); });
+      for (var i = 0; i < seq.length; i++) {
+        if (seq[i].needFloor || !(seq[i].floors || []).length) continue;
+        var j = i + 1; while (j < seq.length && seq[j].needFloor && !seq[j].titled) j++;
+        if (j < seq.length && seq[j].titled) continue;
+        if (j >= seq.length || j === i + 1) continue;
+        var lf = seq[i].floors.map(num), rf = seq[j].floors.map(num);
+        if (lf.some(function (v) { return v === null; }) || rf.some(function (v) { return v === null; })) continue;
+        var lo = Math.max.apply(null, lf), hi = Math.min.apply(null, rf), k = j - i - 1;
+        if (hi - lo - 1 !== k) continue;
+        for (var m = 1; m <= k; m++) { var t = seq[i + m], f = (lo + m) + "F"; t.key = f; t.floors = [f]; t.needFloor = false; t.byO = true; }
+        warnings.push("表格樓層依圖紙排列順序推定（" + (lo + 1) + "F～" + (hi - 1) + "F），請確認");
+      }
+    });
+  })();
 
   /* 標題排成一列、間距固定時的圖紙寬度（同一列相鄰標題 x 差的中位數） */
   var rowPitch = 0;
@@ -756,6 +1117,10 @@ function analyze(text, opt) {
     var k = best.table.key; sym[k] = sym[k] || {}; sym[k][s.name] = (sym[k][s.name] || 0) + 1;
   });
 
+  /* [訓練修正 M] 真的找不到樓層的表：數量列入「全區（未分層）」，不再漏算 */
+  var unf = tables.filter(function (tb) { return tb.needFloor; });
+  unf.forEach(function (tb) { tb.floors = ["未分層"]; tb.needFloor = false; tb.unfloored = true; });
+  if (unf.length) warnings.push("以下數量表看不出是哪一層，數量已列入「未分層」全區合計，請確認：" + unf.map(function (tb) { return tb.key + "（" + tb.rows.slice(0, 2).map(function (r) { return r.name; }).join("、") + "…）"; }).join("、"));
   /* 5. 彙整 */
   var floors = {}, items = {}, checks = [], knownName = {}, noCheck = [];
   tables.forEach(function (tb) { tb.rows.forEach(function (r) { if (r.block) knownName[r.name] = 1; }); });
@@ -763,7 +1128,8 @@ function analyze(text, opt) {
     var byBlock = {};
     tb.rows.forEach(function (r) {
       if (!r.block && !r.dev && (!r.raw || (!knownName[r.name] && sysOf(r.name, opt.rules) === "other"))) return;   /* 不像設備列（圖面註記、地名等） */
-      var it = items[r.name] = items[r.name] || { name: r.name, sys: r.sys || sysOf(r.name, opt.rules), block: r.block, total: 0, floors: {} };
+      var ik = r.col ? r.name + "\u0001" + (r.sys || sysOf(r.name, opt.rules)) : r.name;
+      var it = items[ik] = items[ik] || { name: r.name, sys: r.sys || sysOf(r.name, opt.rules), block: r.block, total: 0, floors: {} };
       if (r.model && !it.model) it.model = r.model;
       tb.floors.forEach(function (f) { it.floors[f] = (it.floors[f] || 0) + r.qty; it.total += r.qty; floors[f] = 1; });
       if (r.block) byBlock[r.block] = (byBlock[r.block] || 0) + r.qty;
@@ -823,13 +1189,23 @@ function analyze(text, opt) {
     }
   }
   var floorList = Object.keys(floors).sort(function (a, b) { return floorRank(a) - floorRank(b); });
+  /* [訓練修正 J] 同名、同系統的設備（分欄表與一般表各讀到一次）合併成一項 */
+  (function () {
+    var byKey = {};
+    Object.keys(items).forEach(function (k) {
+      var it = items[k], kk = it.name + "\u0001" + it.sys, o = byKey[kk];
+      if (!o) { byKey[kk] = it; return; }
+      Object.keys(it.floors).forEach(function (f) { o.floors[f] = (o.floors[f] || 0) + it.floors[f]; });
+      o.total += it.total; if (!o.block && it.block) o.block = it.block;
+      delete items[k];
+    });
+  })();
   var list = Object.keys(items).map(function (k) { return items[k]; }).sort(function (a, b) { return a.sys < b.sys ? -1 : a.sys > b.sys ? 1 : b.total - a.total; });
   if (noCheck.length) warnings.push("以下數量表的平面圖上找不到可核對的設備符號（符號可能畫在戶型等圖塊裡），數量以表為準，未逐項核對圖面：" + noCheck.join("、"));
-  tables.forEach(function (tb) { if (tb.needFloor) warnings.push("數量表「" + tb.key + "」看不出是哪一層，數量未計入樓層"); });
   /* 同一層出現在兩張以上的數量表（例：「十五.二十層」與「三.八.九.十四.二十…層」都含 20F）：數量會重複加總，提示確認 */
   var fTabs = {};
   tables.forEach(function (tb) { if (!tb.needFloor && !tb.bld) tb.floors.forEach(function (f) { (fTabs[f] = fTabs[f] || []).push(tb.key); }); });
-  Object.keys(fTabs).forEach(function (f) { var ks = fTabs[f].filter(function (k, i, a) { return a.indexOf(k) === i; }); if (ks.length > 1) warnings.push(f + " 同時出現在數量表「" + ks.join("」「") + "」，該層數量已重複加總，請確認圖面樓層是否寫錯"); });
+  Object.keys(fTabs).forEach(function (f) { var ks = fTabs[f].filter(function (k, i, a) { return a.indexOf(k) === i; }); if (ks.length > 1 && f !== "未分層") warnings.push(f + " 同時出現在數量表「" + ks.join("」「") + "」，該層數量已重複加總，請確認圖面樓層是否寫錯"); });
   if (!tables.length && !legendInfo) {
     var seen = T.filter(function (t) { return /數\s*量/.test(t.s); }).map(function (t) { return t.s.slice(0, 20); });
     seen = seen.filter(function (x, i) { return seen.indexOf(x) === i; }).slice(0, 8);
@@ -861,7 +1237,7 @@ function analyze(text, opt) {
   })();
   return {
     panelTags: panelTags, panelPos: panelPos,
-    tables: tables.map(function (t) { return { key: t.key, floors: t.floors, rows: t.rows.map(function (r) { return { name: r.name, qty: r.qty, raw: r.raw, block: r.block }; }) }; }),
+    tables: tables.map(function (t) { return { key: t.key, floors: t.floors, x: t.x, y: t.y, hh: t.hh, box: t.box, needFloor: !!t.needFloor, cols: t.cols, rows: t.rows.map(function (r) { return { name: r.name, qty: r.qty, raw: r.raw, block: r.block }; }) }; }),
     floors: floorList, items: list, checks: checks, warnings: warnings, embedded: embedded, pendingXlsx: pendingXlsx, plans: plans,
     unitM: guessUnit(plans), planVer: 2,
     core: CORE_VERSION,
@@ -1223,7 +1599,7 @@ function guessUnit(plans) {
 }
 
 /* 圖面辨識規則版本：規則有改時加一，舊的分析結果會提示重新分析 */
-var CORE_VERSION = 15;
+var CORE_VERSION = 16;
 var api = { panelKey: panelKey, CORE_VERSION: CORE_VERSION, decode: decode, parse: parse, analyze: analyze, mergeSheetTables: mergeSheetTables, floorsOf: floorsOf, floorRank: floorRank, sysOf: sysOf, SYS_RULES: SYS_RULES, cnNum: cnNum };
 if (typeof module === "object" && module.exports) module.exports = api;
 else root.DXF = api;
