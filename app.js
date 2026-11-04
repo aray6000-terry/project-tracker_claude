@@ -961,7 +961,7 @@ function saveProjectNow(){
 /* 版本：取自載入 app.js 的 ?v= 參數（每次發佈時更新），顯示在頁面最下方 */
 var APP_VERSION=(function(){ var sc=document.querySelector('script[src*="app.js"]'), m=sc&&/[?&]v=([\w.]+)/.exec(sc.getAttribute("src")); return m?m[1]:""; })();
 (function(){ var v=document.getElementById("appVer"); if(v&&APP_VERSION) v.textContent="版本 v"+APP_VERSION; })();
-window.TR={views:{}, saveProject:saveProjectNow, api:api, esc:esc, toast:toast, fmt:fmt, normDate:normDate, fmtTime:fmtTime, fail:fail, userName:userName, userLabel:userLabel,
+window.TR={views:{}, saveProject:saveProjectNow, api:api, withBusy:withBusy, esc:esc, toast:toast, fmt:fmt, normDate:normDate, fmtTime:fmtTime, fail:fail, userName:userName, userLabel:userLabel,
   session:session, data:data, NODES:NODES, SYS_KEYS:SYS_KEYS, sysName:sysName, sysLabel:sysLabel, sysList:sysList, brandOf:brandOf,
   go:go, today:today, getCur:function(){ return cur; },
   markCheck:function(i,id){ if(!cur||!canEdit()) return; var p=cur.project, n=p.nodes[i]; if(!n||n.checks[id]||(i===7&&id==="gate0")) return; n.checks[id]=true; afterNodeChange(p,i,false); queueSave(); rerender(i); }, canEdit:canEdit, ROLE_NAME:ROLE_NAME, sumStat:sumStat, PST_LABEL:PST_LABEL,

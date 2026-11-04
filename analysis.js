@@ -2,7 +2,7 @@
 (function(){
 "use strict";
 var T=window.TR; if(!T) return;
-var esc=T.esc, api=T.api, toast=T.toast, fail=T.fail, fmtTime=T.fmtTime;
+var esc=T.esc, api=T.api, toast=T.toast, fail=T.fail, fmtTime=T.fmtTime, withBusy=T.withBusy;   /* withBusy 在 app.js 閉包內，需經 TR 取得 */
 var $=function(id){ return document.getElementById(id); };
 var st={pid:null, data:null, draft:null, qdraft:null, mapping:{}, view:"sys", models:{}, db:null};
 function caps(){ return (T.session.me&&T.session.me.caps)||{}; }
