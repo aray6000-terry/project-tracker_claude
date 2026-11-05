@@ -144,6 +144,16 @@ T.views.home=function(){
     app.innerHTML=h;
   }).catch(function(e){ app.innerHTML='<div class="empty">'+esc(e.message||"讀取失敗")+'</div>'; });
 };
+/* 週計畫 PPC、測試驗收彙總（後端 v2.10.31 起寫入專案摘要；未部署時顯示 —） */
+function ppcCell(p){
+  var r=T.ppcFromSummary&&T.ppcFromSummary({ppc:p.ppc}); if(!r) return '<span class="meta">—</span>';
+  var c=function(v){ return v===null?'—':'<b'+(v<60?' style="color:var(--bad)"':v<80?' style="color:var(--warn)"':'')+'>'+v+'%</b>'; };
+  return c(r.pct)+(r.last!==null?' <span class="meta">（上週 '+r.last+'%）</span>':'');
+}
+function accCell(p){
+  var a=p.acc; if(!a||!a.total&&!a.tested) return '<span class="meta">—</span>';
+  return (a.total?Math.min(a.ok,a.total)+'/'+a.total:a.tested+' 項')+(a.fail?' <span style="color:var(--bad)">不合格 '+a.fail+'</span>':'')+(a.miss?' <span class="meta">竣工缺 '+a.miss+'</span>':' <span class="meta">竣工齊</span>');
+}
 /* 首頁：各專案狀態統計 */
 function projectStatsPanel(list){
   var show=view.psAll?list:list.filter(function(p){ return !p.closed; });
@@ -155,6 +165,7 @@ function projectStatsPanel(list){
     var late=!p.closed&&p.nextTarget&&p.nextTarget<T.today();
     var rq=p.reqs||{};
     return '<tr><td><a href="#p='+esc(p.id)+'">'+esc(p.name)+'</a></td><td><div class="bar"><span style="width:'+pct+'%"></span></div><span class="meta">'+p.done+'/'+p.total+'</span></td><td'+(late?' class="bad"':'')+'>'+esc(stage)+(late?'（逾期）':'')+'</td>'
+      +'<td>'+ppcCell(p)+'</td><td>'+accCell(p)+'</td>'
       +'<td>'+n(rq.approval)+'</td><td>'+n((rq.submitted||0)+(rq.confirmed||0))+'</td><td>'+n(rq.shipped)+'</td><td>'+n(p.issues)+'</td>'
       +(hasBills?'<td>'+(p.bills?p.bills.paid+'/'+p.bills.terms+(p.bills.overdue?' <span class="bad">逾期 '+p.bills.overdue+'</span>':''):'—')+'</td>':'')
       +(hasAmt?'<td>'+(p.bills&&p.bills.contract!==undefined?money(p.bills.paidAmt)+' / '+money(p.bills.contract):'—')+'</td>':'')
@@ -162,8 +173,8 @@ function projectStatsPanel(list){
   }).join("");
   setTimeout(function(){ var b=$("btnPsAll"); if(b) b.onclick=function(){ view.psAll=!view.psAll; T.views.home(); }; },0);
   return '<section class="panel"><div class="row"><h3>各專案狀態（'+show.length+'）</h3><button class="btn small" id="btnPsAll" type="button">'+(view.psAll?'只看進行中':'含已結案')+'</button></div>'
-    +'<div class="tblwrap"><table class="pstat"><thead><tr><th>專案</th><th>進度</th><th>目前階段</th><th>異常待簽</th><th>領料處理中</th><th>已出貨</th><th>未結問題</th>'+(hasBills?'<th>已收款期數</th>':'')+(hasAmt?'<th>已收／合約</th>':'')+'<th>成交報價單</th><th>合約</th></tr></thead><tbody>'
-    +(rows||'<tr><td colspan="11" class="meta">沒有進行中的專案</td></tr>')+'</tbody></table></div></section>';
+    +'<div class="tblwrap"><table class="pstat"><thead><tr><th>專案</th><th>進度</th><th>目前階段</th><th title="週計畫：本週承諾工項完成率（括號為上週）">本週 PPC</th><th title="測試驗收：已測／全部；竣工包缺件">測試驗收</th><th>異常待簽</th><th>領料處理中</th><th>已出貨</th><th>未結問題</th>'+(hasBills?'<th>已收款期數</th>':'')+(hasAmt?'<th>已收／合約</th>':'')+'<th>成交報價單</th><th>合約</th></tr></thead><tbody>'
+    +(rows||'<tr><td colspan="13" class="meta">沒有進行中的專案</td></tr>')+'</tbody></table></div></section>';
 }
 function kpi(n,l,cls){ return '<div class="kpi '+(cls||"")+'"><div class="n">'+esc(n)+'</div><div class="l">'+esc(l)+'</div></div>'; }
 

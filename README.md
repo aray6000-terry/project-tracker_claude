@@ -13,7 +13,7 @@
 | --- | --- |
 | `index.html` | 畫面與樣式（含 Content-Security-Policy） |
 | `app.js` | 登入、專案列表、專案頁、分享、權限管理、舊資料匯入 |
-| `plan.js` | 週計畫（Last Planner：前置條件、承諾、PPC 計畫完成率、未完成原因統計）與測試驗收・竣工（FAT／SAT 測試紀錄、IO 點位帶入、竣工資料包、結案檢查）；資料存在專案「分析」資料夾 weekPlan.json、accept.json |
+| `plan.js` | 週計畫（Last Planner：前置條件、承諾、PPC 計畫完成率、未完成原因統計）與測試驗收・竣工（FAT／SAT 測試紀錄、IO 點位帶入、竣工資料包、結案檢查）；資料存在專案「分析」資料夾 weekPlan.json、accept.json；多人同時編輯以版本號＋逐項三方合併，不會互相覆蓋；後端把近 8 週 PPC 與驗收統計寫入專案摘要，首頁「各專案狀態」與專案卡片直接顯示 |
 | `qa.js` | 品管・缺失：缺失管制表（改善前／後照片、期限、結案）與自主檢查表（各結點×系統檢查項目、主管抽查） |
 | `config.js` | `CLIENT_ID`（Google OAuth 用戶端 ID）、`API_URL`（Apps Script 網址） |
 | `submittal-pdf.js` | 送審型錄 PDF 合併（封面、送審目錄、送審資料表＋原廠型錄，瀏覽器端產生） |

@@ -9,21 +9,83 @@ var $=function(id){ return document.getElementById(id); };
 var U=function(){ return T.opsUtil||{}; };
 function rid(){ return Math.random().toString(36).slice(2,10); }
 function notDeployed(e){ return e && (e.code==="NOT_DEPLOYED" || /分析類別錯誤/.test(e.message||"")); }
-var NEED_BACKEND='<section class="panel"><h3>需要更新後端</h3><p class="meta">此功能的資料存在專案資料夾「分析」（weekPlan.json、accept.json）。請管理員把 v2.10.30 的 Analysis.gs 貼到 Apps Script 並重新部署後再使用。</p></section>';
+var NEED_BACKEND='<section class="panel"><h3>需要更新後端</h3><p class="meta">此功能的資料存在專案資料夾「分析」（weekPlan.json、accept.json）。請管理員把 v2.10.31 的 Analysis.gs 貼到 Apps Script 並重新部署後再使用。</p></section>';
 
 /* ---------- 共用：讀寫 JSON（分析資料夾） ---------- */
 function loadKind(cur,kind){ return api("analysisOne",{id:cur.id,kind:kind}).then(function(r){ return (r&&r.data)||null; }); }
-function makeSaver(cur,kind,getData,stateEl){
-  var t=null, busy=false, again=false;
-  function show(s){ var e=$(stateEl); if(e) e.textContent=s; }
-  function flush(){
-    if(busy){ again=true; return; }
-    busy=true; show("儲存中…");
-    var d=getData(); d.v=1;
-    api("analysisSave",{id:cur.id,kind:kind,data:d}).then(function(){ busy=false; show("已儲存 "+fmtTime(new Date().toISOString()).split(" ")[1]); if(again){ again=false; flush(); } },
-      function(e){ busy=false; show("儲存失敗"); fail(e); });
+/* ---------- 多人編輯：版本檢查＋逐項合併（v2.10.31） ----------
+ * 每個專案每類資料只有一個存檔器；送出時帶上次讀到的版本 baseRev，後端版本不同會回傳 CONFLICT 與最新內容，
+ * 前端以「上次同步內容 base／我的內容 mine／別人的內容 theirs」三方合併：同一欄位兩人都改時以自己的為準，其餘都保留。
+ */
+function clone(o){ return o===undefined?undefined:JSON.parse(JSON.stringify(o)); }
+function same(a,b){ return JSON.stringify(a)===JSON.stringify(b); }
+function isObj(o){ return o!==null && typeof o==="object" && !Array.isArray(o); }
+function keyOf(x){ return isObj(x) ? (x.id!==undefined?"id:"+x.id:x.k!==undefined?"k:"+x.k:null) : null; }
+function keyedArr(a){ return Array.isArray(a) && a.every(function(x){ return keyOf(x)!==null; }); }
+function merge3(b,m,t){
+  if(same(m,b)) return clone(t);
+  if(same(t,b)||same(m,t)) return clone(m);
+  if(isObj(m)&&isObj(t)){
+    var bo=isObj(b)?b:{}, r={}, ks={};
+    Object.keys(m).concat(Object.keys(t),Object.keys(bo)).forEach(function(k){ ks[k]=1; });
+    Object.keys(ks).forEach(function(k){ var v=merge3(bo[k],m[k],t[k]); if(v!==undefined) r[k]=v; });
+    return r;
   }
-  return function(delay){ show("尚未儲存…"); clearTimeout(t); t=setTimeout(flush, delay===undefined?1200:delay); };
+  if(keyedArr(m)&&keyedArr(t)&&(b===undefined||keyedArr(b))){
+    var idx=function(a){ var o={}; (a||[]).forEach(function(x){ o[keyOf(x)]=x; }); return o; };
+    var B=idx(b), M=idx(m), Tt=idx(t), out=[], seen={};
+    t.concat(m).forEach(function(x){
+      var k=keyOf(x); if(seen[k]) return; seen[k]=1;
+      var bi=B[k], mi=M[k], ti=Tt[k];
+      if(bi!==undefined && mi===undefined && (ti===undefined||same(ti,bi))) return;   /* 我刪除 */
+      if(bi!==undefined && ti===undefined && (mi===undefined||same(mi,bi))) return;   /* 別人刪除且我沒改 */
+      var v=mi===undefined?clone(ti):ti===undefined?clone(mi):merge3(bi,mi,ti);
+      if(v!==undefined) out.push(v);
+    });
+    return out;
+  }
+  return clone(m);   /* 同一欄位兩人都改：以自己的為準 */
+}
+T.merge3=merge3;
+var SV={};
+function syncInit(cur,kind,data){ SV[cur.id+":"+kind]={base:clone(data||{}),rev:Number(data&&data.rev)||0,busy:false,again:false,t:null,tries:0}; }
+/** 取得存檔器：getData／setData 讀寫目前內容，onMerged 在合併別人的修改後重繪畫面 */
+function makeSaver(cur,kind,getData,setData,onMerged,stateEl){
+  var key=cur.id+":"+kind; if(!SV[key]) syncInit(cur,kind,getData());
+  var S=SV[key]; S.get=getData; S.set=setData; S.onMerged=onMerged; S.stateEl=stateEl;
+  function show(x){ var e=$(S.stateEl); if(e) e.textContent=x; }
+  function flush(){
+    if(S.busy){ S.again=true; return; }
+    S.busy=true; show("儲存中…");
+    var snap=clone(S.get()); snap.v=1; if(kind==="accept") snap.total=allTests(cur.project,snap).length;
+    api("analysisSave",{id:cur.id,kind:kind,data:snap,baseRev:S.rev}).then(function(r){
+      S.busy=false; S.tries=0; S.base=snap; if(r&&r.rev!==undefined) S.rev=r.rev;
+      show("已儲存 "+fmtTime(new Date().toISOString()).split(" ")[1]);
+      if(S.again){ S.again=false; flush(); }
+    },function(e){
+      S.busy=false;
+      if(e&&e.code==="CONFLICT"&&e.data&&S.tries<3){
+        S.tries++;
+        var theirs=e.data.data||{}, merged=merge3(S.base,S.get(),theirs);
+        S.set(merged); S.base=clone(theirs); S.rev=Number(e.data.rev)||0;
+        toast("其他人剛更新了這份資料，已合併雙方的修改"); show("合併中…");
+        if(S.onMerged) S.onMerged();
+        flush(); return;
+      }
+      S.tries=0; show("儲存失敗"); fail(e);
+    });
+  }
+  return function(delay){ show("尚未儲存…"); clearTimeout(S.t); S.t=setTimeout(flush, delay===undefined?1200:delay); };
+}
+/** 重繪時保留游標位置（合併別人的修改後重繪，避免打字中斷） */
+function rerenderKeep(el,fn){
+  var a=document.activeElement, sel=null, pos=null;
+  if(a&&el.contains(a)){
+    var attrs=["data-wp","data-ac","data-co","data-f","data-pre"].filter(function(n){ return a.hasAttribute(n); });
+    if(attrs.length){ sel=a.tagName.toLowerCase()+attrs.map(function(n){ return '['+n+'="'+String(a.getAttribute(n)).replace(/"/g,'\\"')+'"]'; }).join(""); try{ pos=a.selectionStart; }catch(e){} }
+  }
+  fn();
+  if(sel){ var b=el.querySelector(sel); if(b){ b.focus(); try{ if(pos!==null) b.setSelectionRange(pos,pos); }catch(e){} } }
 }
 
 /* ======================== 週計畫（Last Planner System） ======================== */
@@ -40,16 +102,24 @@ function ppcOf(items){
   return {n:c.length, done:d, pct:c.length?Math.round(d/c.length*100):null, all:(items||[]).length};
 }
 T.ppcOf=ppcOf;
+/** 由專案摘要（後端彙總 summary.ppc）取本週與上週 PPC：{pct,n,done,last} */
+T.ppcFromSummary=function(sm){
+  var m=sm&&sm.ppc; if(!m) return null;
+  var w=mondayOf(T.today()), f=function(a){ return a&&a[0]?Math.round(a[1]/a[0]*100):null; };
+  var cur=m[w], prev=m[addW(w,-1)];
+  if(!cur&&!prev) return null;
+  return {pct:f(cur), n:cur?cur[0]:0, done:cur?cur[1]:0, last:f(prev)};
+};
 
 T.views.planTab=function(cur,el){
   if(wp.pid!==cur.id){ wp={pid:cur.id,data:null,week:mondayOf(T.today())}; }
   el.innerHTML='<div class="loading">讀取中…</div>';
-  loadKind(cur,"weekPlan").then(function(d){ wp.data=d&&d.weeks?d:{weeks:{}}; renderPlan(cur,el); })
+  loadKind(cur,"weekPlan").then(function(d){ wp.data=d&&d.weeks?d:{weeks:{}}; syncInit(cur,"weekPlan",wp.data); renderPlan(cur,el); })
     .catch(function(e){ el.innerHTML=notDeployed(e)?NEED_BACKEND:'<div class="empty">'+esc(e.message)+'</div>'; });
 };
 function renderPlan(cur,el){
   var p=cur.project, edit=T.canEdit(), wk=wp.week, items=wp.data.weeks[wk]||[], pc=ppcOf(items);
-  var save=makeSaver(cur,"weekPlan",function(){ return wp.data; },"wpState");
+  var save=makeSaver(cur,"weekPlan",function(){ return wp.data; },function(v){ v.weeks=v.weeks||{}; wp.data=v; },function(){ if($("wpState")) rerenderKeep(el,function(){ renderPlan(cur,el); }); },"wpState");
   var ks=T.sysList(p);
   var sysOpt=function(sel){ return '<option value="">共用</option>'+ks.map(function(k){ return '<option value="'+esc(k)+'"'+(k===sel?" selected":"")+'>'+esc(T.sysName(p,k))+'</option>'; }).join(""); };
   var h='<section class="panel"><div class="row" style="flex-wrap:wrap"><h3>週工作計畫（Last Planner）</h3><span class="meta" id="wpState"></span></div>'
@@ -172,12 +242,12 @@ T.views.acceptTab=function(cur,el){
   if(ac.pid!==cur.id){ ac={pid:cur.id,data:null,sys:null,files:[]}; }
   el.innerHTML='<div class="loading">讀取中…</div>';
   Promise.all([loadKind(cur,"accept"), api("files",{id:cur.id,kind:"drawing"}).then(function(r){ return r.files||[]; },function(){ return []; })])
-    .then(function(r){ var d=r[0]||{}; d.tests=d.tests||{}; d.custom=d.custom||{}; d.closeout=d.closeout||{}; d.io=d.io||[]; ac.data=d; ac.files=r[1]; renderAccept(cur,el); })
+    .then(function(r){ var d=r[0]||{}; d.tests=d.tests||{}; d.custom=d.custom||{}; d.closeout=d.closeout||{}; d.io=d.io||[]; ac.data=d; ac.files=r[1]; syncInit(cur,"accept",r[0]||{}); renderAccept(cur,el); })
     .catch(function(e){ el.innerHTML=notDeployed(e)?NEED_BACKEND:'<div class="empty">'+esc(e.message)+'</div>'; });
 };
 function renderAccept(cur,el){
   var p=cur.project, d=ac.data, edit=T.canEdit(), ks=T.sysList(p), sm=acceptSummary(p,d,ac.files);
-  var save=makeSaver(cur,"accept",function(){ return ac.data; },"acState");
+  var save=makeSaver(cur,"accept",function(){ return ac.data; },function(v){ ["tests","custom","closeout"].forEach(function(k){ v[k]=v[k]||{}; }); v.io=v.io||[]; ac.data=v; },function(){ if($("acState")) rerenderKeep(el,function(){ renderAccept(cur,el); }); },"acState");
   if(!ac.sys||ks.indexOf(ac.sys)<0) ac.sys=ks[0]||null;
   var h='<section class="panel"><div class="row" style="flex-wrap:wrap"><h3>測試驗收（FAT／SAT）</h3><span class="meta" id="acState"></span></div>'
     +'<p class="meta"><b>FAT（單機測試）</b>：設備安裝後逐台測試；<b>SAT（系統整合測試）</b>：現場與其他系統連動、斷電復電等整合測試。逐項記錄實測結果，不合格要登記到「品管・缺失」改善後重測。全部測完、竣工包必備文件齊全，才能把專案標記為結案。</p>'

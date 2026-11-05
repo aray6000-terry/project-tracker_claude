@@ -401,6 +401,10 @@ function renderList(){
         +(sysList(sm).length?'<div class="meta">系統：'+esc(sysList(sm).map(function(k){return sysLabel(sm,k);}).join("、"))+'</div>':'')
         +'<div class="dots" aria-hidden="true">'+NODES.map(function(_,i){return '<span class="s-'+sumNodeStat(sm,i).st+'"></span>';}).join("")+'</div>'
         +'<div class="row"><div class="bar'+(s.pct===100?' ok':'')+'" style="flex:1" role="progressbar" aria-valuenow="'+s.pct+'" aria-valuemin="0" aria-valuemax="100"><i style="width:'+s.pct+'%"></i></div><b style="min-width:44px;text-align:right">'+s.pct+'%</b></div>'
+        +(function(){ var r=TR.ppcFromSummary&&TR.ppcFromSummary(sm), ac=sm.acc; var t=[];
+            if(r&&r.pct!==null) t.push('本週 PPC <b'+(r.pct<60?' style="color:var(--bad)"':'')+'>'+r.pct+'%</b>'); else if(r&&r.last!==null) t.push('上週 PPC '+r.last+'%');
+            if(ac&&(ac.total||ac.tested)) t.push('測試 '+(ac.total?Math.min(ac.ok,ac.total)+'/'+ac.total:ac.tested+' 項')+(ac.fail?'，<span style="color:var(--bad)">不合格 '+ac.fail+'</span>':'')+(ac.miss?'，竣工缺 '+ac.miss:''));
+            return t.length?'<div class="meta">'+t.join('｜')+'</div>':''; })()
         +'<div class="meta">'+esc(nx)+(s.over?'　<span style="color:var(--bad)">逾期 '+s.over+' 個結點</span>':'')+'</div>'
         +'<div class="row meta"><span>負責：'+esc(userName(x.owner))+(x.memberCount?'　共享 '+x.memberCount+' 人':'')+'</span><span class="badge '+rl[1]+'">'+rl[0]+'</span></div>'
         +'</article>';
@@ -999,7 +1003,13 @@ window.TR={views:{}, saveProject:saveProjectNow, api:api, withBusy:withBusy, esc
     location.replace(location.pathname+(location.search?location.search+"&":"?")+"openExternalBrowser=1"+location.hash); return;
   }
   var r=takeRedirectResult();
-  if(r && r.credential){ $("app").innerHTML='<div class="loading">登入中…</div>'; onCredential({credential:r.credential}); return; }
+  if(r && r.credential){
+    $("app").innerHTML='<div class="loading">登入中…</div>';
+    /* 等其他功能模組（ops、qa、plan…）都載入完再登入，避免後端回應太快時分頁還沒註冊（v2.10.31） */
+    if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",function(){ onCredential({credential:r.credential}); });
+    else onCredential({credential:r.credential});
+    return;
+  }
   showLogin(r && r.error, !!(r && r.error));
 })();
 })();
