@@ -313,9 +313,14 @@ function renderAccept(cur,el){
     (T.ioPoints?T.ioPoints(cur):Promise.resolve(null)).then(function(rows){
       b.disabled=false; b.textContent="從 IO 點位表帶入測試點";
       if(!rows||!rows.length){ toast("找不到 IO 點位表，請先到「設計・編表」產生"); return; }
-      var have={}, n=0; d.io.forEach(function(x){ have[x.k]=1; });
-      rows.forEach(function(r){ if(have[r.k]) return; d.io.push(r); n++; });
-      toast(n?"已帶入 "+n+" 個 IO 測試點":"IO 測試點都已帶入"); if(n){ save(0); re(); }
+      var have={}, pending=[];
+      d.io.forEach(function(x){ have[x.k]=1; });
+      rows.forEach(function(r){ if(!have[r.k]){ pending.push(r); have[r.k]=1; } });
+      if(!pending.length){ toast("IO 測試點都已帶入"); return; }
+      var preview=pending.map(function(r){ return "・"+r.t; }).join("\n");
+      if(!confirm("將新增 "+pending.length+" 個測試點，已有或重複 "+(rows.length-pending.length)+" 個。\n\n"+preview+"\n\n確認帶入？")) return;
+      pending.forEach(function(r){ d.io.push(r); });
+      toast("已帶入 "+pending.length+" 個 IO 測試點"); save(0); re();
     }).catch(function(e){ b.disabled=false; b.textContent="從 IO 點位表帶入測試點"; fail(e); });
   };
   el.querySelectorAll("[data-co]").forEach(function(inp){
