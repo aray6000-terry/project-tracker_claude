@@ -131,11 +131,23 @@ function bind(cur,el){
   if($("sldApply")) $("sldApply").onclick=function(){
     var v=withFloors(res), ex=SLD.toExtraIo({points:v.points});
     if(!ex.length){ toast("沒有可套用的 IO 點（需有樓層）"); return; }
-    if(!confirm("把單線圖的 "+ex.length+" 組 IO 點加到「設計・編表 → IO 模組表」的額外點位？（之前由單線圖加入的會先清除）")) return;
     api("analysisOne",{id:cur.id,kind:"design"}).then(function(r){
-      var p=r.data||{}; p.extraIo=(p.extraIo||[]).filter(function(x){ return !/^單線圖：/.test(x.name||""); }).concat(ex);
-      return api("analysisSave",{id:cur.id,kind:"design",data:p});
-    }).then(function(){ toast("已套用到 IO 模組表（共 "+ex.length+" 組）"); }).catch(fail);
+      var p=r.data||{}, before=JSON.stringify(p), old=(p.extraIo||[]).filter(function(x){ return /^單線圖：/.test(x.name||""); });
+      function key(x){ return x.floor+"｜"+x.name; }
+      var added=[], changed=[], removed=[];
+      ex.forEach(function(x){ var prev=old.find(function(y){ return key(x)===key(y); });
+        if(!prev) added.push(key(x)+" ×"+x.n);
+        else if(prev.n!==x.n) changed.push(key(x)+" ×"+prev.n+" → ×"+x.n);
+      });
+      old.forEach(function(x){ if(!ex.some(function(y){ return key(x)===key(y); })) removed.push(key(x)+" ×"+x.n); });
+      var msg="單線圖點位預覽\n新增 "+added.length+" 組\n"+added.join("\n")+"\n變更 "+changed.length+" 組\n"+changed.join("\n")+"\n移除 "+removed.length+" 組\n"+removed.join("\n")+"\n\n確認套用？";
+      if(!confirm(msg)) return null;
+      return api("analysisOne",{id:cur.id,kind:"design"}).then(function(latest){
+        if(JSON.stringify(latest.data||{})!==before) throw new Error("設計資料已更新，請重新預覽後再套用");
+        p.extraIo=(p.extraIo||[]).filter(function(x){ return !/^單線圖：/.test(x.name||""); }).concat(ex);
+        return api("analysisSave",{id:cur.id,kind:"design",data:p}).then(function(){ toast("已套用到 IO 模組表（共 "+ex.length+" 組）"); });
+      });
+    }).catch(fail);
   };
 }
 T.views.sldPanel=function(cur,el){
