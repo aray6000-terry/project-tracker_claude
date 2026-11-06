@@ -121,6 +121,16 @@ function render(cur,el){
   var P=DESIGN.plan(st.dr, Object.assign({}, st.params, {systems: cur.project.systems||[], panelFloors: st.panelFloors||{}})), h='';
   h+='<section class="panel"><div class="row" style="flex-wrap:wrap"><h3>設計・編表</h3><span class="meta">依圖面分析（'+esc(st.dr.fileName||"")+'）自動產生，參數可在「參數與點位規則」調整</span></div>'
     +'<nav class="ptabs" style="margin-top:8px">'+SUBS.map(function(s){ return '<button type="button" data-dsub="'+s[0]+'" class="'+(st.sub===s[0]?"on":"")+'">'+s[1]+'</button>'; }).join("")+'</nav></section>';
+  var notices=(st.dr.warnings||[]).filter(function(x){ return typeof x==="string" && x; });
+  var pending=[];
+  if(P.io && P.io.table) P.io.table.sections.forEach(function(sec){ sec.rows.forEach(function(r){
+    if(r.at && Array.isArray(r.at.floors) && !r.at.floors.length) pending.push((sec.name?sec.name+"｜":"")+(r.name||"未命名項目"));
+  }); });
+  h+='<section class="panel"><b>圖面資料來源</b><p class="meta">'+esc(st.dr.fileName||"未提供檔名")+'｜分析結果儲存時間：'+esc(st.dr.savedAt?String(st.dr.savedAt):"未提供")+'</p>';
+  if(notices.length) h+='<p>圖面分析提示</p><ul>'+notices.map(function(x){ return '<li>'+esc(x)+'</li>'; }).join("")+'</ul>';
+  if(pending.length) h+='<p>以下 IO 項目未標示樓層，請檢查圖面或編表資料（'+pending.length+' 項）</p><ul>'+pending.map(function(x){ return '<li>'+esc(x)+'</li>'; }).join("")+'</ul><button type="button" class="btn small" data-dsub="io">前往 IO 模組表</button>';
+  if(!notices.length && !pending.length) h+='<p class="meta">目前沒有圖面分析提示及已標示為空的 IO 樓層。</p>';
+  h+='</section>';
   h+='<section class="panel" id="dsBody">'+body(P,cur)+'</section>';
   el.innerHTML=h;
   el.querySelectorAll("[data-dsub]").forEach(function(b){ b.onclick=function(){ st.sub=b.dataset.dsub; render(cur,el); }; });
