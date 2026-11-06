@@ -348,11 +348,11 @@ function analyze(text, opt) {
   function isFloorKey(s) { var f = floorsOf(String(s)); return f.length > 0 && f.every(function (x) { return /^(B|R)?\d+F$|^RF$/.test(x); }); }
   /* 方式一：有「XF 監控設備數量表」標題 */
   T.forEach(function (h) {
-    var mm = /^(.*?)\s*(?:中央)?(?:監控)?(?:系統)?(?:設備)?(?:器材)?\s*數\s*量\s*(?:統計|一覽|明細)?\s*表?$/.exec(h.s);
+    var mm = /^(.*?)\s*(?:統計)?\s*(?:中央)?(?:監控)?(?:系統)?(?:設備)?(?:器材)?\s*數\s*量\s*(?:統計|一覽|明細)?\s*表?$/.exec(h.s);
     if (!mm || !/表|統計/.test(h.s) || h.s.length > 30) return;
     var hh = h.h || 50, near = T.filter(function (t) { return t !== h && t.x > h.x - hh * 3 && t.x < h.x + hh * 40 && t.y < h.y && t.y > h.y - hh * 4; });
-    var qh = near.filter(function (t) { return /數\s*量|合\s*計|小\s*計|總\s*計/.test(t.s) && t.s.length < 8 && !/表|統計/.test(t.s); })[0];
-    var dh = near.filter(function (t) { return /說\s*明|名\s*稱|品\s*名|項\s*目|設\s*備|器\s*材|規\s*格/.test(t.s) && t.s.length < 10; })[0];
+    var qh = near.filter(function (t) { return /數\s*量|合\s*計|小\s*計|總\s*計/.test(t.s) && t.s.length < 8 && !/表|統計/.test(t.s); }).sort(function (p, q) { return (/^總/.test(p.s) ? 1 : 0) - (/^總/.test(q.s) ? 1 : 0); })[0];   /* [訓練修正 S] 「數量」（每層）優先於「總數量」 */
+    var dh = near.filter(function (t) { return /說\s*明|名\s*稱|品\s*名|圖\s*名|項\s*目|設\s*備|器\s*材|規\s*格/.test(t.s) && t.s.length < 10; })[0];
     if (!qh || !dh) { warnings.push("找到「" + h.s + "」但讀不到欄位標題（需有「說明」與「數量」欄）"); return; }
     usedD.push(dh);
     buildTable(h, dh, qh, mm[1]);
@@ -515,7 +515,7 @@ function analyze(text, opt) {
   function buildTable(h, dh, qh, keyRaw, legend, multi) {
     var hh = h.h || 50;
     var top = multi ? multi.top : Math.min(qh.y, dh.y);
-    var col = T.filter(function (t) { return t.x > h.x + (dh.x - h.x) * (legend ? 0.25 : 0.5) && t.x < qh.x - hh && t.y < top - hh * 0.3 && t.y > top - hh * 120 && (!legend || !t.h || t.h >= dh.h * 0.75) && !/^[-－—\d\s.]+$/.test(t.s) && !MULQ.test(t.s); })   /* 數量欄比樓層標題靠左時，數字不能算進品名 */
+    var col = T.filter(function (t) { return t.x > (legend ? h.x + (dh.x - h.x) * 0.25 : Math.min(h.x + (dh.x - h.x) * 0.5, dh.x - hh * 0.5)) &&   /* [訓練修正 S] 表名文字不靠左對齊（品名欄在表名左側）也要抓得到 */ t.x < qh.x - hh && t.y < top - hh * 0.3 && t.y > top - hh * 120 && (!legend || !t.h || t.h >= dh.h * 0.75) && !/^[-－—\d\s.]+$/.test(t.s) && !MULQ.test(t.s); })   /* 數量欄比樓層標題靠左時，數字不能算進品名 */
       .sort(function (a, b) { return b.y - a.y || a.x - b.x; });
     var rows = [], last = top, gap = 0;
     for (var i = 0; i < col.length; i++) {
@@ -1599,7 +1599,7 @@ function guessUnit(plans) {
 }
 
 /* 圖面辨識規則版本：規則有改時加一，舊的分析結果會提示重新分析 */
-var CORE_VERSION = 16;
+var CORE_VERSION = 17;
 var api = { panelKey: panelKey, CORE_VERSION: CORE_VERSION, decode: decode, parse: parse, analyze: analyze, mergeSheetTables: mergeSheetTables, floorsOf: floorsOf, floorRank: floorRank, sysOf: sysOf, SYS_RULES: SYS_RULES, cnNum: cnNum };
 if (typeof module === "object" && module.exports) module.exports = api;
 else root.DXF = api;
